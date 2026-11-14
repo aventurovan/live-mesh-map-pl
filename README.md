@@ -1,3 +1,28 @@
+# Mapa na żywo MeshCore Południe (polska wersja)
+
+Polska wersja programu [live-mesh-map-world](https://github.com/sauveteur71/live-mesh-map-world) autorstwa **F4GLD** (Radio-club du Velay), dostosowana do sieci **MeshCore Południe SF6** ([meshcoresouth.pl](https://meshcoresouth.pl)).
+
+**Co zmieniliśmy względem oryginału:**
+- interfejs po polsku (słownik `carte-live/public/i18n-pl.json`, domyślny język: polski; angielski i francuski do wyboru),
+- tylko sieć MeshCore (`CARTE_RESEAUX=meshcore`, usunięte usługi Meshtastic z `docker-compose.yml`),
+- preset radiowy SF6: 869.618 MHz · 62.5 kHz · SF6 · CR8 – w obliczeniach zasięgu, czasu nadawania i symulacji,
+- domyślny szablon repeatera „Repeater podstawowy (Południe SF6)”: radio, moc 22 dBm, prefiks 2 bajty, adverty 60 min / 12 h, flood.max 32,
+- przykładowa konfiguracja `.env.exemple` dla Południa Polski (obszar, kod KTW),
+- obraz Dockera budowany lokalnie (`docker compose up -d --build`).
+
+**Instalacja (Ubuntu / Proxmox):**
+```
+git clone https://github.com/aventurovan/live-mesh-map-pl.git
+cd live-mesh-map-pl
+cp .env.exemple .env      # dostosuj
+docker compose up -d --build
+```
+Companion MeshCore na USB: odkomentuj w `docker-compose.yml` linie `devices` i `group_add`, potem na mapie: Narzędzia › Podłącz moduł › USB serwera.
+
+**Licencja:** GPL-3.0, jak oryginał (plik `LICENSE`). Kod źródłowy tej wersji jest publiczny w tym repozytorium. Wszystkie prawa autorskie do oryginału należą do autora. Dane terenu: Copernicus DEM © DLR e.V. / Airbus, mapa © współtwórcy OpenStreetMap (ODbL). Meshtastic® jest znakiem towarowym Meshtastic LLC.
+
+---
+
 # Live mesh map — world edition
 
 [![Latest version](https://img.shields.io/github/v/release/sauveteur71/live-mesh-map-world?label=latest%20version)](https://github.com/sauveteur71/live-mesh-map-world/releases/latest)

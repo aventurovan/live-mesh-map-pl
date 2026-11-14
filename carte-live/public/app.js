@@ -243,7 +243,7 @@ function initCarte() {
   majFondSombre();
   for (const n of surcouchesMemo || []) if (surcouches[n]) surcouches[n].addTo(carte);
   carte.attributionControl.addAttribution('Meshtastic® est une marque de Meshtastic LLC');
-  carte.attributionControl.setPrefix('Carte live par F4GLD · <a href="https://www.helloasso.com/associations/radioclub-du-velay/formulaires/2" target="_blank" rel="noopener" title="Soutenir le projet (don au Radio-club du Velay)">♥ Soutenir le projet</a> · <a href="https://github.com/sauveteur71/live-mesh-map-world" target="_blank" rel="noopener" title="Code source sur GitHub">Code sur GitHub</a> · <a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
+  carte.attributionControl.setPrefix('Carte live par F4GLD · <a href="https://www.helloasso.com/associations/radioclub-du-velay/formulaires/2" target="_blank" rel="noopener" title="Soutenir le projet (don au Radio-club du Velay)">♥ Soutenir le projet</a> · <a href="https://meshcoresouth.pl" target="_blank" rel="noopener">MeshCore Południe</a> · <a href="https://github.com/aventurovan/live-mesh-map-pl" target="_blank" rel="noopener" title="Code source sur GitHub">Code sur GitHub</a> · <a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
   // Choix du fond et des surcouches dans le menu « Couches »
   const menu = document.querySelector('.menu-couches .menu');
   menu.insertAdjacentHTML('afterbegin', `<div class="titre-menu">Fond de carte</div>${Object.keys(fonds).map((n) => `<button data-fond="${n}" class="${n === choix ? 'actif' : ''}">${n}</button>`).join('')}
@@ -1756,7 +1756,7 @@ function ouvrirRechercheReglages() {
   const rendre = () => {
     const mots = sansAccent(inp.value).split(/\s+/).filter(Boolean);
     res = !mots.length ? index.slice(0, 12) : index.map((e) => {
-      const h = sansAccent(`${e.t} ${e.ch} ${e.m}` + (window.LANGUE === 'en' ? ` ${tr(e.t)} ${tr(e.ch || '')} ${tr(e.m || '')}` : '')), ti = sansAccent(window.LANGUE === 'en' ? tr(e.t) : e.t);
+      const h = sansAccent(`${e.t} ${e.ch} ${e.m}` + (window.LANGUE !== 'fr' ? ` ${tr(e.t)} ${tr(e.ch || '')} ${tr(e.m || '')}` : '')), ti = sansAccent(window.LANGUE !== 'fr' ? tr(e.t) : e.t);
       if (!mots.every((w) => h.includes(w))) return null;
       return { e, score: (ti.startsWith(mots[0]) ? 0 : ti.includes(mots[0]) ? 1 : 2) + ti.length / 200 };
     }).filter(Boolean).sort((a, b) => a.score - b.score).map((x) => x.e).slice(0, 14);

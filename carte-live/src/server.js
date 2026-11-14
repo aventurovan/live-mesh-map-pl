@@ -215,7 +215,7 @@ app.get('/publique.html', envoyerPage('publique.html'));
 app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: '5m', index: false }));
 
 // Version installée et dernière version publiée sur GitHub (vérifiée toutes les heures, et à l'ouverture de la mise à jour)
-const DEPOT = process.env.DEPOT_GITHUB || 'sauveteur71/live-mesh-map-world';
+const DEPOT = process.env.DEPOT_GITHUB || 'aventurovan/live-mesh-map-pl';
 const majDispo = { version: null, url: null, verifie: 0, erreur: null };
 const comparerVersions = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); } return 0; };
 async function verifierDerniereVersion() {

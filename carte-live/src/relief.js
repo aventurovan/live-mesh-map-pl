@@ -21,9 +21,9 @@ const PARAMS_LORA = {
   MEDIUM_TURBO: { sf: 9, bw: 500 }, LITE_FAST: { sf: 9, bw: 125 }, LITE_SLOW: { sf: 10, bw: 125 },
   NARROW_FAST: { sf: 7, bw: 62.5 }, NARROW_SLOW: { sf: 8, bw: 62.5 }, TINY_FAST: { sf: 7, bw: 15.6 }, TINY_SLOW: { sf: 8, bw: 15.6 },
   // MeshCore, réglage du réseau français (869,618 MHz)
-  MESHCORE_FR: { sf: 8, bw: 62.5 },
+  MESHCORE_FR: { sf: 6, bw: 62.5 }, // édition Południe : SF6
 };
-const SNR_LIMITE = { 7: -7.5, 8: -10, 9: -12.5, 10: -15, 11: -17.5, 12: -20 };
+const SNR_LIMITE = { 5: -2.5, 6: -5, 7: -7.5, 8: -10, 9: -12.5, 10: -15, 11: -17.5, 12: -20 };
 
 // Perte de diffraction lame de couteau (ITU-R P.526)
 const diffraction = (v) => (v > -0.78 ? 6.9 + 20 * Math.log10(Math.sqrt((v - 0.1) ** 2 + 1) + v - 0.1) : 0);

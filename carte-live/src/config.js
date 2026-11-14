@@ -77,7 +77,7 @@ const config = {
     emissionPourcent: nombre('SEUIL_EMISSION_POURCENT', 8),
   },
   carte: {
-    titre: texte('CARTE_TITRE', 'Carte live · Réseau Meshtastic'),
+    titre: texte('CARTE_TITRE', 'Mapa na żywo · MeshCore Południe'),
     centreLat: nombre('CARTE_CENTRE_LAT', 45.08),
     centreLon: nombre('CARTE_CENTRE_LON', 3.88),
     zoom: nombre('CARTE_ZOOM', 10),
@@ -139,7 +139,7 @@ const config = {
     actif: texte('MESHCORE', 'oui') !== 'non',
     racine: texte('MESHCORE_RACINE', 'meshcore').replace(/\/+$/, ''),
     // Code de zone des sujets (aéroport le plus proche, ex. LPY = Le Puy)
-    iata: texte('MESHCORE_IATA', 'LPY').toUpperCase(),
+    iata: texte('MESHCORE_IATA', 'KTW').toUpperCase(),
     republier: texte('MESHCORE_REPUBLIER', 'oui') !== 'non',
     // Canaux de groupe à déchiffrer : Public, #nom (canal « hashtag ») ou nom=secret (32 caractères hexadécimaux)
     canaux: texte('MESHCORE_CANAUX', 'Public').split(/[;\n]/).map((s) => s.trim()).filter(Boolean),
@@ -155,10 +155,10 @@ const config = {
     // Codes de zone acceptés pour les observateurs dont la position est inconnue (en plus de MESHCORE_IATA)
     // Réglage radio attendu du companion (fréquence,bande,SF,CR) ; « non » : aucun avertissement
     radioAttendue: (() => {
-      const v = texte('MESHCORE_RADIO_ATTENDUE', '869.618,62.5,8,8').trim();
+      const v = texte('MESHCORE_RADIO_ATTENDUE', '869.618,62.5,6,8').trim();
       if (/^(non|aucun|aucune|0)$/i.test(v)) return null;
       const m = v.split(/[,;\s]+/).map(Number);
-      return m.length === 4 && m.every((x) => Number.isFinite(x)) ? { freq: m[0], bw: m[1], sf: m[2], cr: m[3] } : { freq: 869.618, bw: 62.5, sf: 8, cr: 8 };
+      return m.length === 4 && m.every((x) => Number.isFinite(x)) ? { freq: m[0], bw: m[1], sf: m[2], cr: m[3] } : { freq: 869.618, bw: 62.5, sf: 6, cr: 8 };
     })(),
     iataVoisins: texte('MESHCORE_IATA_VOISINS').split(/[,;\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean),
     // Interrogation automatique de l'état des répéteurs surveillés (0 = jamais) et nombre max. par tour

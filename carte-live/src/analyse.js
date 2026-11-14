@@ -20,10 +20,10 @@ const PRESETS = {
   LITE_FAST: { sf: 9, bw: 125, cr: 5 }, LITE_SLOW: { sf: 10, bw: 125, cr: 5 },
   NARROW_FAST: { sf: 7, bw: 62.5, cr: 6 }, NARROW_SLOW: { sf: 8, bw: 62.5, cr: 6 },
   TINY_FAST: { sf: 7, bw: 15.6, cr: 5 }, TINY_SLOW: { sf: 8, bw: 15.6, cr: 6 },
-  MESHCORE_FR: { sf: 8, bw: 62.5, cr: 8 },
+  MESHCORE_FR: { sf: 6, bw: 62.5, cr: 8 }, // édition Południe : SF6
 };
 // SNR minimal démodulable par facteur d'étalement (dB)
-const SNR_LIMITE = { 7: -7.5, 8: -10, 9: -12.5, 10: -15, 11: -17.5, 12: -20 };
+const SNR_LIMITE = { 5: -2.5, 6: -5, 7: -7.5, 8: -10, 9: -12.5, 10: -15, 11: -17.5, 12: -20 };
 
 /** Temps d'émission LoRa (s) d'une trame de `octets` (en-tête Meshtastic de 16 octets inclus), formule Semtech */
 function tempsEmission(octets, preset) {

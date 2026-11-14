@@ -1,17 +1,17 @@
-// Langue de l'interface : français (texte d'origine) ou anglais, traduit à l'affichage.
+// Langue de l'interface : français (texte d'origine), anglais ou polonais (édition Południe), traduit à l'affichage.
 // Le code reste écrit en français ; en anglais, chaque texte affiché (nœuds texte, title, placeholder, aria-label,
 // boîtes alert/confirm/prompt) passe par le dictionnaire /i18n/en.json. Les « {} » d'une entrée valent n'importe quel
 // morceau variable (nom, nombre…), lui-même traduit s'il est connu. Le contenu des utilisateurs (messages, noms) porte
 // translate="no" et n'est jamais touché.
 (function () {
   const lire = () => { try { return localStorage.getItem('gaulix_langue'); } catch { return null; } };
-  const choix = lire() || 'en'; // édition monde : anglais par défaut, français au choix
+  const choix = ['fr', 'en', 'pl'].includes(lire()) ? lire() : 'pl'; // édition polonaise : polonais par défaut
   window.LANGUE = choix;
   window.choisirLangue = (l) => { try { localStorage.setItem('gaulix_langue', l); } catch { /* navigation privée */ } location.reload(); };
   // Traduction d'un texte isolé (pour le code qui en a besoin) : identité en français
   window.tr = (t) => t;
-  if (choix !== 'en') return;
-  document.documentElement.lang = 'en';
+  if (choix === 'fr') return;
+  document.documentElement.lang = choix;
 
   const exact = new Map(); // texte -> traduction
   const motifs = new Map(); // premier mot littéral (ou '') -> [{ re, en }]
@@ -127,7 +127,7 @@
     window[f] = (m, ...r) => o(m == null ? m : String(m).split('\n').map((l) => traduire(l)).join('\n'), ...r);
   }
   const v = (document.currentScript && document.currentScript.src.match(/\?v=([^&]+)/)) || [];
-  fetch('/i18n-en.json' + (v[1] ? '?v=' + v[1] : ''))
+  fetch('/i18n-' + choix + '.json' + (v[1] ? '?v=' + v[1] : ''))
     .then((r) => r.json())
     .then((d) => { charger(d); if (document.body) demarrer(); else document.addEventListener('DOMContentLoaded', demarrer); })
     .catch(() => { /* dictionnaire indisponible : l'interface reste en français */ });

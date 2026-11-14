@@ -565,11 +565,11 @@ function creerAdministrationMc(config, companion, reseauMc, journal, surFin = ()
   const fModeles = path.join(dossier, 'meshcore-modeles.json');
   let modeles = [];
   try { modeles = lireJson(fModeles); } catch {
-    // Premier lancement : configuration de base d'un répéteur du réseau français (régions eu › fr › fr-ara › fr-43)
+    // Premier lancement : standard du réseau MeshCore Południe SF6 (pas de régions pour l'instant)
     modeles = [{
-      id: 'base-repeteur-fr43', nom: 'Répéteur de base (FR-43)', description: 'Configuration de base d’un répéteur : annonces, AGC, accusés, cycle d’émission, hachages 2 octets, détection des boucles, sauts limités hors région, régions eu › fr › fr-ara › fr-43.',
-      valeurs: { 'advert.interval': '240', 'flood.advert.interval': '24', 'agc.reset.interval': '4', 'multi.acks': '1', dutycycle: '10', 'path.hash.mode': '1', 'loop.detect': 'minimal', 'flood.max.unscoped': '3', 'flood.max.advert': '5' },
-      regions: [{ op: 'def', nom: 'eu fr fr-ara fr-43' }, { op: 'default', nom: 'fr' }, { op: 'home', nom: 'fr' }],
+      id: 'base-repeteur-poludnie', nom: 'Repeater podstawowy (Południe SF6)', description: 'Standard sieci MeshCore Południe: radio 869.618 / 62.5 / SF6 / CR8, moc 22 dBm, prefiks 2 bajty, advert lokalny co 60 min, flood co 12 h, flood.max 32.',
+      valeurs: { radio: '869.618,62.5,6,8', tx: '22', 'path.hash.mode': '1', 'advert.interval': '60', 'flood.advert.interval': '12', 'flood.max': '32' },
+      regions: [],
       horloge: true, redemarrer: true, auteur: 'carte', heure: Date.now(),
     }];
   }
