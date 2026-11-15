@@ -188,6 +188,11 @@ function initCarte() {
       L.tileLayer(t.url, { maxZoom: 19, maxNativeZoom: t.zoomMaxNatif || 19, className: t.sombre ? 'tuiles-sombres' : '', attribution: t.attribution }),
       ...(t.etiquettes ? [L.tileLayer(t.etiquettes, { maxZoom: 19, maxNativeZoom: t.zoomMaxNatif || 19, className: 'etiquettes-claires' })] : []),
     ]),
+    // PL: jasny podkład do jasnego motywu (Esri Light Gray, z nazwami miejscowości)
+    'Jasny': L.layerGroup([
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 16, attribution: t.attribution }),
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 16 }),
+    ]),
     'Plan IGN sombre': L.tileLayer(wmts('GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2'), { maxZoom: 19, maxNativeZoom: 19, className: 'tuiles-sombres', attribution: ign }),
     'Photos aériennes IGN': L.tileLayer(wmts('ORTHOIMAGERY.ORTHOPHOTOS', 'image/jpeg'), { maxZoom: 19, maxNativeZoom: 19, attribution: ign }),
     'Topographique': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, maxNativeZoom: 17, subdomains: 'abc', attribution: 'Carte &copy; <a href="https://opentopomap.org" target="_blank" rel="noopener">OpenTopoMap</a> (CC-BY-SA), données &copy; contributeurs OpenStreetMap' }),
@@ -231,8 +236,9 @@ function initCarte() {
   let surcouchesMemo = null;
   try { surcouchesMemo = JSON.parse(localStorage.getItem('gaulix_surcouches') || 'null'); } catch { /* idem */ }
   if (!surcouchesMemo) surcouches['Points de repère'].addTo(carte);
-  let choix = fonds[etat.config.fond] ? etat.config.fond : 'Sombre'; // fond par défaut de cette carte (CARTE_FOND)
-  try { const c = localStorage.getItem('gaulix_fond'); if (c && fonds[c]) choix = c; } catch { /* stockage indisponible */ }
+  // PL: domyślny podkład wynika z motywu (jasny motyw → „Jasny”, ciemny → „Sombre”), chyba że ktoś wybrał inny
+  let choix = lireLs('mcs_theme_clair', true) ? 'Jasny' : 'Sombre';
+  try { const c = localStorage.getItem('mcs_fond'); if (c && fonds[c]) choix = c; } catch { /* stockage indisponible */ }
   fonds[choix].addTo(carte);
   // Fond sombre : les surcouches de texte (noms IGN) passent en clair pour rester lisibles
   const majFondSombre = () => {
@@ -249,12 +255,18 @@ function initCarte() {
   menu.insertAdjacentHTML('afterbegin', `<div class="titre-menu">Fond de carte</div>${Object.keys(fonds).map((n) => `<button data-fond="${n}" class="${n === choix ? 'actif' : ''}">${n}</button>`).join('')}
     <div class="titre-menu">Repères</div>${Object.keys(surcouches).map((n) => `<button data-surcouche="${n}" class="${carte.hasLayer(surcouches[n]) ? 'actif' : ''}">${n}</button>`).join('')}
     <div class="titre-menu">Réseau</div>`);
+  // PL: zmiana motywu przełącza podkład Jasny ⇄ Sombre (inne podkłady zostają, jeśli ktoś je wybrał)
+  window.podkladDlaMotywu = (clair) => {
+    const cel = clair ? 'Jasny' : 'Sombre';
+    if (choix === cel || !['Jasny', 'Sombre'].includes(choix)) return;
+    const b = menu.querySelector(`[data-fond="${cel}"]`); if (b) b.click();
+  };
   menu.querySelectorAll('[data-fond]').forEach((b) => (b.onclick = () => {
     fonds[choix].remove(); choix = b.dataset.fond; fonds[choix].addTo(carte); majFondSombre();
     try { dessinerLiens(); } catch { /* pas encore prêt */ }
     try { if (typeof mcRedessiner === 'function') mcRedessiner(); } catch { /* MeshCore absent */ }
     menu.querySelectorAll('[data-fond]').forEach((x) => x.classList.toggle('actif', x === b));
-    try { localStorage.setItem('gaulix_fond', choix); } catch { /* idem */ }
+    try { localStorage.setItem('mcs_fond', choix); } catch { /* idem */ }
   }));
   menu.querySelectorAll('[data-surcouche]').forEach((b) => (b.onclick = () => {
     const c = surcouches[b.dataset.surcouche];
@@ -6371,7 +6383,7 @@ function brancherInterface() {
   installerTiroir();
   { const b = $('#outil-passerelle'); if (b) { b.hidden = !(etat.config.passerelleDispo && etat.admin); b.onclick = () => { b.closest('details').open = false; ouvrirPasserelle(); }; } }
   installerFicheTiroir();
-  appliquerTheme(lireLs('gaulix_theme_clair', false));
+  appliquerTheme(lireLs('mcs_theme_clair', true)); // PL: domyślnie jasny motyw w stylu meshcoresouth.pl
   { const b = $('#outil-theme'); if (b) b.onclick = () => appliquerTheme(!document.body.classList.contains('theme-clair')); }
   { const b = $('#outil-installer'); if (b) b.onclick = async () => { if (!invitationInstall) return; invitationInstall.prompt(); await invitationInstall.userChoice.catch(() => null); invitationInstall = null; b.hidden = true; }; }
   $('#replier').onclick = () => { $('#panneau').classList.add('replie'); $('#deplier').hidden = false; document.body.classList.add('panneau-replie'); };
@@ -7140,9 +7152,10 @@ function installerFicheTiroir() {
 // ---- Thème clair à fort contraste (plein soleil), choisi dans Outils, gardé dans ce navigateur ----
 function appliquerTheme(clair) {
   document.body.classList.toggle('theme-clair', clair);
-  ecrireLs('gaulix_theme_clair', clair);
+  ecrireLs('mcs_theme_clair', clair);
   const b = $('#outil-theme'); if (b) b.textContent = clair ? '🌙 Thème sombre' : '☀️ Thème clair (plein soleil)';
-  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = clair ? '#ffffff' : '#0f172a';
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = clair ? '#FBF6EE' : '#16211D';
+  if (typeof window.podkladDlaMotywu === 'function') window.podkladDlaMotywu(clair);
 }
 // Installer l'appli (Android, Chrome, Edge) : bouton dans Outils quand le navigateur le propose
 let invitationInstall = null;

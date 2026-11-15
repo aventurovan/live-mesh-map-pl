@@ -1478,3 +1478,65 @@ body[data-reseau="meshcore"] label:has(> input[name="racine"]),
 body[data-reseau="meshcore"] label:has(> input[name="sujetsSupplementaires"]),
 body[data-reseau="meshcore"] label:has(> input[name="mqttRacine"]),
 body[data-reseau="meshcore"] label:has(> input[name="mqttSujets"]) { display: none; }
+
+/* ============================================================================================
+   PL: wygląd w stylu meshcoresouth.pl — jasny motyw (domyślny) i ciemny w tej samej palecie.
+   Paleta strony: atrament #1F2A26, zieleń #2E6B5A / #1F4D40, krem #FBF6EE / #F3E9D8, linia #EADFCF,
+   karty: niebieska #E3F0F8, miętowa #DDF1E6, brzoskwiniowa #FCE6D4. Czcionki: Nunito (nagłówki), Nunito Sans.
+   ============================================================================================ */
+:root {
+  --fond: #16211D; --surface: rgba(31, 42, 38, .96); --surface-2: #26332E; --bord: rgba(234, 223, 207, .14);
+  --texte: #FBF6EE; --doux: #C9D3CE; --tres-doux: #A3B3AC; --accent: #6FC3A2; --ok: #6FC3A2;
+  --rayon: 14px;
+  --police: "Nunito Sans", "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --naglowki: "Nunito", "Nunito Sans", system-ui, sans-serif;
+  --zielen: #2E6B5A; --zielen-d: #1F4D40;
+  --karta-1: rgba(227, 240, 248, .10); --karta-2: rgba(221, 241, 230, .10); --karta-3: rgba(252, 230, 212, .10); --karta-4: rgba(243, 233, 216, .08);
+}
+body.theme-clair {
+  --fond: #FBF6EE; --surface: rgba(255, 255, 255, .97); --surface-2: #F4F2EE; --bord: #EADFCF;
+  --texte: #1F2A26; --doux: #44514C; --tres-doux: #5E6B66; --accent: #2E6B5A; --ok: #2E6B5A;
+  --karta-1: #E3F0F8; --karta-2: #DDF1E6; --karta-3: #FCE6D4; --karta-4: #F3E9D8;
+}
+h1, h2, h3, h4, .kpi b, .marque .nom, .titre-accueil, .tuile-accueil b { font-family: var(--naglowki); }
+.marque, .kpis, .panneau, .fiche, .outils, .recherche-lieu input, .rejeu { border-radius: var(--rayon); box-shadow: 0 4px 18px rgba(31, 42, 38, .14); }
+body.theme-clair .marque, body.theme-clair .kpis, body.theme-clair .panneau, body.theme-clair .fiche, body.theme-clair .outils, body.theme-clair .recherche-lieu input, body.theme-clair .rejeu { box-shadow: 0 4px 18px rgba(31, 42, 38, .10); }
+/* logo »» jak na stronie */
+.logo { width: auto; height: auto; border-radius: 0; background: none; box-shadow: none; color: var(--accent); display: inline-flex; }
+.marque .nom { font-weight: 800; letter-spacing: .02em; }
+.marque .sous { font-family: var(--mono); letter-spacing: .12em; color: var(--accent); font-size: 10.5px; }
+/* liczniki */
+.kpi b { color: var(--accent); font-weight: 800; }
+.kpi span { letter-spacing: .04em; }
+/* zakładki: pigułki */
+.onglets button[data-onglet].actif, .onglets button.actif { color: var(--accent); border-bottom-color: var(--accent); font-weight: 700; }
+/* przyciski główne: butelkowa zieleń jak „Uruchom swój węzeł” */
+button.principal, .principal { background: var(--zielen) !important; color: #fff !important; border-color: var(--zielen) !important; border-radius: 10px; font-weight: 700; }
+button.principal:hover, .principal:hover { background: var(--zielen-d) !important; }
+#btn-effacer.wyczysc-mape { background: var(--zielen); color: #fff; border-color: var(--zielen); border-radius: 10px; }
+/* kafelki „Co chcesz zrobić?” jak karty na stronie */
+.tuile-accueil { border-radius: 14px; border: 0; color: var(--texte); }
+.tuile-accueil:nth-child(4n+1) { background: var(--karta-1); }
+.tuile-accueil:nth-child(4n+2) { background: var(--karta-3); }
+.tuile-accueil:nth-child(4n+3) { background: var(--karta-2); }
+.tuile-accueil:nth-child(4n+4) { background: var(--karta-4); }
+.tuile-accueil:hover { filter: brightness(.97); }
+body:not(.theme-clair) .tuile-accueil:hover { filter: brightness(1.25); }
+.titre-accueil { font-weight: 800; }
+/* dymki na mapie */
+.leaflet-tooltip.info { border-radius: 10px; font-family: var(--police); }
+body.theme-clair .leaflet-tooltip.info { background: #fff; color: #1F2A26; border-color: #EADFCF; box-shadow: 0 4px 14px rgba(31, 42, 38, .12); }
+body.theme-clair .leaflet-control-attribution { background: rgba(251, 246, 238, .85) !important; }
+/* podpisy repeaterów na jasnej mapie: biała plakietka z ciemnym tekstem */
+body.theme-clair .mkc.repeteur .lbl { color: #1F2A26; background: rgba(255, 255, 255, .92); border: 1px solid #EADFCF; }
+body.theme-clair .mkc .lbl { color: #1F4D40; }
+body.theme-clair .mkc.repeteur .c { box-shadow: 0 0 0 2px #1F2A26; }
+/* przycisk ＋ na mapie */
+.fab-plus { background: var(--zielen) !important; color: #fff !important; }
+/* poprawki po podglądzie */
+body.theme-clair .onglets { background: var(--surface-2); }
+.pilule.on { background: rgba(111, 195, 162, .16); border-color: rgba(111, 195, 162, .55); color: #9EE6C4; }
+body.theme-clair .pilule.on { background: #DDF1E6; border-color: #2E6B5A; color: #1F4D40; font-weight: 700; }
+body.theme-clair .pilule { color: #44514C; }
+.bulle-visite { background: var(--surface); color: var(--texte); border-color: var(--accent); border-radius: 14px; }
+body.theme-clair .bulle-visite { background: #fff; color: #1F2A26; border-color: #2E6B5A; }
