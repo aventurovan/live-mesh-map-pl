@@ -6385,6 +6385,7 @@ function brancherInterface() {
   installerFicheTiroir();
   appliquerTheme(lireLs('mcs_theme_clair', true)); // PL: domyślnie jasny motyw w stylu meshcoresouth.pl
   { const b = $('#outil-theme'); if (b) b.onclick = () => appliquerTheme(!document.body.classList.contains('theme-clair')); }
+  { const b = $('#btn-motyw'); if (b) b.onclick = () => appliquerTheme(!document.body.classList.contains('theme-clair')); }
   { const b = $('#outil-installer'); if (b) b.onclick = async () => { if (!invitationInstall) return; invitationInstall.prompt(); await invitationInstall.userChoice.catch(() => null); invitationInstall = null; b.hidden = true; }; }
   $('#replier').onclick = () => { $('#panneau').classList.add('replie'); $('#deplier').hidden = false; document.body.classList.add('panneau-replie'); };
   $('#deplier').onclick = () => { $('#panneau').classList.remove('replie'); $('#deplier').hidden = true; document.body.classList.remove('panneau-replie'); };

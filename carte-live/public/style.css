@@ -1540,3 +1540,8 @@ body.theme-clair .pilule.on { background: #DDF1E6; border-color: #2E6B5A; color:
 body.theme-clair .pilule { color: #44514C; }
 .bulle-visite { background: var(--surface); color: var(--texte); border-color: var(--accent); border-radius: 14px; }
 body.theme-clair .bulle-visite { background: #fff; color: #1F2A26; border-color: #2E6B5A; }
+/* PL: przełącznik motywu obok Logowania — pokazuje motyw, na który się przełączy */
+.btn-motyw { background: var(--surface-2); border: 1px solid var(--bord); border-radius: 10px; padding: 5px 9px; cursor: pointer; font-size: 15px; line-height: 1; }
+.btn-motyw:hover { border-color: var(--accent); }
+.btn-motyw .ik-jasny { display: inline; } .btn-motyw .ik-ciemny { display: none; }
+body.theme-clair .btn-motyw .ik-jasny { display: none; } body.theme-clair .btn-motyw .ik-ciemny { display: inline; }
