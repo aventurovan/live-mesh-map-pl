@@ -1980,6 +1980,45 @@ async function odswiezSf8() {
   return sf8Pobierane;
 }
 if (SF8_URL) { setTimeout(() => odswiezSf8(), 20000).unref(); setInterval(() => odswiezSf8(), 30 * 60000).unref(); }
+// ---- Pomiary w terenie z Mappera SF6 (meshcoresouth.pl/mapper) — warstwa „Pomiary w terenie” (kratki sześciokątne).
+// Pobierane przyrostowo co 10 min (tylko nowe punkty), kopia w /data/mapper.json. Bez nicków i danych użytkowników:
+// tylko [szer., dł., kod repeatera lub null, SNR, czas]. MAPPER_API w .env zmienia adres (pusty = warstwa wyłączona).
+const MAPPER_API = process.env.MAPPER_API != null ? process.env.MAPPER_API : 'https://meshcoresouth.pl/mapper/api.php';
+const fMapper = path.join(path.dirname(config.fichierBase), 'mapper.json');
+let mapper = (() => { try { const j = lireJson(fMapper); return j && Array.isArray(j.pts) ? j : null; } catch { return null; } })() || { last: 0, rev: null, pts: [], rep: {}, ts: 0 };
+let mapperPobierane = null, mapperBlad = null;
+async function odswiezMapper() {
+  if (!MAPPER_API || mapperPobierane) return mapperPobierane;
+  mapperPobierane = (async () => {
+    try {
+      const pobierz = async (q) => { const r = await fetch(MAPPER_API + '?' + q, { headers: { 'User-Agent': 'live-mesh-map-pl/1.0' }, signal: AbortSignal.timeout(60000) }); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); };
+      let nowe = 0;
+      for (let i = 0; i < 50; i++) {
+        const j = await pobierz(`action=points&since=${mapper.last}&limit=20000`);
+        if (!j || !j.ok || !Array.isArray(j.points)) throw new Error((j && j.error) || 'brak danych');
+        if (mapper.rev !== null && j.rev !== mapper.rev) { mapper = { last: 0, rev: j.rev, pts: [], rep: mapper.rep, ts: 0 }; continue; } // moderator usunął dane: od nowa
+        mapper.rev = j.rev;
+        for (const p of j.points) if (Number.isFinite(p[2]) && Number.isFinite(p[3])) { mapper.pts.push([+p[2].toFixed(5), +p[3].toFixed(5), p[4] == null ? null : String(p[4]), p[5] == null ? null : p[5], p[1]]); nowe++; }
+        if (j.last > mapper.last) mapper.last = j.last;
+        if (!j.more) break;
+      }
+      try { const r = await pobierz('action=repeaters'); if (r && r.ok && Array.isArray(r.repeaters)) mapper.rep = Object.fromEntries(r.repeaters.map((x) => [String(x.id), String(x.name || '').slice(0, 40)])); } catch { /* nazwy opcjonalne */ }
+      mapper.ts = Date.now(); mapperBlad = null;
+      try { ecrireSur(fMapper, JSON.stringify(mapper)); } catch { /* tylko do odczytu */ }
+      if (nowe) journal(`[Mapper] +${nowe} pomiarów (razem ${mapper.pts.length})`);
+    } catch (e) { mapperBlad = e.message; journal(`[Mapper] nie udało się pobrać: ${e.message}`); }
+    finally { mapperPobierane = null; }
+  })();
+  return mapperPobierane;
+}
+if (MAPPER_API) { setTimeout(() => odswiezMapper(), 30000).unref(); setInterval(() => odswiezMapper(), 10 * 60000).unref(); }
+app.get('/api/mapper', async (req, res) => {
+  if (!MAPPER_API) return res.json({ ok: false, wylaczone: true, pts: [] });
+  if (!mapper.pts.length) await odswiezMapper();
+  if (!mapper.pts.length) return res.status(503).json({ ok: false, error: mapperBlad || 'pomiary jeszcze niepobrane', pts: [] });
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json({ ok: true, ts: mapper.ts, pts: mapper.pts, rep: mapper.rep, blad: mapperBlad });
+});
 app.get('/api/sf8', async (req, res) => {
   if (!SF8_URL) return res.json({ ok: false, wylaczone: true, nodes: [] });
   if (!sf8) await odswiezSf8();

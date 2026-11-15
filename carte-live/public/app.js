@@ -54,7 +54,7 @@ const etat = {
   coucheLiens: null,
   alertes: [],
   stats: null,
-  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: true, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false },
+  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: true, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false, mapper: false },
   filtresPorts: new Set(Object.keys(PORTS)),
   selection: null,
   trajet: null,
@@ -6398,7 +6398,7 @@ function brancherInterface() {
     etat.couches[c] = !etat.couches[c];
     b.classList.toggle('actif', etat.couches[c]);
     if (c) ecrireLs('gaulix_couches', etat.couches); // choix gardé pour la prochaine visite
-    if (c === 'inactifs') { dessinerNoeuds(); rendreLegende(); } else if (c === 'sommets') dessinerSommets(); else if (c === 'animations') { if (typeof dessinerAxes === 'function') dessinerAxes(); } else if (c === 'federation') dessinerFederation(); else if (c === 'routiers') dessinerRoutiers(); else if (c === 'dfci') dessinerDfci(); else if (c === 'radar') dessinerRadar(); else if (c === 'feux') dessinerFeux(); else if (c === 'sf8') dessinerSf8(); else if (c === 'releves') dessinerReleves(); else dessinerLiens();
+    if (c === 'inactifs') { dessinerNoeuds(); rendreLegende(); } else if (c === 'sommets') dessinerSommets(); else if (c === 'animations') { if (typeof dessinerAxes === 'function') dessinerAxes(); } else if (c === 'federation') dessinerFederation(); else if (c === 'routiers') dessinerRoutiers(); else if (c === 'dfci') dessinerDfci(); else if (c === 'radar') dessinerRadar(); else if (c === 'feux') dessinerFeux(); else if (c === 'sf8') dessinerSf8(); else if (c === 'mapper') dessinerMapper(true); else if (c === 'releves') dessinerReleves(); else dessinerLiens();
   }));
   $('#filtres').onclick = (e) => {
     const b = e.target.closest('button[data-port]');
@@ -7255,6 +7255,8 @@ async function demarrer() {
   if (etat.couches.radar) dessinerRadar();
   if (etat.couches.feux) dessinerFeux();
   if (etat.couches.sf8) dessinerSf8();
+  if (etat.couches.mapper) dessinerMapper(true);
+  carte.on('zoomend moveend', () => { if (etat.couches.mapper) dessinerMapper(); });
   // Liens vers le client et le flasheur officiels (Web Serial / Web Bluetooth : HTTPS et Chrome ou Edge obligatoires)
   {
     const o = etat.config.outils || {}, https = location.protocol === 'https:';
@@ -8288,4 +8290,60 @@ async function dessinerSf8() {
   if (coucheSf8) coucheSf8.remove();
   coucheSf8 = g.addTo(carte);
   minuteurSf8 = setTimeout(dessinerSf8, 30 * 60000);
+}
+
+// ---- PL: warstwa „Pomiary w terenie” — pomiary Mappera SF6 jako kratki sześciokątne (jak w Mapperze) ----
+// Kolor = najlepszy SNR odpowiedzi w kratce (czerwony słabo → niebieski mocno), szara kratka = same pingi bez odpowiedzi.
+const MP = { dane: null, wczyt: null, warstwa: null, rend: null, minuter: null };
+const MP_HEX0 = { lat: 50, lon: 19 }, MP_KX = 111320 * Math.cos((50 * Math.PI) / 180), MP_KY = 110574, MP_SQ3 = Math.sqrt(3);
+const mpRozmiar = (z) => (z >= 17 ? 11 : z >= 16 ? 18 : z >= 15 ? 28 : z >= 14 ? 45 : z >= 13 ? 75 : z >= 12 ? 130 : z >= 11 ? 230 : z >= 10 ? 420 : z >= 9 ? 750 : z >= 8 ? 1400 : z >= 7 ? 2600 : 5000);
+function mpKlucz(lat, lon, sz) {
+  const x = (lon - MP_HEX0.lon) * MP_KX, y = (lat - MP_HEX0.lat) * MP_KY;
+  const q = ((MP_SQ3 / 3) * x - y / 3) / sz, r = ((2 / 3) * y) / sz, s3 = -q - r;
+  let rq = Math.round(q), rr = Math.round(r); const rs = Math.round(s3);
+  const dq = Math.abs(rq - q), dr = Math.abs(rr - r), ds = Math.abs(rs - s3);
+  if (dq > dr && dq > ds) rq = -rr - rs; else if (dr > ds) rr = -rq - rs;
+  return [rq, rr];
+}
+function mpSzesciokat(q, r, sz) {
+  const x = sz * MP_SQ3 * (q + r / 2), y = sz * 1.5 * r, la = MP_HEX0.lat + y / MP_KY, lo = MP_HEX0.lon + x / MP_KX, w = [];
+  for (let i = 0; i < 6; i++) { const a = (Math.PI / 180) * (60 * i - 30); w.push([la + (sz * Math.sin(a)) / MP_KY, lo + (sz * Math.cos(a)) / MP_KX]); }
+  return w;
+}
+const MP_STOPS = ['#b2182b', '#ef8a3c', '#f2d15c', '#5fb49c', '#1b6ca8'];
+function mpKolor(snr) {
+  const t = Math.max(0, Math.min(1, (snr + 8) / 20)), x = t * (MP_STOPS.length - 1), i = Math.min(MP_STOPS.length - 2, Math.floor(x)), f = x - i;
+  const rgb = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16)), a = rgb(MP_STOPS[i]), b = rgb(MP_STOPS[i + 1]);
+  return '#' + a.map((v, k) => Math.round(v + (b[k] - v) * f).toString(16).padStart(2, '0')).join('');
+}
+async function dessinerMapper(wczytaj) {
+  if (!etat.couches.mapper) { if (MP.warstwa) { MP.warstwa.remove(); MP.warstwa = null; } clearTimeout(MP.minuter); return; }
+  if (wczytaj || !MP.dane) {
+    try { const r = await api('/api/mapper'); if (r && r.ok) MP.dane = r; else throw new Error((r && r.error) || 'brak danych'); }
+    catch (e) { if (!MP.dane) { console.warn('[Mapper]', e.message); clearTimeout(MP.minuter); MP.minuter = setTimeout(() => dessinerMapper(true), 120000); return; } }
+    clearTimeout(MP.minuter); MP.minuter = setTimeout(() => dessinerMapper(true), 10 * 60000);
+  }
+  if (!etat.couches.mapper || !MP.dane) return;
+  if (!MP.rend) MP.rend = L.canvas({ padding: 0.3 });
+  const z = carte.getZoom(), sz = mpRozmiar(z), widok = carte.getBounds().pad(0.3), kratki = new Map();
+  for (const p of MP.dane.pts) {
+    if (!widok.contains([p[0], p[1]])) continue;
+    const [q, r] = mpKlucz(p[0], p[1], sz), k = q + ':' + r;
+    let c = kratki.get(k); if (!c) kratki.set(k, (c = { q, r, n: 0, traf: 0, best: null, rep: new Map(), ost: 0 }));
+    c.n++; if (p[4] > c.ost) c.ost = p[4];
+    if (p[2] != null && p[3] != null) { c.traf++; if (c.best === null || p[3] > c.best) c.best = p[3]; const e = c.rep.get(p[2]); if (e == null || p[3] > e) c.rep.set(p[2], p[3]); }
+  }
+  const g = L.layerGroup();
+  const nazwa = (id) => (MP.dane.rep && MP.dane.rep[id]) || id;
+  for (const c of [...kratki.values()].sort((a, b) => (a.best ?? -1e9) - (b.best ?? -1e9))) {
+    const styl = c.best === null
+      ? { renderer: MP.rend, stroke: false, fillColor: '#8a99a3', fillOpacity: 0.4 }
+      : { renderer: MP.rend, stroke: true, color: '#fff', weight: 0.5, opacity: 0.5, fillColor: mpKolor(c.best), fillOpacity: c.traf > 1 ? 0.8 : 0.6 };
+    const lista = [...c.rep.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([id, s]) => `${esc(nazwa(id))} · ${String(s).replace('.', ',')} dB`).join('<br>');
+    L.polygon(mpSzesciokat(c.q, c.r, sz), styl)
+      .bindTooltip(`<b>${c.best === null ? 'Brak odpowiedzi' : 'Najlepszy SNR ' + String(c.best).replace('.', ',') + ' dB'}</b><br><small>${c.n} ping${c.n === 1 ? '' : 'ów'} · ${c.traf} z odpowiedzią · ostatni ${c.ost ? new Date(c.ost * 1000).toLocaleDateString('pl-PL') : '–'}</small>${lista ? '<br>' + lista : ''}<br><small>Mapper SF6</small>`, { className: 'info', sticky: true })
+      .addTo(g);
+  }
+  if (MP.warstwa) MP.warstwa.remove();
+  MP.warstwa = g.addTo(carte);
 }
