@@ -3584,6 +3584,27 @@ app.get('/api/export/resume.json', exporter(() => exportsCarte.resume(), 'applic
 app.get('/publique', envoyerPage('publique.html'));
 app.get('/metrics', exporter(() => exportsCarte.metriques(), 'text'));
 app.get('/api/export/relais.gpx', exporter(() => exportsCarte.relaisGpx(), 'application/gpx+xml'));
+// Statystyki MeshCore dla strony meshcoresouth.pl (czytane z przeglądarki, CORS *). Bez kluczy companionów i treści.
+let statystykiCache = { t: 0, v: null };
+app.get('/api/export/statystyki.json', exporter(() => {
+  if (!config.meshcore.actif) return { meshcore: false };
+  if (Date.now() - statystykiCache.t < 60000 && statystykiCache.v) return statystykiCache.v;
+  const st = reseauMc.statistiques();
+  const a = reseauMc.analyse(24, require('./analyse').tempsEmission, null);
+  const v = {
+    heure: new Date().toISOString(),
+    liczniki: { wezly: st.noeuds, aktywne: st.actifs, repeatery: st.repeteurs, obserwatorzy: st.observateurs, obserwatorzyOnline: st.observateursEnLigne, lacza24h: st.liens, pakietyMinuta: st.paquetsMinute, pakietyGodzina: st.paquetsHeure },
+    doba: {
+      pakiety: a.total, zajecieKanaluPct: a.occupationPct,
+      typy: a.parType.map((r) => ({ typ: r.type, nb: r.nb })),
+      skoki: a.sauts.map((r) => ({ skoki: r.sauts, nb: r.nb })),
+      godziny: a.parHeure.map((r) => ({ godzina: new Date(r.h).toISOString(), nb: r.nb })),
+      repeatery: a.topRelais.slice(0, 10).map((r) => ({ prefiks: r.prefixe, nb: r.nb, nazwa: r.candidats.length === 1 ? r.candidats[0].nom || null : null, kandydaci: r.candidats.length })),
+    },
+  };
+  statystykiCache = { t: Date.now(), v };
+  return v;
+}, 'application/json'));
 
 // ---- Historique long (résumés horaires et journaliers) ---------------------------------------
 const historique = creerHistorique(stockage.db, config, {
