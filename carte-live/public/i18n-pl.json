@@ -1401,7 +1401,7 @@
 "Menu": "Menu",
 "Mes nœuds": "Moje węzły",
 "MeshCore France (SF8 · 62,5 kHz)": "MeshCore Południe (SF6 · 62.5 kHz)",
-"MeshCore actifs": "MeshCore aktywny",
+"MeshCore actifs": "MeshCore aktywne",
 "MeshCore désactivé (MESHCORE=non)": "MeshCore wyłączony (MESHCORE=non)",
 "MeshCore n’est pas activé dans cette carte": "MeshCore nie jest włączony na tej mapie",
 "MeshCore › Analyse": "MeshCore › Analiza",
@@ -5136,5 +5136,16 @@
 "Démonstration : ces données sont privées et ne sont pas montrées.": "Demo: te dane są prywatne i nie są pokazywane.",
 "👁️ Démonstration : tous les écrans sont ouverts pour découvrir la carte, mais rien ne s’enregistre ni ne s’envoie par radio.": "👁️ Demo: każdy ekran jest otwarty, abyś mógł poznać mapę, ale nic nie jest zapisywane ani wysyłane przez radio.",
 "Démonstration de la carte complète, sans compte : messages des canaux publics, fiches des nœuds, couches, couverture, programmation, MeshCore, réglages… Tout se voit, rien ne s’enregistre ni ne s’envoie par radio": "Demo pełnej mapy, bez konta: wiadomości z kanału publicznego, karty węzłów, warstwy, zasięg, programowanie, MeshCore, ustawienia… Wszystko można zobaczyć, nic nie jest zapisywane ani wysyłane przez radio",
-"🧭 Essayer la carte complète (démo)": "🧭 Wypróbuj pełną mapę (demo)"
+"🧭 Essayer la carte complète (démo)": "🧭 Wypróbuj pełną mapę (demo)",
+"inondation": "flood",
+"inondation (zone)": "flood (region)",
+"direct": "bezpośrednio",
+"direct (zone)": "bezpośrednio (region)",
+"{} saut": "skoki: {0}",
+"observateurs": "obserwatorzy",
+"liens": "łącza",
+"Sauts (min.)": "Skoki (min.)",
+"Annonce {} « {} » (position)": "Advert {0} „{1}” (pozycja)",
+"Annonce {} « {} »": "Advert {0} „{1}”",
+"(position)": "(pozycja)"
 }

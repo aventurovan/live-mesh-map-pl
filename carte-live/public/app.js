@@ -120,7 +120,8 @@ function blocCoords(lat, lon, opts = {}) {
     <div class="coords-l"><span>DMS</span><b class="mono">${sexa}</b><button class="mini" data-copier="${sexa}" title="Copier en degrés, minutes, secondes">Copier</button></div>
     ${(() => { const d = window.DFCI && DFCI.versDfci(lat, lon); return d ? `<div class="coords-l"><span title="Carroyage DFCI (carreau de 2 km et zone 1 à 5)">DFCI</span><b class="mono">${d}</b><button class="mini" data-copier="${d}" title="Copier le code DFCI">Copier</button></div>` : ''; })()}
     <div class="coords-l liens-carto">${opts.alt != null ? `<span>Alt.</span><b>${Math.round(opts.alt)} m</b>` : ''}
-      <a href="https://cartes.gouv.fr/explorer-les-cartes/?c=${lon.toFixed(5)},${lat.toFixed(5)}&z=16&l=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2$GEOPORTAIL:OGC:WMTS(1;1;0)&permalink=yes" target="_blank" rel="noopener" title="Carte IGN sur cartes.gouv.fr (remplace le Géoportail)">cartes.gouv.fr</a>
+      <a href="https://mapy.com/turisticka?x=${lon.toFixed(6)}&y=${lat.toFixed(6)}&z=16" target="_blank" rel="noopener" title="Mapa turystyczna Mapy.com">Mapy.com</a>
+      <a href="https://www.openstreetmap.org/?mlat=${lat.toFixed(6)}&mlon=${lon.toFixed(6)}#map=16/${lat.toFixed(5)}/${lon.toFixed(5)}" target="_blank" rel="noopener">OpenStreetMap</a>
       <a href="https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lon.toFixed(6)}" target="_blank" rel="noopener">Google Maps</a>
       <a href="geo:${lat.toFixed(6)},${lon.toFixed(6)}">GPS du téléphone</a></div>
     ${opts.approx ? '<div class="note">Position publique arrondie (≈ 100 m) : connectez-vous pour la position exacte.</div>' : ''}

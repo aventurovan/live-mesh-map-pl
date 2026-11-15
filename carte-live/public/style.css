@@ -1024,7 +1024,7 @@ body[data-reseau="meshcore"] .tableau .mt-seul { display: none !important; }
 .tableau details.pli-alertes[open] { border: 0; background: transparent; }
 .tableau details.pli-alertes[open] > summary { height: auto; padding: 4px 2px 8px; border-bottom: 1px solid var(--bord); margin-bottom: 8px; position: sticky; top: 0; z-index: 2; background: var(--fond); border-radius: 0; }
 .tableau details.pli-alertes[open] > summary h3 { font-size: 13px; }
-.tableau details.pli-alertes[open] > summary h3::before { content: "‹ Tableau de bord"; display: block; flex-basis: 100%; order: -2; font-size: 12.5px; color: var(--accent); text-transform: none; letter-spacing: 0; width: auto; transform: none; margin-bottom: 4px; }
+.tableau details.pli-alertes[open] > summary h3::before { content: "‹ Pulpit"; display: block; flex-basis: 100%; order: -2; font-size: 12.5px; color: var(--accent); text-transform: none; letter-spacing: 0; width: auto; transform: none; margin-bottom: 4px; }
 .tableau details.pli-alertes[open] .resume-alertes { display: none; }
 .tableau details.pli-alertes[open] .liste-alertes { max-height: none; }
 @media (max-width: 380px) { .tableau { grid-template-columns: 1fr; } }

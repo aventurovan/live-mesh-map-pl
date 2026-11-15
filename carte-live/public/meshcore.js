@@ -344,7 +344,7 @@ function mcLignePaquet(p, nouveau) {
   const radio = [p.route ? { FLOOD: 'inondation', TRANSPORT_FLOOD: 'inondation (zone)', DIRECT: 'direct', TRANSPORT_DIRECT: 'direct (zone)' }[p.route] : null,
     p.sauts != null ? (p.sauts === 0 ? 'entendu en direct' : `${p.sauts} saut${p.sauts > 1 ? 's' : ''}`) : null,
     p.snr != null ? `SNR ${fmt(p.snr, 1)} dB` : null, p.rssi != null ? `RSSI ${p.rssi} dBm` : null,
-    p.nbObservateurs > 1 ? `${p.nbObservateurs} observateurs` : p.nbReceptions > 1 ? `${p.nbReceptions} réceptions` : null].filter(Boolean).join(' · ');
+    p.nbObservateurs > 1 ? `${p.nbObservateurs} observateurs` : p.nbReceptions > 1 ? `${p.nbReceptions} réceptions` : null].filter(Boolean).map((x) => (window.tr ? window.tr(x) : x)).join(' · ');
   return `<div class="paquet mc${nouveau ? ' nouveau' : ''}" data-mc-paquet="${p.rowid}">
     <div class="entete"><span class="heure">${heure(p.heure)}</span><span class="tag"><i style="background:${t.hex}"></i>${esc(t.nom)}</span>${p.canal ? `<span>${esc(p.canal)}</span>` : ''}<span class="hach mono">${esc((p.hachage || '').slice(0, 8))}</span></div>
     <div class="corps">${de}${vers} <span class="radio">${esc(resume || '')}</span></div>
