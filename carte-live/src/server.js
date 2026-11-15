@@ -61,7 +61,7 @@ const { creerReseau } = require('./reseau');
 const { creerSourceMeshMonitor } = require('./meshmonitor');
 const { creerSourceRadio } = require('./radio');
 const { creerAnalyse } = require('./analyse');
-const { creerRelief, contourDepartement } = require('./relief');
+const { creerRelief, contourDepartement, DROGI_DOJAZDOWE } = require('./relief');
 const { estCodeMonde, codeMonde, nomMonde, lieuxMonde } = require('./monde');
 const { creerComptes } = require('./comptes');
 const { creerAdministration } = require('./administration');
@@ -374,7 +374,7 @@ app.get('/api/profil', async (req, res) => {
 // ---- Relief et planification radio ----------------------------------------------
 const optsRelief = (q) => {
   const nb = (v, min, max) => { const n = Number(v); return v === undefined || v === '' || !Number.isFinite(n) ? undefined : Math.min(max, Math.max(min, n)); };
-  return { hs: nb(q.hs, 0, 100), ht: nb(q.ht, 0, 50), ptx: nb(q.ptx, 0, 30), marge: nb(q.marge, 0, 30), rayonKm: nb(q.rayon, 5, 60), env: nb(q.env, 0, 40), preset: q.preset, acces: ['voiture', '4x4', 'pied'].includes(q.acces) ? q.acces : undefined };
+  return { hs: nb(q.hs, 0, 100), ht: nb(q.ht, 0, 50), ptx: nb(q.ptx, 0, 30), marge: nb(q.marge, 0, 30), rayonKm: nb(q.rayon, 5, 60), env: nb(q.env, 0, 40), preset: q.preset, acces: (DROGI_DOJAZDOWE ? ['voiture', '4x4', 'pied'] : []).includes(q.acces) ? q.acces : undefined };
 };
 // Relief d'un autre département (?dep=25) : instance séparée, créée à la demande (2 au plus en mémoire)
 const reliefsEtude = new Map();
@@ -475,10 +475,8 @@ async function prechargerFrance() {
         // … et voies d'accès des points hauts évaluées (OpenStreetMap), pour le choix voiture / 4×4 / à pied
         const a = r.accesEtat ? r.accesEtat() : null;
         precharge.etape = e.mnt !== 'pret' ? `relief IGN ${e.progression || 0} %` : e.classement !== 'pret' ? 'points hauts et classement' : a && a.total ? `voies d'accès ${a.faits}/${a.total}` : 'voies d’accès';
-        // Poza Francją (cała Polska): bez czekania na drogi dojazdowe — przy 54 kwadratach to kilkanaście godzin pytań do Overpass.
-        // Drogi dojazdowe liczy dalej relief obszaru mapy. RELIEF_DOSTEPY=1 w .env przywraca czekanie.
-        const bezDostepow = horsFrance() && !/^(1|true|tak)$/i.test(process.env.RELIEF_DOSTEPY || '');
-        if (e.mnt === 'pret' && ['pret', 'erreur'].includes(e.classement) && (bezDostepow || !a || (!a.enCours && ((a.total > 0 && a.faits >= a.total) || a.erreur || Date.now() - debut > 5 * 60000)))) break;
+        // Drogi dojazdowe wyłączone (DROGI_DOJAZDOWE w relief.js): nie czekamy na nie
+        if (e.mnt === 'pret' && ['pret', 'erreur'].includes(e.classement) && (!DROGI_DOJAZDOWE || !a || (!a.enCours && ((a.total > 0 && a.faits >= a.total) || a.erreur || Date.now() - debut > 5 * 60000)))) break;
         await new Promise((ok) => setTimeout(ok, 5000));
       }
       if (precharge.instance) { try { r.arreter(); } catch { /* déjà */ } }
@@ -602,7 +600,7 @@ app.get('/api/relief/sommets', (req, res) => {
 });
 app.get('/api/relief/calibration', (req, res) => res.json(R(req).calibration()));
 app.get('/api/relief/classement', (req, res) => {
-  const filtre = ['voiture', '4x4', 'pied'].includes(req.query.acces) ? req.query.acces : null;
+  const filtre = (DROGI_DOJAZDOWE ? ['voiture', '4x4', 'pied'] : []).includes(req.query.acces) ? req.query.acces : null;
   res.json((filtre ? R(req).classementAcces(filtre) : R(req).classementAcces(null)) || R(req).classement() || { attente: true, etat: R(req).etat() });
 });
 app.post('/api/relief/recalculer', (req, res) => {
@@ -728,7 +726,7 @@ app.get('/api/relief/optimisation', (req, res) => {
   const RR = R(req);
   if (!RR.pret()) return res.status(503).json({ erreur: 'Le modèle de terrain est en cours de chargement' });
   const rayon = Math.min(Math.max(Number(req.query.rayon) || 6, 2), 15);
-  const acces = ['voiture', '4x4', 'pied'].includes(req.query.acces) ? req.query.acces : null;
+  const acces = (DROGI_DOJAZDOWE ? ['voiture', '4x4', 'pied'] : []).includes(req.query.acces) ? req.query.acces : null;
   const cle = JSON.stringify([RR.code, rayon, acces, (RR.classement() || {}).date, Math.floor(Date.now() / 3600000)]);
   let o = optimisations.get(cle);
   if (!o || req.query.recalculer === '1') {
@@ -778,7 +776,7 @@ app.get('/api/relief/budget', async (req, res) => {
   const RR = R(req);
   let communes = [];
   try { communes = await communesDepartement(RR.code); } catch (e) { journal('[Budget] communes :', e.message); }
-  const filtre = ['voiture', '4x4', 'pied'].includes(req.query.acces) ? req.query.acces : null;
+  const filtre = (DROGI_DOJAZDOWE ? ['voiture', '4x4', 'pied'] : []).includes(req.query.acces) ? req.query.acces : null;
   const couts = {};
   for (const k of ['secteur', 'solaire', 'mat']) if (req.query[k] !== undefined && Number.isFinite(Number(req.query[k]))) couts[k] = Math.min(Math.max(Number(req.query[k]), 0), 10000);
   const r = RR.planBudget({ n: Number(req.query.n) || 3, acces: filtre, avecReseau: req.query.reseau !== '0', realiste: req.query.realiste !== '0', communes, couts });
@@ -805,7 +803,7 @@ app.post('/api/relief/simulation', async (req, res) => {
 });
 // Plan pour couvrir le département : ?objectif=95&max=15&acces=voiture&reseau=1
 app.get('/api/relief/plan', (req, res) => {
-  const filtre = ['voiture', '4x4', 'pied'].includes(req.query.acces) ? req.query.acces : null;
+  const filtre = (DROGI_DOJAZDOWE ? ['voiture', '4x4', 'pied'] : []).includes(req.query.acces) ? req.query.acces : null;
   const RR = R(req);
   const o = { objectifPct: Number(req.query.objectif) || 95, max: Number(req.query.max) || 15, acces: filtre, avecReseau: req.query.reseau !== '0', realiste: req.query.realiste === '1' };
   // Même demande dans les 10 minutes (carte publique très consultée) : résultat déjà calculé
@@ -827,7 +825,7 @@ let planZoneEnCours = 0;
 app.post('/api/relief/plan-zone', async (req, res) => {
   const b = req.body || {};
   if (planZoneEnCours >= 2) return res.status(429).json({ erreur: 'Deux études de zone sont déjà en cours : réessayez dans un instant' });
-  const filtre = ['voiture', '4x4', 'pied'].includes(b.acces) ? b.acces : null;
+  const filtre = (DROGI_DOJAZDOWE ? ['voiture', '4x4', 'pied'] : []).includes(b.acces) ? b.acces : null;
   const RR = R(req);
   planZoneEnCours++;
   try {

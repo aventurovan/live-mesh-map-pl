@@ -1723,7 +1723,6 @@ const CATALOGUE_REGLAGES = [
   // Couverture
   ['Plan de couverture du département', 'Couverture', 'plan sites relais objectif', 'membre', () => { ouvrirOnglet('sites'); attendreEl('#plan-objectif').then(surligner); }],
   ['Hauteur d’antenne des sites (zone dessinée)', 'Couverture', 'antenne hauteur mât sol', 'membre', () => { ouvrirOnglet('sites'); attendreEl('#plan-hs').then(surligner); }],
-  ['Accès aux sites (voiture, 4×4, à pied)', 'Couverture', 'accès voiture 4x4 pied piste', 'membre', () => { ouvrirOnglet('sites'); attendreEl('#plan-acces').then(surligner); }],
   ['Passerelle Meshtastic ⇄ MeshCore', 'Outils', 'passerelle relais canal adrasec meshpass activer règle', 'admin', () => ouvrirPasserelle()],
   ['Diagnostic : pourquoi ça ne marche pas ?', 'Réglages', 'diagnostic problème panne vérifier mqtt messages ne remontent pas', 'admin', () => ficheDiagnostic()],
   ['Sauvegarde complète (changer de serveur)', 'Réglages', 'sauvegarde complète export base migration déménager serveur', 'admin', () => { location.href = '/api/sauvegarde-complete'; }],

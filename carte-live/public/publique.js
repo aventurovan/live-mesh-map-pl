@@ -129,7 +129,7 @@ function installerFonds() {
 }
 
 // ---- Couverture radio : zone couverte aujourd'hui et emplacements conseillés pour de nouveaux relais --
-const couv = { hauteur: 6, dernierPoint: null, couche: null, mode: null, acces: ['voiture', '4x4', 'pied', 'tous'].includes(params.get('acces')) ? params.get('acces') : 'voiture', plan: null, imagePlan: null, siteChoisi: null };
+const couv = { hauteur: 6, dernierPoint: null, couche: null, mode: null, acces: 'tous' /* PL: drogi dojazdowe wyłączone */, plan: null, imagePlan: null, siteChoisi: null };
 const NOM_ACCES = { voiture: 'accessibles en voiture', '4x4': 'accessibles en 4×4 ou en voiture', pied: 'accessibles à pied, en 4×4 ou en voiture', tous: 'tous les points hauts' };
 const pc = (v) => String(v).replace('.', ',');
 // Plan : emplacements conseillés selon l'accès choisi ; un clic sur une épingle montre la couverture de ce site seul

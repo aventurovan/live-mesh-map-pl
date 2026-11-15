@@ -79,6 +79,9 @@ function contourDepartement(code) {
 }
 
 const { creerAcces, NIVEAUX: NIVEAUX_ACCES } = require('./acces');
+// Drogi dojazdowe do punktów wysokich (Overpass) wyłączone w wersji PL: setki zapytań i obciążenie procesora,
+// a dojazd łatwo sprawdzić na mapach. true przywraca filtr „auto / 4×4 / pieszo”.
+const DROGI_DOJAZDOWE = false;
 const { MARGE_MONDE, estCodeMonde, contourMonde, nomMonde, grilleCopernicus } = require('./monde');
 const { creerRealisme } = require('./realisme');
 
@@ -117,7 +120,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
   const acces = creerAcces(dossier, journal, suffixe);
   const minuteries = [];
   let arrete = false; // instance arrêtée (département retiré de la mémoire) : les téléchargements en cours s'interrompent
-  const niveauMin = (filtre) => NIVEAUX_ACCES[filtre] || 0; // tous = 0
+  const niveauMin = (filtre) => (DROGI_DOJAZDOWE && NIVEAUX_ACCES[filtre]) || 0; // tous = 0
   const accessible = (s, min) => !min || (s.acces && s.acces.niveau >= min);
   const monde = estCodeMonde(codeDep); // zone hors de France : relief Copernicus
   const marge = monde ? MARGE_MONDE : 0.2; // degrés autour de la zone
@@ -362,7 +365,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     liste.forEach((s, k) => { s.id = k; s.dansZone = dansDepartement(s.lat, s.lon); });
     sommets = liste;
     nommerCommunes(liste); // en arrière-plan
-    acces.completer(liste.filter((x) => x.dansZone || distanceAuDepartement(x) < 10000)).catch((e) => journal('[Accès] erreur :', e.message));
+    if (DROGI_DOJAZDOWE) acces.completer(liste.filter((x) => x.dansZone || distanceAuDepartement(x) < 10000)).catch((e) => journal('[Accès] erreur :', e.message));
     realisme.completer(liste.filter((x) => x.dansZone || distanceAuDepartement(x) < 10000)).catch((e) => journal('[Sites] erreur :', e.message));
     etat.sommets = liste.length;
     journal(`[Relief] ${liste.length} points hauts (${osm.length} sommets OSM, ${liste.filter((s) => s.source === 'mnt').length} détectés dans le relief)`);
@@ -1325,7 +1328,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
   }
   minuteries.push(setTimeout(demarrer, options.code ? 100 : 5000));
   // Classement recalculé chaque nuit (le réseau existant évolue)
-  minuteries.push(setInterval(() => { if (new Date().getHours() === 4) { calculerClassement(); const l = sommets.filter((x) => x.dansZone || distanceAuDepartement(x) < 10000); acces.completer(l).catch(() => {}); realisme.completer(l).catch(() => {}); } }, 3600000));
+  minuteries.push(setInterval(() => { if (new Date().getHours() === 4) { calculerClassement(); const l = sommets.filter((x) => x.dansZone || distanceAuDepartement(x) < 10000); if (DROGI_DOJAZDOWE) acces.completer(l).catch(() => {}); realisme.completer(l).catch(() => {}); } }, 3600000));
 
   return {
     code: codeDep,
@@ -1360,4 +1363,4 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
   };
 }
 
-module.exports = { listeDepartements, nomDepartement, creerRelief, contourDepartement };
+module.exports = { listeDepartements, nomDepartement, creerRelief, contourDepartement, DROGI_DOJAZDOWE };
