@@ -475,7 +475,10 @@ async function prechargerFrance() {
         // … et voies d'accès des points hauts évaluées (OpenStreetMap), pour le choix voiture / 4×4 / à pied
         const a = r.accesEtat ? r.accesEtat() : null;
         precharge.etape = e.mnt !== 'pret' ? `relief IGN ${e.progression || 0} %` : e.classement !== 'pret' ? 'points hauts et classement' : a && a.total ? `voies d'accès ${a.faits}/${a.total}` : 'voies d’accès';
-        if (e.mnt === 'pret' && ['pret', 'erreur'].includes(e.classement) && (!a || (!a.enCours && ((a.total > 0 && a.faits >= a.total) || a.erreur || Date.now() - debut > 5 * 60000)))) break;
+        // Poza Francją (cała Polska): bez czekania na drogi dojazdowe — przy 54 kwadratach to kilkanaście godzin pytań do Overpass.
+        // Drogi dojazdowe liczy dalej relief obszaru mapy. RELIEF_DOSTEPY=1 w .env przywraca czekanie.
+        const bezDostepow = horsFrance() && !/^(1|true|tak)$/i.test(process.env.RELIEF_DOSTEPY || '');
+        if (e.mnt === 'pret' && ['pret', 'erreur'].includes(e.classement) && (bezDostepow || !a || (!a.enCours && ((a.total > 0 && a.faits >= a.total) || a.erreur || Date.now() - debut > 5 * 60000)))) break;
         await new Promise((ok) => setTimeout(ok, 5000));
       }
       if (precharge.instance) { try { r.arreter(); } catch { /* déjà */ } }

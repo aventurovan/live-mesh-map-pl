@@ -5147,5 +5147,7 @@
 "Sauts (min.)": "Skoki (min.)",
 "Annonce {} « {} » (position)": "Advert {0} „{1}” (pozycja)",
 "Annonce {} « {} »": "Advert {0} „{1}”",
-"(position)": "(pozycja)"
+"(position)": "(pozycja)",
+"relief IGN {} %": "teren {0} %",
+"points hauts et classement": "punkty wysokie i ranking"
 }
