@@ -1953,6 +1953,40 @@ try {
     .map((f) => ({ code: f.properties.code, nom: f.properties.nom, bbox: emprise(f.geometry) })).sort((a, b) => a.code.localeCompare(b.code));
 } catch { /* liste indisponible */ }
 app.get('/api/departements', (req, res) => res.json(horsFrance() ? [] : listeDepartements));
+// ---- Repeatery sieci SF8 (MeshCore Polska) — warstwa „Repeatery SF8”. Dane z Mappera SF6 (meshcoresouth.pl/mapper),
+// który co 30 min pobiera je z mapa.meshcorepolska.org (zapasowo map.meshcore.dev) i filtruje: repeatery, SF8, Polska.
+// SF8_URL w .env zmienia źródło (pusty = warstwa wyłączona). Kopia w /data/sf8.json, odświeżana co 30 min.
+const SF8_URL = process.env.SF8_URL != null ? process.env.SF8_URL : 'https://meshcoresouth.pl/mapper/api.php?action=sf8';
+const fSf8 = path.join(path.dirname(config.fichierBase), 'sf8.json');
+let sf8 = (() => { try { const j = lireJson(fSf8); return j && Array.isArray(j.nodes) ? j : null; } catch { return null; } })();
+let sf8Pobierane = null, sf8Blad = null;
+async function odswiezSf8() {
+  if (!SF8_URL || sf8Pobierane) return sf8Pobierane;
+  sf8Pobierane = (async () => {
+    try {
+      const r = await fetch(SF8_URL + (SF8_URL.includes('?') ? '&' : '?') + '_=' + Date.now(), { headers: { 'User-Agent': 'live-mesh-map-pl/1.0' }, signal: AbortSignal.timeout(30000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      if (!j || !j.ok || !Array.isArray(j.nodes)) throw new Error(j && j.error ? j.error : 'brak danych');
+      const nodes = j.nodes.filter((n) => Number.isFinite(n.lat) && Number.isFinite(n.lon))
+        .map((n) => ({ id: String(n.id || '').slice(0, 16), name: String(n.name || '').slice(0, 60), lat: n.lat, lon: n.lon, f: n.f ?? null, bw: n.bw ?? null, la: n.la ?? null }));
+      sf8 = { ts: j.ts || Math.floor(Date.now() / 1000), pobrano: Date.now(), nodes };
+      sf8Blad = null;
+      try { ecrireSur(fSf8, JSON.stringify(sf8)); } catch { /* tylko do odczytu */ }
+      journal(`[SF8] ${nodes.length} repeaterów SF8`);
+    } catch (e) { sf8Blad = e.message; journal(`[SF8] nie udało się pobrać: ${e.message}`); }
+    finally { sf8Pobierane = null; }
+  })();
+  return sf8Pobierane;
+}
+if (SF8_URL) { setTimeout(() => odswiezSf8(), 20000).unref(); setInterval(() => odswiezSf8(), 30 * 60000).unref(); }
+app.get('/api/sf8', async (req, res) => {
+  if (!SF8_URL) return res.json({ ok: false, wylaczone: true, nodes: [] });
+  if (!sf8) await odswiezSf8();
+  if (!sf8) return res.status(503).json({ ok: false, error: sf8Blad || 'dane SF8 jeszcze niepobrane', nodes: [] });
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json({ ok: true, ts: sf8.ts, nodes: sf8.nodes, blad: sf8Blad });
+});
 
 function emprise(geom) {
   let s = 90, o = 180, n = -90, e = -180;

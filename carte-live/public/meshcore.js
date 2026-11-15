@@ -19,7 +19,7 @@ const MC_TYPES = {
 const MC_CLE_TYPE = Object.fromEntries(Object.entries(MC_TYPES).filter(([, v]) => v.type).map(([k, v]) => [v.type, k]));
 const mcType = (t) => MC_TYPES[MC_CLE_TYPE[t] || t] || MC_TYPES.autre;
 const MC_ROLES = {
-  repeteur: { nom: 'Répéteurs', un: 'Répéteur', hex: '#f97316' },
+  repeteur: { nom: 'Répéteurs', un: 'Répéteur', hex: '#14b8a6' },
   salon: { nom: 'Room servers', un: 'Room server', hex: '#eab308' },
   companion: { nom: 'Companions', un: 'Companion', hex: '#22d3ee' },
   capteur: { nom: 'Capteurs', un: 'Capteur', hex: '#84cc16' },
@@ -119,7 +119,7 @@ function mcIcone(n) {
   const montrerNom = n.infrastructure || carte.getZoom() >= 11;
   return L.divIcon({
     className: '',
-    html: `<div class="${classes.join(' ')}" style="--mcc:${mcRole(r).hex}"><div class="c"></div>${montrerNom ? `<div class="lbl">${esc((n.nom || n.id).slice(0, 18))}</div>` : ''}</div>`,
+    html: `<div class="${classes.join(' ')}" style="--mcc:${mcRole(r).hex}"><div class="c">${r === 'repeteur' ? 'R' : ''}</div>${montrerNom ? `<div class="lbl">${esc((n.nom || n.id).slice(0, 18))}</div>` : ''}</div>`,
     iconSize: [14, 14], iconAnchor: [7, 7],
   });
 }

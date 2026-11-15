@@ -54,7 +54,7 @@ const etat = {
   coucheLiens: null,
   alertes: [],
   stats: null,
-  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: true, releves: true, routiers: false, dfci: false, radar: false, feux: false },
+  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: true, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false },
   filtresPorts: new Set(Object.keys(PORTS)),
   selection: null,
   trajet: null,
@@ -6397,7 +6397,7 @@ function brancherInterface() {
     etat.couches[c] = !etat.couches[c];
     b.classList.toggle('actif', etat.couches[c]);
     if (c) ecrireLs('gaulix_couches', etat.couches); // choix gardé pour la prochaine visite
-    if (c === 'inactifs') { dessinerNoeuds(); rendreLegende(); } else if (c === 'sommets') dessinerSommets(); else if (c === 'animations') { if (typeof dessinerAxes === 'function') dessinerAxes(); } else if (c === 'federation') dessinerFederation(); else if (c === 'routiers') dessinerRoutiers(); else if (c === 'dfci') dessinerDfci(); else if (c === 'radar') dessinerRadar(); else if (c === 'feux') dessinerFeux(); else if (c === 'releves') dessinerReleves(); else dessinerLiens();
+    if (c === 'inactifs') { dessinerNoeuds(); rendreLegende(); } else if (c === 'sommets') dessinerSommets(); else if (c === 'animations') { if (typeof dessinerAxes === 'function') dessinerAxes(); } else if (c === 'federation') dessinerFederation(); else if (c === 'routiers') dessinerRoutiers(); else if (c === 'dfci') dessinerDfci(); else if (c === 'radar') dessinerRadar(); else if (c === 'feux') dessinerFeux(); else if (c === 'sf8') dessinerSf8(); else if (c === 'releves') dessinerReleves(); else dessinerLiens();
   }));
   $('#filtres').onclick = (e) => {
     const b = e.target.closest('button[data-port]');
@@ -7247,6 +7247,7 @@ async function demarrer() {
   document.querySelectorAll('.bascule[data-couche]').forEach((b) => b.classList.toggle('actif', !!etat.couches[b.dataset.couche]));
   if (etat.couches.radar) dessinerRadar();
   if (etat.couches.feux) dessinerFeux();
+  if (etat.couches.sf8) dessinerSf8();
   // Liens vers le client et le flasheur officiels (Web Serial / Web Bluetooth : HTTPS et Chrome ou Edge obligatoires)
   {
     const o = etat.config.outils || {}, https = location.protocol === 'https:';
@@ -8256,4 +8257,28 @@ async function dessinerRadar() {
     coucheRadar = nouvelle;
   } catch (e) { annonce('⚠ Radar de pluie indisponible : ' + e.message, 'erreur'); }
   minuteurRadar = setTimeout(dessinerRadar, 10 * 60000);
+}
+
+// ---- PL: warstwa „Repeatery SF8” (sieć MeshCore Polska) — fioletowe kółka, dane z /api/sf8 (kopia co 30 min) ----
+let coucheSf8 = null, minuteurSf8 = null, rendSf8 = null; // ok. 2,5 tys. punktów: rysowane na canvas, nie SVG
+async function dessinerSf8() {
+  clearTimeout(minuteurSf8);
+  if (!etat.couches.sf8) { if (coucheSf8) { coucheSf8.remove(); coucheSf8 = null; } return; }
+  let r;
+  try { r = await api('/api/sf8'); } catch (e) { r = { ok: false, error: e.message }; }
+  if (!etat.couches.sf8) return;
+  if (!r || !r.ok) { if (typeof toast === 'function') toast('Repeatery SF8: ' + ((r && r.error) || 'brak danych')); minuteurSf8 = setTimeout(dessinerSf8, 120000); return; }
+  if (!rendSf8) rendSf8 = L.canvas({ pane: 'traces', padding: 0.3 });
+  const g = L.layerGroup();
+  const dzien = (t) => (t > 0 ? new Date(t * 1000).toLocaleDateString('pl-PL') : '–');
+  for (const n of r.nodes) {
+    const std = Math.abs((n.f || 0) - 869.618) < 0.01 && Math.abs((n.bw || 0) - 62.5) < 0.1; // standard MeshCore Polska
+    L.circleMarker([n.lat, n.lon], { radius: 6, weight: 2, color: '#6d28d9', fillColor: std ? '#c4b5fd' : '#fff', fillOpacity: 0.95, renderer: rendSf8 })
+      .bindTooltip(`<b>${esc(n.name || 'repeater SF8')}</b> <small>SF8 · MeshCore Polska</small><br>${n.f ? String(n.f.toFixed(3)).replace('.', ',') + ' MHz' : '–'} · BW ${n.bw != null ? String(n.bw).replace('.', ',') : '–'} · SF8<br><small>ostatni advert ${dzien(n.la)} · klucz ${esc((n.id || '').slice(0, 8).toUpperCase())}</small>`, { className: 'info', direction: 'top' })
+      .on('click', () => { if (etat.modeProfil && typeof choisirPointProfil === 'function') choisirPointProfil({ lat: n.lat, lon: n.lon, nom: (n.name || 'RPT') + ' (SF8)', h: 6 }); })
+      .addTo(g);
+  }
+  if (coucheSf8) coucheSf8.remove();
+  coucheSf8 = g.addTo(carte);
+  minuteurSf8 = setTimeout(dessinerSf8, 30 * 60000);
 }

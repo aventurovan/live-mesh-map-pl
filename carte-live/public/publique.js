@@ -402,9 +402,10 @@ function dessinerMc() {
   for (const n of vis) {
     const relais = ROLES_MC_RELAIS.has(n.role);
     if (!relais && !opt.clients) continue;
-    const cls = n.role === 'salon' ? 'salon' : relais ? '' : 'autre';
-    const m = L.marker([n.lat, n.lon], { icon: L.divIcon({ className: '', html: `<div class="mkc ${cls}"><div class="c"></div></div>`, iconSize: [14, 14], iconAnchor: [7, 7] }), zIndexOffset: relais ? 450 : 0 })
-      .bindTooltip(`<b>${esc(n.nom || n.id)}</b> <small>MeshCore</small><br>${esc(n.roleFr || n.role || '')}<br><small>vu ${n.dernierVu ? new Date(n.dernierVu).toLocaleString('fr-FR') : '–'}</small>`).addTo(mcp.coucheNoeuds);
+    const cls = n.role === 'salon' ? 'salon' : relais ? 'rpt ' + (n.statut || '') : 'autre';
+    const t = (x) => (window.tr ? window.tr(x) : x);
+    const m = L.marker([n.lat, n.lon], { icon: L.divIcon({ className: '', html: `<div class="mkc ${cls}"><div class="c">${cls.startsWith('rpt') ? 'R' : ''}</div></div>`, iconSize: [16, 16], iconAnchor: [8, 8] }), zIndexOffset: relais ? 450 : 0 })
+      .bindTooltip(`<b>${esc(n.nom || n.id)}</b> <small>MeshCore</small><br>${esc(t(n.roleFr || n.role || ''))}<br><small>${esc(t('vu'))} ${n.dernierVu ? new Date(n.dernierVu).toLocaleString(window.LANGUE === 'fr' ? 'fr-FR' : window.LANGUE === 'en' ? 'en-GB' : 'pl-PL') : '–'}</small>`).addTo(mcp.coucheNoeuds);
     mcp.marqueurs.set(n.cle, m);
   }
 }

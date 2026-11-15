@@ -42,6 +42,8 @@
     /* MeshCore : carré orangé (répéteur), carré ambre (room server), petit rond (autres) */
     .mkc { position: relative; width: 14px; height: 14px; }
     .mkc .c { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 10px; height: 10px; background: #f97316; border: 2px solid #fff; border-radius: 2px; box-shadow: 0 0 4px #000; }
+    .mkc.rpt .c { width: 16px; height: 16px; border-radius: 50%; background: #14b8a6; border: 1.5px solid #fff; display: flex; align-items: center; justify-content: center; font: 700 10px/1 system-ui, sans-serif; color: #fff; }
+    .mkc.rpt.recent .c { background: #0f766e; } /* PL: repeater = turkusowe kółko z R */
     .mkc.salon .c { background: #fbbf24; } .mkc.autre .c { width: 7px; height: 7px; border-radius: 50%; background: #fdba74; border-width: 1.5px; }
     .mkc.flash .c { animation: flash-mc .9s ease-out; }
     @keyframes flash-mc { 0% { filter: brightness(2.2); box-shadow: 0 0 0 6px rgba(255,255,255,.35); } 100% { filter: none; } }
@@ -95,7 +97,7 @@
   </div>
   <div class="legende">
     <span class="l-mt"><i style="background:#60a5fa;border-radius:1px"></i>relais<i style="background:#3ee6c4;border-radius:1px"></i>passerelle<i style="background:#c084fc"></i>nœud (position approchée)</span>
-    <span class="l-mc"><i style="background:#f97316;border-radius:2px"></i>répéteur MeshCore<i style="background:#fbbf24;border-radius:2px"></i>room server</span>
+    <span class="l-mc"><i style="background:#14b8a6;border-radius:50%"></i>répéteur MeshCore<i style="background:#fbbf24;border-radius:2px"></i>room server</span>
     <span id="lien-complet" hidden>· <a href="/" target="_blank" rel="noopener">carte complète (administration)</a></span>
   </div>
   <script src="/langue.js"></script>
