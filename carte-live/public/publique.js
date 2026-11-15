@@ -89,9 +89,10 @@ async function demarrer() {
   // Onglets Meshtastic / MeshCore / Les deux (MeshCore seulement s'il est activé sur cette carte)
   const demande = params.get('reseau');
   vue = config.meshcore ? (['meshtastic', 'meshcore', 'deux'].includes(demande) ? demande : 'deux') : 'meshtastic';
+  if (config.reseaux === 'meshcore') vue = 'meshcore'; // PL: tylko MeshCore
   const barre = document.getElementById('reseaux');
   barre.hidden = false;
-  barre.querySelectorAll('[data-vue]').forEach((b) => { b.hidden = !config.meshcore; b.onclick = () => changerVue(b.dataset.vue); });
+  barre.querySelectorAll('[data-vue]').forEach((b) => { b.hidden = !config.meshcore || config.reseaux === 'meshcore'; b.onclick = () => changerVue(b.dataset.vue); });
   const ba = document.getElementById('b-anim');
   ba.classList.toggle('actif', etat.couches.animations);
   ba.onclick = () => { etat.couches.animations = !etat.couches.animations; ba.classList.toggle('actif', etat.couches.animations); if (typeof dessinerAxes === 'function') dessinerAxes(); };
@@ -249,7 +250,7 @@ async function basculerCouverture(mode) {
 
 // Titre : le nom du réseau suit l'onglet (« Réseau Meshtastic » devient « Réseau MeshCore » sur l'onglet MeshCore)
 function majTitre() {
-  const base = params.get('titre') || config.titre || 'Réseau Meshtastic';
+  const base = params.get('titre') || config.titre || (config.reseaux === 'meshcore' ? 'Réseau MeshCore' : 'Réseau Meshtastic');
   const nomReseau = vue === 'meshcore' ? 'MeshCore' : vue === 'deux' && config.meshcore ? 'Meshtastic et MeshCore' : 'Meshtastic';
   let titre = base.replace(/Meshtastic(\s*(et|\/|&|\+)\s*MeshCore)?|MeshCore(\s*(et|\/|&|\+)\s*Meshtastic)?/i, nomReseau);
   // Le nom de la zone de la carte (ex. Haute-Loire) suit le secteur choisi

@@ -2789,7 +2789,9 @@ const clientMqtt = mqtt.connect(config.mqtt.url, {
   // Certificat du broker vérifié (mqtts://, wss://), sauf si MQTT_TLS_NON_VERIFIE=oui (certificat auto-signé)
   rejectUnauthorized: !config.mqtt.tlsNonVerifie,
 });
-const sujets = [config.mqtt.racine + '/#', ...config.mqtt.sujetsSupplementaires, ...(config.meshcore.actif ? [config.meshcore.racine + '/#'] : [])];
+// PL: mapa „tylko MeshCore” (CARTE_RESEAUX=meshcore) nie subskrybuje tematów Meshtastic (msh/…)
+const tylkoMeshCore = config.meshcore.actif && config.carte.reseaux === 'meshcore';
+const sujets = [...(tylkoMeshCore ? [] : [config.mqtt.racine + '/#', ...config.mqtt.sujetsSupplementaires]), ...(config.meshcore.actif ? [config.meshcore.racine + '/#'] : [])];
 const prefixeMc = config.meshcore.racine + '/';
 let compteurMc = { recus: 0, observations: 0, erreurs: 0 };
 function dansPerimetreMc(cleObs, iata) {

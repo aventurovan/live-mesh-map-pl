@@ -1472,3 +1472,9 @@ label:has(> #zone-acces), label:has(> #plan-acces), label:has(> #budget-acces), 
 /* PL: przycisk czyszczenia mapy (zasięg, profil, pomiary) widoczny od razu */
 #btn-effacer.wyczysc-mape { background: #3ee6c4; color: #05211b; border-color: #3ee6c4; font-weight: 600; }
 #btn-effacer.wyczysc-mape:hover { filter: brightness(1.1); }
+
+/* PL: tylko MeshCore — bez pól tematów Meshtastic (msh/…) w ustawieniach brokera MQTT */
+body[data-reseau="meshcore"] label:has(> input[name="racine"]),
+body[data-reseau="meshcore"] label:has(> input[name="sujetsSupplementaires"]),
+body[data-reseau="meshcore"] label:has(> input[name="mqttRacine"]),
+body[data-reseau="meshcore"] label:has(> input[name="mqttSujets"]) { display: none; }

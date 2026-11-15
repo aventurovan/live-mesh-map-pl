@@ -242,7 +242,7 @@ function initCarte() {
   };
   majFondSombre();
   for (const n of surcouchesMemo || []) if (surcouches[n]) surcouches[n].addTo(carte);
-  carte.attributionControl.addAttribution('Meshtastic® est une marque de Meshtastic LLC');
+  if (etat.config.reseaux !== 'meshcore') carte.attributionControl.addAttribution('Meshtastic® est une marque de Meshtastic LLC');
   carte.attributionControl.setPrefix('Carte live par F4GLD · <a href="https://www.helloasso.com/associations/radioclub-du-velay/formulaires/2" target="_blank" rel="noopener" title="Soutenir le projet (don au Radio-club du Velay)">♥ Soutenir le projet</a> · <a href="https://meshcoresouth.pl" target="_blank" rel="noopener">MeshCore Południe</a> · <a href="https://github.com/aventurovan/live-mesh-map-pl" target="_blank" rel="noopener" title="Code source sur GitHub">Code sur GitHub</a> · <a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
   // Choix du fond et des surcouches dans le menu « Couches »
   const menu = document.querySelector('.menu-couches .menu');
@@ -2680,7 +2680,8 @@ async function ouvrirProfil(a, b) {
   const na = etat.noeuds.get(a), nb = etat.noeuds.get(b);
   f.ha.value = na && na.infrastructure ? 6 : 3;
   f.hb.value = nb && nb.infrastructure ? 6 : 3;
-  if (etat.radio && etat.radio.preset) f.preset.value = etat.radio.preset;
+  f.preset.value = 'MESHCORE_FR';
+  if (etat.radio && etat.radio.preset && f.preset.querySelector(`option[value="${etat.radio.preset}"]`)) f.preset.value = etat.radio.preset;
   if (!dlg.open) dlg.showModal();
   await calculerProfil();
 }
