@@ -5149,5 +5149,10 @@
 "Annonce {} « {} »": "Advert {0} „{1}”",
 "(position)": "(pozycja)",
 "relief IGN {} %": "teren {0} %",
-"points hauts et classement": "punkty wysokie i ranking"
+"points hauts et classement": "punkty wysokie i ranking",
+"il y a {} h": "{0} godz. temu",
+"il y a {} j": "{0} dni temu",
+"jamais": "nigdy",
+"{} saut au mieux": "min. skoków: {0}",
+"{} sauts au mieux": "min. skoków: {0}"
 }

@@ -151,8 +151,10 @@ function mcDessinerNoeuds() {
       m.setLatLng([n.lat, n.lon]);
       m.setIcon(mcIcone(n));
     }
-    m.setTooltipContent(`<b>${esc(n.nom || n.id)}</b> <small>MeshCore</small><br>${esc(mcRole(n.role).un)}${n.observateur ? ' · ' + esc(mcLibObservateur(n)) : ''} · ${ilYa(n.dernierVu)}` +
-      (n.sautsMin != null ? `<br>${n.sautsMin === 0 ? 'entendu en direct' : n.sautsMin + ' saut' + (n.sautsMin > 1 ? 's' : '') + ' au mieux'}` : '') +
+    // Części tłumaczone osobno (połączona linia nie pasuje do słownika)
+    const t = (x) => (window.tr ? window.tr(x) : x);
+    m.setTooltipContent(`<b>${esc(n.nom || n.id)}</b> <small>MeshCore</small><br>${esc(t(mcRole(n.role).un))}${n.observateur ? ' · ' + esc(t(mcLibObservateur(n))) : ''} · ${esc(t(ilYa(n.dernierVu)))}` +
+      (n.sautsMin != null ? `<br>${esc(t(n.sautsMin === 0 ? 'entendu en direct' : n.sautsMin + ' saut' + (n.sautsMin > 1 ? 's' : '') + ' au mieux'))}` : '') +
       (n.snr != null ? ` · SNR ${fmt(n.snr, 1, ' dB')}` : ''));
   }
 }
