@@ -7256,7 +7256,6 @@ async function demarrer() {
   if (etat.couches.feux) dessinerFeux();
   if (etat.couches.sf8) dessinerSf8();
   if (etat.couches.mapper) dessinerMapper(true);
-  carte.on('zoomend moveend', () => { if (etat.couches.mapper) dessinerMapper(); });
   // Liens vers le client et le flasheur officiels (Web Serial / Web Bluetooth : HTTPS et Chrome ou Edge obligatoires)
   {
     const o = etat.config.outils || {}, https = location.protocol === 'https:';
@@ -8323,7 +8322,9 @@ async function dessinerMapper(wczytaj) {
     catch (e) { if (!MP.dane) { console.warn('[Mapper]', e.message); clearTimeout(MP.minuter); MP.minuter = setTimeout(() => dessinerMapper(true), 120000); return; } }
     clearTimeout(MP.minuter); MP.minuter = setTimeout(() => dessinerMapper(true), 10 * 60000);
   }
-  if (!etat.couches.mapper || !MP.dane) return;
+  if (!etat.couches.mapper || !MP.dane || typeof carte === 'undefined' || !carte) return;
+  // przerysowanie po przesunięciu / zbliżeniu (podpinane raz, gdy mapa już istnieje)
+  if (!MP.podpiete) { MP.podpiete = true; carte.on('zoomend moveend', () => { if (etat.couches.mapper) dessinerMapper(); }); }
   if (!MP.rend) MP.rend = L.canvas({ padding: 0.3 });
   const z = carte.getZoom(), sz = mpRozmiar(z), widok = carte.getBounds().pad(0.3), kratki = new Map();
   for (const p of MP.dane.pts) {
