@@ -642,7 +642,7 @@ async function chargerSanteCarte() {
   const p = $('#nb-sante');
   p.textContent = r.alertes.length || '✓';
   p.className = 'pastille' + (r.niveau === 'critique' ? ' critique' : r.niveau === 'attention' ? ' attention' : ' ok');
-  $('#resume-sante').textContent = r.alertes.length ? r.alertes[0].message.slice(0, 40) + (r.alertes[0].message.length > 40 ? '…' : '') : `processeur ${fmt(e.cpuPct, 0, ' %')} · ${e.memMo ?? '–'} Mo`;
+  $('#resume-sante').textContent = r.alertes.length ? (() => { const t = window.tr ? window.tr(r.alertes[0].message) : r.alertes[0].message; return t.slice(0, 40) + (t.length > 40 ? '…' : ''); })() : `processeur ${fmt(e.cpuPct, 0, ' %')} · ${e.memMo ?? '–'} Mo`;
   const m = (l, v, alerte) => `<div class="mesure"><span>${l}</span><b${alerte ? ' style="color:var(--attention)"' : ''}>${v}</b></div>`;
   const dureeDepuis = (t) => { const s = Math.round((Date.now() - t) / 1000); return s < 3600 ? Math.round(s / 60) + ' min' : s < 86400 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' j'; };
   $('#sante-carte').innerHTML = `

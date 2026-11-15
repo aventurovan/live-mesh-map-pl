@@ -404,8 +404,8 @@ function dessinerMc() {
     if (!relais && !opt.clients) continue;
     const cls = n.role === 'salon' ? 'salon' : relais ? 'rpt ' + (n.statut || '') : 'autre';
     const t = (x) => (window.tr ? window.tr(x) : x);
-    const m = L.marker([n.lat, n.lon], { icon: L.divIcon({ className: '', html: `<div class="mkc ${cls}"><div class="c">${cls.startsWith('rpt') ? 'R' : ''}</div></div>`, iconSize: [16, 16], iconAnchor: [8, 8] }), zIndexOffset: relais ? 450 : 0 })
-      .bindTooltip(`<b>${esc(n.nom || n.id)}</b> <small>MeshCore</small><br>${esc(t(n.roleFr || n.role || ''))}<br><small>${esc(t('vu'))} ${n.dernierVu ? new Date(n.dernierVu).toLocaleString(window.LANGUE === 'fr' ? 'fr-FR' : window.LANGUE === 'en' ? 'en-GB' : 'pl-PL') : '–'}</small>`).addTo(mcp.coucheNoeuds);
+    const m = L.marker([n.lat, n.lon], { icon: L.divIcon({ className: '', html: `<div class="mkc ${cls}"><div class="c"></div></div>`, iconSize: [16, 16], iconAnchor: [8, 8] }), zIndexOffset: relais ? 450 : 0 })
+      .bindTooltip(`<b>${esc(String(n.nom || '').replace(/[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}\u{20E3}\u{FFFD}]/gu, '').trim() || n.id)}</b> <small>MeshCore</small><br>${esc(t(n.roleFr || n.role || ''))}<br><small>${esc(t('vu'))} ${n.dernierVu ? new Date(n.dernierVu).toLocaleString(window.LANGUE === 'fr' ? 'fr-FR' : window.LANGUE === 'en' ? 'en-GB' : 'pl-PL') : '–'}</small>`).addTo(mcp.coucheNoeuds);
     mcp.marqueurs.set(n.cle, m);
   }
 }

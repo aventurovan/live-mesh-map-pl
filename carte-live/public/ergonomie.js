@@ -180,7 +180,9 @@ function tuilesAccueil() {
     { ic: '📡', nom: 'Étudier la couverture', aide: 'Où ça passe, où poser un relais', go: () => allerGroupe('couverture') },
   ];
   // Signalements masqués par l'administrateur : la tuile mène à la vigilance météo
-  if (typeof masquee === 'function' && masquee('signalements')) t[2] = { ic: '🌦️', nom: 'Alertes météo', aide: 'Vigilance Météo-France en cours', go: () => ficheAlertesOff() };
+  // Poza Francją (PL) ostrzeżenia Météo-France nic nie dają: kafelek znika
+  if (typeof masquee === 'function' && masquee('signalements') && etat.config && etat.config.horsFrance) t.splice(2, 1);
+  else if (typeof masquee === 'function' && masquee('signalements')) t[2] = { ic: '🌦️', nom: 'Alertes météo', aide: 'Vigilance Météo-France en cours', go: () => ficheAlertesOff() };
   if (etat.gestion) t.push({ ic: '🛠', nom: 'Gérer mes nœuds', aide: 'Programmer, équipes, positions', go: () => allerGroupe('gerer') });
   t.push({ ic: '⚙️', nom: etat.membre ? 'Régler la carte' : 'Se connecter, affichage', aide: etat.admin ? 'Tous les réglages au même endroit' : 'Compte, affichage, aide', go: () => allerGroupe('reglages') });
   return t;

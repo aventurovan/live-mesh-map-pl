@@ -19,13 +19,16 @@ const MC_TYPES = {
 const MC_CLE_TYPE = Object.fromEntries(Object.entries(MC_TYPES).filter(([, v]) => v.type).map(([k, v]) => [v.type, k]));
 const mcType = (t) => MC_TYPES[MC_CLE_TYPE[t] || t] || MC_TYPES.autre;
 const MC_ROLES = {
-  repeteur: { nom: 'Répéteurs', un: 'Répéteur', hex: '#14b8a6' },
+  repeteur: { nom: 'Répéteurs', un: 'Répéteur', hex: '#fbbf24' },
   salon: { nom: 'Room servers', un: 'Room server', hex: '#eab308' },
   companion: { nom: 'Companions', un: 'Companion', hex: '#22d3ee' },
   capteur: { nom: 'Capteurs', un: 'Capteur', hex: '#84cc16' },
   inconnu: { nom: 'Inconnus', un: 'Inconnu', hex: '#9ca3af' },
 };
 const mcRole = (r) => MC_ROLES[r] || MC_ROLES.inconnu;
+// PL: nazwa na mapie bez emotek (podpis i dymek); listy i fiszki pokazują pełną nazwę
+const bezEmotek = (s) => String(s || '').replace(/[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}\u{FFFD}]/gu, '').replace(/\s{2,}/g, ' ').trim();
+const nazwaMapy = (n) => bezEmotek(n.nom) || n.id || '';
 
 const mc = {
   actif: false,
@@ -119,7 +122,7 @@ function mcIcone(n) {
   const montrerNom = n.infrastructure || carte.getZoom() >= 11;
   return L.divIcon({
     className: '',
-    html: `<div class="${classes.join(' ')}" style="--mcc:${mcRole(r).hex}"><div class="c">${r === 'repeteur' ? 'R' : ''}</div>${montrerNom ? `<div class="lbl">${esc((n.nom || n.id).slice(0, 18))}</div>` : ''}</div>`,
+    html: `<div class="${classes.join(' ')}" style="--mcc:${mcRole(r).hex}"><div class="c"></div>${montrerNom ? `<div class="lbl">${esc(nazwaMapy(n).slice(0, 18))}</div>` : ''}</div>`,
     iconSize: [14, 14], iconAnchor: [7, 7],
   });
 }
@@ -153,7 +156,7 @@ function mcDessinerNoeuds() {
     }
     // Części tłumaczone osobno (połączona linia nie pasuje do słownika)
     const t = (x) => (window.tr ? window.tr(x) : x);
-    m.setTooltipContent(`<b>${esc(n.nom || n.id)}</b> <small>MeshCore</small><br>${esc(t(mcRole(n.role).un))}${n.observateur ? ' · ' + esc(t(mcLibObservateur(n))) : ''} · ${esc(t(ilYa(n.dernierVu)))}` +
+    m.setTooltipContent(`<b>${esc(nazwaMapy(n))}</b> <small>MeshCore</small><br>${esc(t(mcRole(n.role).un))}${n.observateur ? ' · ' + esc(t(mcLibObservateur(n))) : ''} · ${esc(t(ilYa(n.dernierVu)))}` +
       (n.sautsMin != null ? `<br>${esc(t(n.sautsMin === 0 ? 'entendu en direct' : n.sautsMin + ' saut' + (n.sautsMin > 1 ? 's' : '') + ' au mieux'))}` : '') +
       (n.snr != null ? ` · SNR ${fmt(n.snr, 1, ' dB')}` : ''));
   }

@@ -650,7 +650,7 @@ body[data-reseau="meshcore"] .kpis .kpi-mc:first-of-type, body[data-reseau="mesh
 .sous-onglets-mc button.actif { color: #fff; border-color: #f97316; background: rgba(249,115,22,.18); }
 .role-mc { display: inline-block; width: 9px; height: 9px; margin-right: 6px; background: var(--mcc); vertical-align: 0; }
 .role-mc.repeteur { width: 12px; height: 12px; border-radius: 50%; position: relative; vertical-align: -1px; }
-.role-mc.repeteur::after { content: "R"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: 700 8px/1 system-ui, sans-serif; color: #fff; font-style: normal; }
+.role-mc.repeteur { box-shadow: 0 0 0 1.5px #fff; }
 .role-mc.salon { border-radius: 2px; }
 .role-mc.companion, .role-mc.inconnu { border-radius: 50%; background: transparent; border: 2.5px solid var(--mcc); }
 .role-mc.capteur { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
@@ -659,11 +659,13 @@ body[data-reseau="meshcore"] .kpis .kpi-mc:first-of-type, body[data-reseau="mesh
 /* Marqueurs MeshCore */
 .mkc { position: relative; }
 .mkc .c { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; transform: translate(-50%, -50%); background: var(--mcc); border: 1.5px solid rgba(11,17,23,.95); }
-/* PL: repeater = turkusowe kółko z literą R (aktywny jasny, ostatnio słyszany ciemniejszy, nieaktywny szary) */
-.mkc.repeteur .c { width: 16px; height: 16px; border-radius: 50%; background: #14b8a6; border: 1.5px solid #fff; display: flex; align-items: center; justify-content: center; font: 700 10px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 0 2px rgba(0,0,0,.5); }
-.mkc.repeteur.recent .c { background: #0f766e; }
-.mkc.repeteur.inactif .c { background: #6b7280; opacity: .6; }
-.mkc.repeteur .lbl { top: 15px; color: #ccfbf1; }
+/* PL: repeater = złote kółko z białą obwódką i ciemnym obrysem (aktywny jasny, ostatnio słyszany ciemniejszy, nieaktywny szary);
+   podpis na ciemnej plakietce, czytelny na każdym podkładzie */
+.mkc.repeteur .c { width: 18px; height: 18px; border-radius: 50%; background: #fbbf24; border: 2px solid #fff; box-shadow: 0 0 0 2px #0b1117; }
+.mkc.repeteur.actif .c { box-shadow: 0 0 0 2px #0b1117, 0 0 10px rgba(251,191,36,.8); }
+.mkc.repeteur.recent .c { background: #ca8a04; }
+.mkc.repeteur.inactif .c { background: #6b7280; opacity: .7; }
+.mkc.repeteur .lbl { top: 13px; font-size: 12px; font-weight: 600; color: #fff; background: rgba(10,14,18,.8); padding: 1px 6px; border-radius: 4px; text-shadow: none; }
 .mkc.salon .c { border-radius: 3px; }
 .mkc.companion .c, .mkc.inconnu .c { width: 12px; height: 12px; border-radius: 50%; background: rgba(11,17,23,.9); border: 3px solid var(--mcc); }
 .mkc.capteur .c { width: 14px; height: 13px; border: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
@@ -679,7 +681,7 @@ body[data-reseau="meshcore"] .kpis .kpi-mc:first-of-type, body[data-reseau="mesh
 .leg-titre-mc { font-weight: 700; color: #fdba74; font-size: 12px; margin: 2px 0; }
 .pastille-leg.mc { background: var(--mcc); }
 .pastille-leg.mc.repeteur { border-radius: 50%; position: relative; }
-.pastille-leg.mc.repeteur::after { content: "R"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: 700 8px/1 system-ui, sans-serif; color: #fff; }
+.pastille-leg.mc.repeteur { box-shadow: 0 0 0 1.5px #fff; }
 .pastille-leg.sf8 { background: #c4b5fd; border: 2px solid #6d28d9; border-radius: 50%; }
 .pastille-leg.mc.salon { border-radius: 2px; }
 .pastille-leg.mc.companion, .pastille-leg.mc.inconnu { background: transparent; border: 2.5px solid var(--mcc); border-radius: 50%; }
@@ -1194,7 +1196,7 @@ body.theme-clair input, body.theme-clair select, body.theme-clair textarea { col
 body.theme-clair .leaflet-tooltip.info { background: #fff; color: #05090d; border-color: #33475a; }
 body.theme-clair .mk .lbl { color: #05090d; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff; }
 body.theme-clair .mkc .lbl { color: #7c2d12; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff; }
-body.theme-clair .mkc.repeteur .lbl { color: #115e59; }
+body.theme-clair .mkc.repeteur .lbl { color: #fff; text-shadow: none; }
 body.theme-clair .courbe svg { color: #05090d; }
 body.theme-clair[data-reseau="les-deux"] .mc-seul-bloc .titre-reseau, body.theme-clair .badge.reseau-mc { color: #9a3412; background: rgba(249,115,22,.18); }
 body.theme-clair[data-reseau="les-deux"] .titre-reseau { color: #0b6e63; background: rgba(11,110,99,.12); }
