@@ -188,7 +188,6 @@ function initCarte() {
       L.tileLayer(t.url, { maxZoom: 19, maxNativeZoom: t.zoomMaxNatif || 19, className: t.sombre ? 'tuiles-sombres' : '', attribution: t.attribution }),
       ...(t.etiquettes ? [L.tileLayer(t.etiquettes, { maxZoom: 19, maxNativeZoom: t.zoomMaxNatif || 19, className: 'etiquettes-claires' })] : []),
     ]),
-    'Plan IGN': L.tileLayer(wmts('GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2'), { maxZoom: 19, maxNativeZoom: 19, attribution: ign }),
     'Plan IGN sombre': L.tileLayer(wmts('GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2'), { maxZoom: 19, maxNativeZoom: 19, className: 'tuiles-sombres', attribution: ign }),
     'Photos aériennes IGN': L.tileLayer(wmts('ORTHOIMAGERY.ORTHOPHOTOS', 'image/jpeg'), { maxZoom: 19, maxNativeZoom: 19, attribution: ign }),
     'Topographique': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, maxNativeZoom: 17, subdomains: 'abc', attribution: 'Carte &copy; <a href="https://opentopomap.org" target="_blank" rel="noopener">OpenTopoMap</a> (CC-BY-SA), données &copy; contributeurs OpenStreetMap' }),
@@ -2688,7 +2687,7 @@ async function ouvrirProfil(a, b) {
 async function calculerProfil() {
   const f = $('#form-profil');
   const sortie = $('#profil-resultat');
-  sortie.innerHTML = '<div class="vide">Calcul du profil (altitudes IGN)…</div>';
+  sortie.innerHTML = '<div class="vide">Calcul du profil…</div>';
   const ext = f.dataset.coords ? JSON.parse(f.dataset.coords) : { a: f.dataset.a, b: f.dataset.b };
   const qs = new URLSearchParams({ ...ext, ha: f.ha.value, hb: f.hb.value, ptx: f.ptx.value, ga: f.ga.value, gb: f.ga.value, pertes: f.pertes.value, preset: f.preset.value });
   let r;
@@ -7244,6 +7243,8 @@ async function demarrer() {
   const economie = !!(navigator.connection && (navigator.connection.saveData || /(^|-)2g$/.test(navigator.connection.effectiveType || '')));
   if (!choixCouches && ((window.matchMedia && matchMedia('(pointer: coarse)').matches) || economie)) etat.couches.animations = false;
   Object.assign(etat.couches, Object.fromEntries(Object.entries(choixCouches || {}).filter(([k, v]) => k in etat.couches && typeof v === 'boolean')));
+  // PL: radar, siatka DFCI i miejsca przy drogach usunięte z menu — wyłączone także, gdy zostały zapisane jako włączone
+  etat.couches.radar = etat.couches.dfci = etat.couches.routiers = false;
   document.querySelectorAll('.bascule[data-couche]').forEach((b) => b.classList.toggle('actif', !!etat.couches[b.dataset.couche]));
   if (etat.couches.radar) dessinerRadar();
   if (etat.couches.feux) dessinerFeux();

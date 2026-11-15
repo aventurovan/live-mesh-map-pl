@@ -59,9 +59,6 @@
       <button class="bascule actif" data-couche="sommets" title="Points hauts du relief et meilleurs sites radio">Points hauts</button>
       <button class="bascule" data-couche="sf8" title="Repeatery sieci SF8 (MeshCore Polska, 869,618 MHz · BW 62,5 · SF8), dane odświeżane co 30 min">Repeatery SF8</button>
       <button class="bascule" data-couche="feux" title="Foyers de feu détectés par satellite (NASA FIRMS, 24 h) : rouge moins de 3 h, orange moins de 12 h. Non confirmés">Feux actifs</button>
-      <button class="bascule" data-couche="radar" title="Radar de pluie (RainViewer), mis à jour toutes les 10 min">Radar de pluie</button>
-      <button class="bascule" data-couche="dfci" title="Carroyage DFCI des pompiers (100 km, 20 km, 2 km et zones 1 à 5 selon le zoom)">Carroyage DFCI</button>
-      <button class="bascule" data-couche="routiers" title="Webcams et stations du Département et de la DIR Massif Central (mât, électricité) : sites possibles pour des relais">Sites routiers</button>
       <button class="bascule actif" data-couche="federation" title="Relais des bulles voisines (cartes fédérées)">Bulles voisines</button>
       <button class="bascule actif seul-membre" data-couche="releves" title="Relevés de terrain (photos, notes, mesures)" hidden>Relevés terrain</button>
       </div>
@@ -319,9 +316,9 @@
     <form id="form-profil" class="parametres">
       <label title="Hauteur de l’antenne au-dessus du sol">Antenne A (m au-dessus du sol) <input name="ha" type="number" step="0.5" min="0" value="3"></label>
       <label title="Hauteur de l’antenne au-dessus du sol">Antenne B (m au-dessus du sol) <input name="hb" type="number" step="0.5" min="0" value="3"></label>
-      <label>Puissance (dBm) <input name="ptx" type="number" step="1" min="0" max="30" value="27"></label>
-      <label>Gain antennes (dBi) <input name="ga" type="number" step="0.5" value="2.15"></label>
-      <label>Pertes câbles (dB) <input name="pertes" type="number" step="0.5" min="0" value="1.5"></label>
+      <label>Puissance (dBm) <input name="ptx" type="number" step="1" min="0" max="30" value="22"></label>
+      <label>Gain antennes (dBi) <input name="ga" type="number" step="0.5" value="5"></label>
+      <input name="pertes" type="hidden" value="0">
       <label>Preset <select name="preset">
         <option value="LONG_FAST">LongFast</option><option value="LONG_MODERATE">LongModerate</option>
         <option value="LONG_SLOW">LongSlow</option><option value="MEDIUM_FAST">MediumFast</option>

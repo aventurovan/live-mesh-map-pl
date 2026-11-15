@@ -222,6 +222,8 @@ function creerAnalyse(stockage, config, reseau, presetCourant) {
       if (!r.ok) throw new Error('IGN ' + r.status);
       const j = await r.json();
       points = (j.elevations || []).map((e) => ({ lat: e.lat, lon: e.lon, z: e.z > -1000 ? e.z : null }));
+      // Poza Francją IGN zwraca same braki (−99999): wtedy Copernicus
+      if (points.length < 2 || points.filter((p) => p.z != null).length < points.length * 0.8) throw new Error('IGN : hors couverture');
       source = 'IGN RGE ALTI';
     } catch (e) {
       // Repli : Open-Meteo (Copernicus DEM 90 m)
@@ -234,7 +236,10 @@ function creerAnalyse(stockage, config, reseau, presetCourant) {
       source = 'Copernicus DEM 90 m (Open-Meteo)';
     }
     // Comble les trous éventuels
-    for (let i = 0; i < points.length; i++) if (points[i].z == null) points[i].z = (points[i - 1] || points[i + 1] || { z: 0 }).z;
+    if (!points || points.length < 2) throw new Error('Brak danych wysokości dla tej trasy');
+    let ostatnia = points.find((p) => p.z != null);
+    ostatnia = ostatnia ? ostatnia.z : 0;
+    for (const p of points) { if (p.z == null || !Number.isFinite(p.z)) p.z = ostatnia; else ostatnia = p.z; }
     const res = { points, source };
     cacheAlti.set(cle, res);
     if (cacheAlti.size > 300) cacheAlti.delete(cacheAlti.keys().next().value);
@@ -282,7 +287,7 @@ function creerAnalyse(stockage, config, reseau, presetCourant) {
     const v = pire.v;
     const perteDiffraction = v > -0.78 ? 6.9 + 20 * Math.log10(Math.sqrt((v - 0.1) ** 2 + 1) + v - 0.1) : 0;
     const fspl = 20 * Math.log10(D / 1000) + 20 * Math.log10(f / 1e6) + 32.44;
-    const ptx = opts.ptx ?? 27, ga = opts.ga ?? 2.15, gb = opts.gb ?? 2.15, pertes = opts.pertes ?? 1.5;
+    const ptx = opts.ptx ?? 22, ga = opts.ga ?? 5, gb = opts.gb ?? 5, pertes = 0; // PL: straty w kablu nie są liczone
     const prx = ptx + ga + gb - pertes - fspl - perteDiffraction;
     const bruit = -174 + 10 * Math.log10(p.bw * 1000) + 6;
     const snrEstime = prx - bruit;
