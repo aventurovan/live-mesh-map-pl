@@ -26,6 +26,7 @@ const MC_ROLES = {
   inconnu: { nom: 'Inconnus', un: 'Inconnu', hex: '#9ca3af' },
 };
 const mcRole = (r) => MC_ROLES[r] || MC_ROLES.inconnu;
+const ZOOM_NAZW = 12; // od tego zbliżenia podpisy węzłów MeshCore na mapie
 // PL: nazwa na mapie bez emotek (podpis i dymek); listy i fiszki pokazują pełną nazwę
 const bezEmotek = (s) => String(s || '').replace(/[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}\u{FFFD}]/gu, '').replace(/\s{2,}/g, ' ').trim();
 const nazwaMapy = (n) => bezEmotek(n.nom) || n.id || '';
@@ -119,7 +120,8 @@ function mcIcone(n) {
   const r = n.role in MC_ROLES ? n.role : 'inconnu';
   const classes = ['mkc', r, n.statut];
   if (n.observateur) classes.push('observateur');
-  const montrerNom = n.infrastructure || carte.getZoom() >= 11;
+  // PL: nazwy dopiero od zbliżenia 12 (poziom miasta), także dla repeaterów — wcześniej zasłaniały mapę
+  const montrerNom = carte.getZoom() >= ZOOM_NAZW;
   return L.divIcon({
     className: '',
     html: `<div class="${classes.join(' ')}" style="--mcc:${mcRole(r).hex}"><div class="c"></div>${montrerNom ? `<div class="lbl">${esc(nazwaMapy(n).slice(0, 18))}</div>` : ''}</div>`,
