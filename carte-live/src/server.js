@@ -207,7 +207,13 @@ const pagesVersionnees = new Map();
 function pageVersionnee(fichier) {
   if (!pagesVersionnees.has(fichier)) {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', fichier), 'utf8')
-      .replace(/((?:href|src)="\/(?!vendor\/)[\w.-]+\.(?:css|js))"/g, `$1?v=${VERSION}"`);
+      // PL: wersja pliku = skrót jego zawartości (nie numer wydania), żeby przeglądarka i Cloudflare
+      // brały nowy plik zaraz po każdej zmianie w repozytorium
+      .replace(/((?:href|src)="\/(?!vendor\/)([\w.-]+\.(?:css|js)))"/g, (_, atr, plik) => {
+        let v = VERSION;
+        try { v = require('crypto').createHash('sha1').update(fs.readFileSync(path.join(__dirname, '..', 'public', plik))).digest('hex').slice(0, 10); } catch { /* plik spoza public */ }
+        return `${atr}?v=${v}"`;
+      });
     pagesVersionnees.set(fichier, html);
   }
   return pagesVersionnees.get(fichier);
