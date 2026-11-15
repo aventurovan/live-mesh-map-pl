@@ -304,7 +304,7 @@ const CATEGORIES = [
 const categorie = (n) => CATEGORIES.find((c) => c.roles.includes(n.role)) || CATEGORIES[CATEGORIES.length - 1];
 const passerelleEnLigne = (n) => n.passerelle && n.etatPasserelle !== 'offline' && Date.now() - (n.dernierVuPasserelle || 0) < 5 * 60000;
 etat.legende = (() => {
-  const defaut = { cat: Object.fromEntries(CATEGORIES.map((c) => [c.cle, true])), seulMqtt: false, chaleur: true, alertes: true };
+  const defaut = { cat: Object.fromEntries(CATEGORIES.map((c) => [c.cle, true])), seulMqtt: false, chaleur: true, alertes: true, replie: true }; // PL: legenda domyślnie zwinięta
   try { return { ...defaut, ...JSON.parse(localStorage.getItem('gaulix_legende') || '{}') }; } catch { return defaut; }
 })();
 const memoLegende = () => { try { localStorage.setItem('gaulix_legende', JSON.stringify(etat.legende)); } catch { /* stockage indisponible */ } };

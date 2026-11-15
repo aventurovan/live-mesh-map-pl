@@ -1545,3 +1545,73 @@ body.theme-clair .bulle-visite { background: #fff; color: #1F2A26; border-color:
 .btn-motyw:hover { border-color: var(--accent); }
 .btn-motyw .ik-jasny { display: inline; } .btn-motyw .ik-ciemny { display: none; }
 body.theme-clair .btn-motyw .ik-jasny { display: none; } body.theme-clair .btn-motyw .ik-ciemny { display: inline; }
+
+/* ============================================================================================
+   PL: nowy układ (komputer, body.uklad-nowy — uklad.js): górny pasek, szyna sekcji, pasek pakietów na żywo
+   ============================================================================================ */
+body.uklad-nowy { --h-pasek: 60px; --szer-szyny: 78px; }
+body.uklad-nowy header.barre { position: fixed; top: 0; left: 0; right: 0; height: var(--h-pasek); z-index: 1002; display: flex; align-items: center; gap: 14px; padding: 0 14px; background: var(--surface); border-bottom: 1px solid var(--bord); border-radius: 0; box-shadow: 0 2px 12px rgba(31, 42, 38, .06); }
+body.uklad-nowy header.barre .marque, body.uklad-nowy header.barre .kpis { position: static; background: none; border: 0; box-shadow: none; backdrop-filter: none; padding: 0; margin: 0; }
+body.uklad-nowy header.barre .marque { flex: none; }
+body.uklad-nowy header.barre .marque .version { display: none; }
+body.uklad-nowy .kpis { gap: 2px; flex: none; }
+body.uklad-nowy .kpi { padding: 2px 10px; min-width: 0; }
+body.uklad-nowy .kpi:first-child { border-left: 0; }
+body.uklad-nowy .kpi b { font-size: 15px; line-height: 1.1; }
+body.uklad-nowy .kpi span { font-size: 9.5px; }
+body.uklad-nowy .recherche-lieu { position: static; flex: 1 1 200px; max-width: 340px; margin-left: auto; transform: none; width: auto; left: auto; top: auto; }
+body.uklad-nowy .recherche-lieu input { border-radius: 999px; box-shadow: none; padding-top: 7px; padding-bottom: 7px; }
+body.uklad-nowy .outils { position: static; background: none; border: 0; box-shadow: none; padding: 0; flex-wrap: nowrap; align-items: center; gap: 6px; }
+body.uklad-nowy .outils > details > summary, body.uklad-nowy .outils > button, body.uklad-nowy .outils > select, body.uklad-nowy .outils > label { border-radius: 10px; }
+body.uklad-nowy header.barre { flex-wrap: nowrap !important; align-items: center !important; justify-content: flex-start !important; }
+body.uklad-nowy header.barre .soutien, body.uklad-nowy header.barre .lien-github { display: none; }
+body.uklad-nowy .recherche-lieu { min-width: 180px; max-width: 280px; }
+body.uklad-nowy .outils #sel-zone { max-width: 130px; }
+body.uklad-nowy .outils .choix { white-space: nowrap; }
+@media (max-width: 1850px) { body.uklad-nowy .kpi:nth-child(n+4) { display: none; } }
+@media (max-width: 1520px) { body.uklad-nowy .kpis { display: none; } }
+
+/* szyna sekcji */
+.szyna { position: fixed; z-index: 1001; left: 10px; top: calc(var(--h-pasek) + 10px); bottom: 12px; width: var(--szer-szyny); background: var(--surface); border: 1px solid var(--bord); border-radius: 16px; box-shadow: 0 4px 18px rgba(31, 42, 38, .10); padding: 8px 6px; }
+.szyna .groupes { flex-direction: column; gap: 4px; padding: 0; border: 0; height: 100%; }
+.szyna .groupes button[data-groupe] { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 2px 8px; border: 0; border-radius: 12px; font-size: 11px; font-weight: 700; line-height: 1.15; white-space: normal; text-align: center; color: var(--doux); }
+.szyna .groupes button[data-groupe]::before { content: ""; width: 22px; height: 22px; background: currentColor; -webkit-mask: var(--ik) no-repeat center / contain; mask: var(--ik) no-repeat center / contain; }
+.szyna .groupes button[data-groupe]:hover { background: var(--surface-2); color: var(--texte); }
+.szyna .groupes button[data-groupe].actif { background: var(--karta-2); color: var(--accent); border: 0; }
+body.panneau-replie .szyna .groupes button[data-groupe].actif { background: none; color: var(--doux); }
+.szyna .groupes .aide-onglet { margin: auto auto 2px; }
+.szyna .groupes .replier { display: none; }
+.szyna .pastille-groupe { position: absolute; top: 4px; right: 8px; }
+.szyna button[data-groupe="reseau"] { --ik: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.9 19.1a10 10 0 0 1 0-14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M19.1 4.9a10 10 0 0 1 0 14.2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3C/svg%3E"); }
+.szyna button[data-groupe="messages"] { --ik: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3C/svg%3E"); }
+.szyna button[data-groupe="couverture"] { --ik: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 20 6-14 4 8 3-5 5 11z'/%3E%3C/svg%3E"); }
+.szyna button[data-groupe="gerer"] { --ik: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z'/%3E%3C/svg%3E"); }
+.szyna button[data-groupe="reglages"] { --ik: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z'/%3E%3C/svg%3E"); }
+
+/* panel obok szyny, karta węzła pod paskiem */
+body.uklad-nowy .panneau { left: calc(var(--szer-szyny) + 20px); top: calc(var(--h-pasek) + 10px); bottom: 12px; width: 350px; }
+body.uklad-nowy .deplier { display: none !important; }
+body.uklad-nowy .fiche { top: calc(var(--h-pasek) + 10px); }
+body.uklad-nowy .consigne-mode { top: calc(var(--h-pasek) + 10px); }
+body.uklad-nowy .leaflet-top { top: var(--h-pasek); }
+
+/* pasek pakietów na żywo */
+.pasek-pakietow { position: fixed; z-index: 998; bottom: 24px; left: calc(var(--szer-szyny) + 20px + 350px + 10px); right: 12px; height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 6px; background: #1F2A26; color: #C9D3CE; border-radius: 12px; box-shadow: 0 4px 18px rgba(31, 42, 38, .18); overflow: hidden; font-size: 12px; }
+body.panneau-replie .pasek-pakietow { left: calc(var(--szer-szyny) + 20px); }
+.pp-na-zywo { flex: none; display: inline-flex; align-items: center; gap: 6px; background: rgba(111, 195, 162, .14); color: #9EE6C4; border: 0; border-radius: 8px; padding: 5px 9px; font-weight: 800; font-size: 11px; letter-spacing: .06em; cursor: pointer; }
+.pp-na-zywo::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #6FC3A2; animation: pp-puls 1.6s infinite; }
+@keyframes pp-puls { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+.pp-lista { flex: 1; display: flex; gap: 18px; overflow: hidden; white-space: nowrap; cursor: pointer; mask-image: linear-gradient(90deg, #000 85%, transparent); -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); }
+.pp-pakiet { display: inline-flex; align-items: center; gap: 5px; transition: background .6s; border-radius: 6px; padding: 2px 4px; }
+.pp-pakiet.nowy { background: rgba(111, 195, 162, .22); }
+.pp-pakiet i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.pp-pakiet b { color: #FBF6EE; }
+.pp-godz { font-family: var(--mono); color: #8FA59C; font-size: 11px; }
+.pp-info { color: #9FB0A8; }
+.pp-pusty { color: #8FA59C; }
+/* legenda i ＋ nad paskiem pakietów */
+body.uklad-nowy .legende { bottom: 74px; }
+body.uklad-nowy .fab-plus { bottom: 74px; }
+body.uklad-nowy header.barre { max-width: none; pointer-events: auto; }
+body.uklad-nowy .outils summary, body.uklad-nowy .outils > button { white-space: nowrap; }
+body.uklad-nowy .legende { width: auto; max-width: 300px; }

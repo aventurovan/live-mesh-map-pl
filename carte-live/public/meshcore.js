@@ -1801,6 +1801,7 @@ function mcRecevoir(m) {
     }
     mcAnimer(m);
     mcAjouterAuFlux(m);
+    if (typeof window.tickerPakietow === 'function') window.tickerPakietow(m); // PL: pasek pakietów na żywo
     mcNoterActivite(m.de); (m.cheminResolu || []).forEach(mcNoterActivite);
     if (m.texte && m.premiere && etat.membre) { mcNoterMessageRecu({ canal: m.canal }); mcMessagesARafraichir(); }
   } else if (m.genre === 'mc-etat') {
