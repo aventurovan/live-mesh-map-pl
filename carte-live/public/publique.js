@@ -65,6 +65,7 @@ async function demarrer() {
   config.zoneDep = config.zone;
   try { departements = await (await fetch('/api/departements')).json(); } catch { departements = []; }
   { let z = params.get('zone'); try { if (!z) z = localStorage.getItem('publique_zone'); } catch { /* indisponible */ } if (z) zoneSel = z; }
+  if (zoneSel === 'france' && config.horsFrance) zoneSel = 'dep';
   if (!bboxZone() && zoneSel !== 'france') zoneSel = 'dep';
   installerZone();
   majTitre();
@@ -267,7 +268,7 @@ function installerZone() {
   const sel = document.getElementById('choix-zone');
   if (!sel) return;
   const o = (v, t) => `<option value="${v}">${esc(t)}</option>`;
-  sel.innerHTML = o('dep', config.zoneNom || 'Département de la carte') + (config.zoneVoisins ? o('v', `${config.zoneNom} + voisins`) : '') + o('france', 'France entière')
+  sel.innerHTML = o('dep', config.zoneNom || 'Département de la carte') + (config.zoneVoisins ? o('v', `${config.zoneNom} + voisins`) : '') + (config.horsFrance ? '' : o('france', 'France entière'))
     + ((config.regions || []).length ? `<optgroup label="Régions">${config.regions.map((r) => o('r' + r.code, r.nom)).join('')}</optgroup>` : '')
     + (departements.length ? `<optgroup label="Départements">${departements.map((d) => o('d' + d.code, `${d.code} · ${d.nom}`)).join('')}</optgroup>` : '');
   sel.value = zoneSel;

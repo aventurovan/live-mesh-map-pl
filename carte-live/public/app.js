@@ -5998,6 +5998,7 @@ function appliquerZone(recadrer) {
   if (!etat.config.zoneDep) etat.config.zoneDep = etat.config.zone;
   if (etat.zoneMode === 'voisins' && !v) etat.zoneMode = 'dep';
   if (/^r\d{2}$/.test(etat.zoneMode) && !regionChoisie()) etat.zoneMode = 'dep';
+  if (etat.zoneMode === 'france' && etat.config.horsFrance) etat.zoneMode = 'dep'; // poza Francją: bez „France”
   const reg = regionChoisie();
   etat.zone = etat.zoneMode !== 'france';
   // Le reste de l'application lit etat.config.zone : on y place le rectangle du secteur choisi
@@ -6013,6 +6014,7 @@ function appliquerZone(recadrer) {
   b.options[1].textContent = `${nom} + voisins`;
   b.options[1].title = v ? v.departements.map((d) => `${d.code} ${d.nom}`).join(', ') : '';
   b.options[1].hidden = !v;
+  { const fr = b.querySelector('option[value="france"]'); if (fr) fr.hidden = !!etat.config.horsFrance; }
   b.value = etat.zoneMode;
   b.title = etat.zoneMode === 'voisins' && v ? `${nom} et départements voisins : ${v.departements.map((d) => d.nom).join(', ')}` : reg ? `Région ${reg.nom}` : 'Secteur affiché : votre département, avec ses voisins, une région ou toute la France';
   b.classList.toggle('actif', etat.zone);

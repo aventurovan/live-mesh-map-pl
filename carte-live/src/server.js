@@ -39,7 +39,10 @@ const installations = creerInstallations(path.dirname(config.fichierBase));
 let federation = null; // créée une fois le réseau prêt (voir plus bas)
 // Zone « département + voisins », recalculée si le département ou sa zone changent (installation, réglages)
 let cacheVoisins = { cle: null, val: null };
+// Mapa poza Francją (kod obszaru MN49E019…): bez francuskich regionów, departamentów i „+ sąsiedzi”
+const horsFrance = () => estCodeMonde(String(config.departement.code || '').toUpperCase());
 function zoneVoisins() {
+  if (horsFrance()) return null;
   const cle = `${config.departement.code}|${config.zone.join(',')}`;
   if (cacheVoisins.cle !== cle) cacheVoisins = { cle, val: calculerVoisins(config.departement.code, config.zone) };
   return cacheVoisins.val;
@@ -267,7 +270,8 @@ app.get('/api/config', (req, res) => {
     departement: config.departement,
     zone: config.zone,
     zoneVoisins: zoneVoisins(),
-    regions: calculerRegions().map(({ code, nom, bbox }) => ({ code, nom, bbox })),
+    regions: horsFrance() ? [] : calculerRegions().map(({ code, nom, bbox }) => ({ code, nom, bbox })),
+    horsFrance: horsFrance(),
     zoneNom: config.zoneNom,
     radio: true,
     meshcore: config.meshcore.actif && config.carte.reseaux !== 'meshtastic',
@@ -1932,7 +1936,7 @@ try {
   listeDepartements = lireJson(path.join(__dirname, '..', 'donnees-ref', 'departements.geojson')).features
     .map((f) => ({ code: f.properties.code, nom: f.properties.nom, bbox: emprise(f.geometry) })).sort((a, b) => a.code.localeCompare(b.code));
 } catch { /* liste indisponible */ }
-app.get('/api/departements', (req, res) => res.json(listeDepartements));
+app.get('/api/departements', (req, res) => res.json(horsFrance() ? [] : listeDepartements));
 
 function emprise(geom) {
   let s = 90, o = 180, n = -90, e = -180;
