@@ -1468,3 +1468,7 @@ body.consultation #btn-admin, body.consultation .lien-inscription, body.consulta
 
 /* PL: drogi dojazdowe wyłączone — bez wyboru „auto / 4×4 / pieszo” */
 label:has(> #zone-acces), label:has(> #plan-acces), label:has(> #budget-acces), label:has(> #dep-acces), label:has(> #filtre-acces), label:has(> #relier-acces) { display: none !important; }
+
+/* PL: przycisk czyszczenia mapy (zasięg, profil, pomiary) widoczny od razu */
+#btn-effacer.wyczysc-mape { background: #3ee6c4; color: #05211b; border-color: #3ee6c4; font-weight: 600; }
+#btn-effacer.wyczysc-mape:hover { filter: brightness(1.1); }

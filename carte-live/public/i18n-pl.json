@@ -5155,5 +5155,7 @@
 "jamais": "nigdy",
 "{} saut au mieux": "min. skoków: {0}",
 "{} sauts au mieux": "min. skoków: {0}",
-"Calcul du profil…": "Obliczanie profilu terenu…"
+"Calcul du profil…": "Obliczanie profilu terenu…",
+"✕ Effacer la carte": "✕ Wyczyść mapę",
+"Effacer la couverture affichée": "Usuń z mapy zasięg, profil terenu i pomiary"
 }

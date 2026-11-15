@@ -2793,6 +2793,7 @@ function brancherCurseurProfil(r) {
     if (etat.coucheProfil) etat.coucheProfil.remove();
     const grp = L.layerGroup().addTo(carte);
     etat.coucheProfil = grp;
+    $('#btn-effacer').hidden = false;
     L.polyline([[r.a.lat, r.a.lon], [r.b.lat, r.b.lon]], { color: '#3ee6c4', weight: 2.5, dashArray: '6 6', pane: 'traces' }).addTo(grp);
     for (const [q, nom] of [[r.a, 'A'], [r.b, 'B']]) L.circleMarker([q.lat, q.lon], { radius: 6, color: '#3ee6c4', weight: 2, fillOpacity: 0.6, pane: 'traces' }).bindTooltip(`${nom} · ${esc(q.nom)}`, { className: 'info' }).addTo(grp);
     const deg = p.visee - p.solCourbe;
@@ -6497,6 +6498,10 @@ function brancherInterface() {
     if (etat.coucheCouverture) etat.coucheCouverture.remove();
     if (etat.coucheCouvrir) etat.coucheCouvrir.remove();
     etat.coucheCouverture = null; etat.coucheCouvrir = null; $('#btn-effacer').hidden = true;
+    // PL: czyści też linię profilu terenu i zasięg węzła (portee)
+    if (etat.coucheProfil) { etat.coucheProfil.remove(); etat.coucheProfil = null; }
+    if (etat.coucheSimDep) { etat.coucheSimDep.remove(); etat.coucheSimDep = null; }
+    if (portee.couche) { try { portee.couche.clearLayers(); } catch { /* już usunięta */ } }
     restaurerLiaisons();
   };
   $('#analyse-periode').onchange = chargerAnalyse;
