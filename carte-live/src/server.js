@@ -424,15 +424,29 @@ async function importerPaquetFrance() {
     return noms.length;
   } finally { try { fs.unlinkSync(tmp); } catch { /* déjà */ } }
 }
+// Poza Francją: kwadraty 1° (teren Copernicus) do przygotowania zamiast departamentów.
+// Domyślnie cała Polska; RELIEF_KWADRATY=MN49E018,MN49E019,… zmienia listę.
+const KWADRATY_POLSKI = { 49: [18, 22], 50: [14, 23], 51: [14, 23], 52: [14, 23], 53: [14, 23], 54: [15, 23] };
+function kodyDoPrzygotowania() {
+  if (!horsFrance()) return listeDepartements.map((d) => d.code);
+  const wlasne = String(process.env.RELIEF_KWADRATY || '').split(',').map((x) => x.trim().toUpperCase()).filter(estCodeMonde);
+  if (wlasne.length) return wlasne;
+  const l = [];
+  for (const [la, [od, doo]] of Object.entries(KWADRATY_POLSKI)) for (let lo = od; lo <= doo; lo++) l.push(codeMonde(Number(la) + 0.5, lo + 0.5));
+  // Najpierw kwadraty najbliżej obszaru mapy (Południe gotowe po pierwszych kilku)
+  const z = config.zone || [], cLat = (z[0] + z[2]) / 2 || 50, cLon = (z[1] + z[3]) / 2 || 19;
+  const odl = (c) => { const m = /^MN(\d\d)E(\d{3})$/.exec(c); return m ? (Number(m[1]) + 0.5 - cLat) ** 2 + ((Number(m[2]) + 0.5 - cLon) * 0.65) ** 2 : 99; };
+  return l.sort((a, b) => odl(a) - odl(b));
+}
 async function prechargerFrance() {
   if (precharge.enCours) return;
-  const codes = listeDepartements.map((d) => d.code).filter((c) => c !== String(config.departement.code).toUpperCase());
+  const codes = kodyDoPrzygotowania().filter((c) => c !== String(config.departement.code).toUpperCase());
   // Gardé sur disque : après un redémarrage de la carte (mise à jour), la préparation reprend où elle en était
   reliefPublic.preparation = true; try { ecrireSur(fReliefPublic, JSON.stringify(reliefPublic)); } catch { /* lecture seule */ }
   Object.assign(precharge, { enCours: true, arret: false, total: codes.length, faits: 0, deja: 0, erreurs: [], courant: null, etape: null, aCompleter: [], debut: Date.now(), fin: null });
   journal(`[Relief] préparation de toute la France : ${codes.length} départements`);
   // D'abord le paquet « relief France » publié sur GitHub (un seul téléchargement), s'il manque des départements
-  if (codes.some((c) => !reliefSurDisque(c))) {
+  if (!horsFrance() && codes.some((c) => !reliefSurDisque(c))) {
     precharge.courant = 'paquet';
     try { const n = await importerPaquetFrance(); journal(`[Relief] paquet France : ${n} fichier(s) installé(s)`); } catch (e) { journal(`[Relief] paquet France indisponible (${e.message}) : téléchargement département par département`); if (!/HTTP 404/.test(e.message)) precharge.erreurs.push({ code: 'paquet', erreur: e.message }); }
   }
@@ -554,8 +568,9 @@ function Rdep(req, depForce) {
 
 app.get('/api/relief/france', (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
-  const surDisque = listeDepartements.filter((d) => d.code === String(config.departement.code).toUpperCase() || reliefSurDisque(d.code)).length;
-  res.set('Cache-Control', 'no-store').json({ couverture: reliefPublic.couverture, surDisque, total: listeDepartements.length, precharge: { ...precharge, instance: undefined } });
+  const kody = kodyDoPrzygotowania();
+  const surDisque = kody.filter((c) => c === String(config.departement.code).toUpperCase() || reliefSurDisque(c)).length;
+  res.set('Cache-Control', 'no-store').json({ couverture: reliefPublic.couverture, surDisque, total: kody.length, horsFrance: horsFrance(), precharge: { ...precharge, instance: undefined } });
 });
 app.get('/api/relief/france/paquet', (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });

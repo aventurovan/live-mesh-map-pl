@@ -5104,7 +5104,7 @@
 "Si le module est sur un autre réseau que la carte, un PC de ce réseau avec l’agent 1.6 sert de relais tout seul.": "Jeśli węzeł jest w innej sieci niż mapa, PC w tej sieci z agentem 1.6 sam działa jako pośrednik.",
 "🌍 Monde (relief Copernicus)": "🌍 Świat (teren Copernicus)",
 "France (relief IGN)": "Francja (teren IGN)",
-"🌍 Hors de France : choisir la position…": "🌍 Poza Francją: wybierz pozycję…",
+"🌍 Hors de France : choisir la position…": "🌍 Wybierz inną pozycję…",
 "Position du centre de votre réseau (latitude, longitude en degrés décimaux, ex. 40.7, -74.0) :": "Środek Twojej sieci (szerokość, długość w stopniach dziesiętnych, np. 49.8, 19.0):",
 "Relief de la zone {} en cours de chargement : réessayez dans quelques minutes": "Teren obszaru {0} się ładuje: spróbuj za kilka minut",
 "Point hors du relief disponible": "Punkt poza dostępnym terenem",

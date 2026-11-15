@@ -6772,7 +6772,7 @@ async function optionsDepartements(select, code) {
   const liste = await api('/api/departements').catch(() => []);
   const monde = RE_MONDE.test(code || '');
   select.innerHTML = `<optgroup label="🌍 Monde (relief Copernicus)">${monde ? `<option value="${esc(code)}" selected>🌍 ${esc(nomMonde(code))}</option>` : ''}<option value="choisir-monde">🌍 Hors de France : choisir la position…</option></optgroup>`
-    + `<optgroup label="France (relief IGN)">${liste.map((d) => `<option value="${d.code}" ${d.code === code ? 'selected' : ''}>${d.code} · ${esc(d.nom)}</option>`).join('')}</optgroup>`;
+    + (liste.length ? `<optgroup label="France (relief IGN)">${liste.map((d) => `<option value="${d.code}" ${d.code === code ? 'selected' : ''}>${d.code} · ${esc(d.nom)}</option>`).join('')}</optgroup>` : '');
   let avant = select.value;
   select.addEventListener('change', async () => {
     if (select.value !== 'choisir-monde') { avant = select.value; return; }
@@ -6847,6 +6847,16 @@ async function rendreFrance() {
   try { r = await api('/api/relief/france'); } catch (e) { z.innerHTML = `<div class="vide">${esc(e.message)}</div>`; return; }
   const p = r.precharge;
   const duree = p.debut ? Math.round(((p.fin || Date.now()) - p.debut) / 60000) : 0;
+  if (r.horsFrance) {
+    z.innerHTML = `<h3>🗺️ Mapa publiczna i teren</h3>
+    <label>Obliczenia zasięgu na mapie publicznej <select id="fr-couv">
+      <option value="departement" ${r.couverture === 'departement' ? 'selected' : ''}>Tylko obszar mapy (lekko)</option>
+      <option value="france" ${r.couverture === 'france' ? 'selected' : ''}>Cała Polska (teren ładowany na żądanie)</option></select></label>
+    <p class="note">Przy „całej Polsce” każdy odwiedzający może liczyć zasięg, miejsca na przekaźniki i zasięg punktu w dowolnym kwadracie 1° × 1°. Pierwsze obliczenie w kwadracie pobiera jego teren (Copernicus) i punkty wysokie (OpenStreetMap), kilka minut, chyba że przygotowano go poniżej.</p>
+    <div class="actions-prop">${p.enCours ? '<button class="mini" id="fr-stop">⏹ Zatrzymaj pobieranie</button>' : '<button class="mini principal" id="fr-go" title="Pobiera teren i punkty wysokie kwadrat po kwadracie, zaczynając od obszaru mapy; potem mapa publiczna sama przechodzi na „całą Polskę”">⬇ Pobierz teren całej Polski</button>'}<span class="note">Teren gotowy na serwerze: <b>${r.surDisque}</b> / ${r.total} kwadratów</span></div>
+    ${p.enCours ? `<div class="alerte info-lecture"><span class="sablier"></span> Pobieranie: ${p.faits}/${p.total} kwadratów${p.courant ? ` · ${esc(p.courant)}${p.etape ? ': ' + esc(p.etape) : ''}` : p.etape ? ' · ' + esc(p.etape) : ''} · ${duree} min. Trwa dalej, nawet gdy zamkniesz tę stronę.</div>` : p.fin ? `<p class="note">Ostatnie pobieranie: ${p.faits}/${p.total} kwadratów w ${duree} min${p.erreurs.length ? `, błędy: ${p.erreurs.length} (${p.erreurs.slice(0, 5).map((x) => esc(x.code + ' ' + x.erreur)).join(' ; ')})` : ''}.${p.aCompleter && p.aCompleter.length ? ` Do uzupełnienia: ${esc(p.aCompleter.slice(0, 12).join(', '))}${p.aCompleter.length > 12 ? '…' : ''} – uruchom ponownie później, pobrane zostaną tylko te.` : ''}</p>` : ''}
+    <p class="note">Cała Polska to ${r.total} kwadratów 1° × 1°: teren Copernicus (250 m), punkty wysokie, drogi dojazdowe i miejscowości z OpenStreetMap. Zajmie to kilka godzin i ok. 150 MB na dysku. Gotowe kwadraty są pomijane, więc można przerwać i wznowić.</p>`;
+  } else
   z.innerHTML = `<h3>🗺️ Carte publique et relief</h3>
     <label>Calculs de couverture de la carte publique <select id="fr-couv">
       <option value="departement" ${r.couverture === 'departement' ? 'selected' : ''}>Département de la carte seulement (léger)</option>

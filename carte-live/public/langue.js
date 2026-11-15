@@ -75,7 +75,7 @@
   window.tr = (t) => (pret ? traduire(String(t)) : t);
   const poses = new WeakMap(); // nœuds texte déjà traduits par nous : valeur posée
   const IGNORER = 'script,style,textarea,code,pre,[translate="no"],.notranslate,.leaflet-tile-pane';
-  const ATTRS = ['title', 'placeholder', 'aria-label', 'alt'];
+  const ATTRS = ['title', 'placeholder', 'aria-label', 'alt', 'label'];
   function traduireNoeud(n) {
     if (n.nodeType === 3) {
       const p = n.parentElement;
