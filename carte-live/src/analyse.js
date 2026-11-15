@@ -229,10 +229,15 @@ function creerAnalyse(stockage, config, reseau, presetCourant) {
       // Repli : Open-Meteo (Copernicus DEM 90 m)
       const lats = [], lons = [];
       for (let i = 0; i < n; i++) { const f = i / (n - 1); lats.push((a.lat + (b.lat - a.lat) * f).toFixed(5)); lons.push((a.lon + (b.lon - a.lon) * f).toFixed(5)); }
-      const r = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lats.join(',')}&longitude=${lons.join(',')}`, { signal: AbortSignal.timeout(15000) });
-      if (!r.ok) throw new Error('Service d\'altitude indisponible');
-      const j = await r.json();
-      points = j.elevation.map((z, i) => ({ lat: +lats[i], lon: +lons[i], z }));
+      // Open-Meteo przyjmuje najwyżej 100 punktów w jednym zapytaniu: pobieramy partiami
+      const wys = [];
+      for (let k = 0; k < n; k += 100) {
+        const r = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lats.slice(k, k + 100).join(',')}&longitude=${lons.slice(k, k + 100).join(',')}`, { signal: AbortSignal.timeout(15000) });
+        if (!r.ok) throw new Error('Service d\'altitude indisponible (Open-Meteo ' + r.status + ')');
+        const j = await r.json();
+        wys.push(...(j.elevation || []));
+      }
+      points = wys.map((z, i) => ({ lat: +lats[i], lon: +lons[i], z }));
       source = 'Copernicus DEM 90 m (Open-Meteo)';
     }
     // Comble les trous éventuels
