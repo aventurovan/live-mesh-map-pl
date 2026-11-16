@@ -1807,3 +1807,9 @@ body:not(.theme-clair) .mt-ik { background: rgba(255,255,255,.08); }
   body.tiroir-plein .barre, body.tiroir-plein .pasek-pakietow { display: none !important; }
   body.tiroir-plein .panneau { --h-tiroir: calc(100dvh - 12px - env(safe-area-inset-top)); }
 }
+/* PL: krzyżyk na szufladzie pełnoekranowej */
+.zamknij-tiroir { display: none; }
+@media (max-width: 900px) {
+  body.tiroir-plein .panneau { padding-top: 46px; }
+  body.tiroir-plein .zamknij-tiroir { display: flex; align-items: center; justify-content: center; position: absolute; z-index: 7; top: 6px; right: 10px; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--bord); background: var(--surface-2); color: var(--texte); font: 700 18px/1 'Nunito Sans', sans-serif; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+}
