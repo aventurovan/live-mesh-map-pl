@@ -64,8 +64,16 @@ function png(largeur, hauteur, rgba) {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), bloc('IHDR', ihdr), bloc('IDAT', zlib.deflateSync(brut, { level: 6 })), bloc('IEND', Buffer.alloc(0))]);
 }
 
+function konturStrefy() {
+  const nazwa = String(process.env.ZONE_KONTUR || '').replace(/[^a-z0-9-]/gi, '');
+  if (!nazwa) return null;
+  try { const g = lireJson(path.join(__dirname, '..', 'donnees-ref', `${nazwa}.geojson`)); return g.geometry || g.features[0].geometry; } catch { return null; }
+}
 // Contour d'un département : fichier détaillé s'il existe (Haute-Loire), sinon contour simplifié national
 function contourDepartement(code) {
+  // PL: ZONE_KONTUR=strefa-poludnie → kontur strefy z donnees-ref (np. 4 województwa Południa) zamiast kwadratu 1°
+  const kontur = konturStrefy();
+  if (kontur && estCodeMonde(code) && String(code).toUpperCase() === String(process.env.DEPARTEMENT || '').toUpperCase()) return kontur;
   if (estCodeMonde(code)) return contourMonde(code);
   const ref = path.join(__dirname, '..', 'donnees-ref');
   try {
@@ -1372,4 +1380,4 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
   };
 }
 
-module.exports = { listeDepartements, nomDepartement, creerRelief, contourDepartement, DROGI_DOJAZDOWE };
+module.exports = { listeDepartements, nomDepartement, creerRelief, contourDepartement, konturStrefy, DROGI_DOJAZDOWE };

@@ -182,6 +182,20 @@ config.departement = { code: texte('DEPARTEMENT', '43'), nom: texte('ZONE_NOM', 
     if (!texte('ZONE_NOM')) config.departement.nom = config.zoneNom = nomMonde(config.departement.code);
   }
 }
+// PL: ZONE_KONTUR (np. strefa-poludnie = 4 województwa): prostokąt strefy wyliczany z konturu, ZONE_BBOX niepotrzebny
+{
+  const nazwa = texte('ZONE_KONTUR', '').replace(/[^a-z0-9-]/gi, '');
+  if (nazwa) {
+    try {
+      const g = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'donnees-ref', `${nazwa}.geojson`), 'utf8'));
+      const geo = g.geometry || g.features[0].geometry;
+      const pierscienie = geo.type === 'Polygon' ? geo.coordinates : geo.coordinates.flat();
+      let s = 90, o = 180, n = -90, e = -180;
+      for (const a of pierscienie) for (const [lon, lat] of a) { s = Math.min(s, lat); n = Math.max(n, lat); o = Math.min(o, lon); e = Math.max(e, lon); }
+      config.zone = [+s.toFixed(3), +o.toFixed(3), +n.toFixed(3), +e.toFixed(3)];
+    } catch (err) { console.error(`[Config] ZONE_KONTUR=${nazwa}: ${err.message}`); }
+  }
+}
 config.inscriptions = texte('INSCRIPTIONS', 'validation'); // fermees | validation | ouvertes
 config.fichierReglages = path.join(path.dirname(config.fichierBase), 'reglages.json');
 config.reglages = {};
