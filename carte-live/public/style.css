@@ -1802,3 +1802,8 @@ body:not(.theme-clair) .mt-ik { background: rgba(255,255,255,.08); }
   .pasek-pakietow .pp-lista { gap: 12px; }
 }
 @media (max-width: 900px) and (orientation: landscape) and (max-height: 520px) { .pasek-pakietow { display: none; } }
+/* PL: szuflada na cały ekran — chowamy nagłówek i pasek pakietów, żeby nie zasłaniały treści */
+@media (max-width: 900px) {
+  body.tiroir-plein .barre, body.tiroir-plein .pasek-pakietow { display: none !important; }
+  body.tiroir-plein .panneau { --h-tiroir: calc(100dvh - 12px - env(safe-area-inset-top)); }
+}
