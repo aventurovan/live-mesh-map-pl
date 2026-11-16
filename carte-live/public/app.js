@@ -8701,13 +8701,14 @@ function rysujPanelWarstw() {
   p.innerHTML = `<div class="pw-naglowek"><b>Warstwy</b><button type="button" class="pw-x" aria-label="Zamknij">✕</button></div>
     ${mcOk ? `<div class="pw-sekcja">Węzły</div>${Object.keys(ROLE).filter((k) => k in mc.roles).map((k) => wiersz('r:' + k, ROLE[k], mc.roles[k])).join('')}
     <div class="pw-sekcja">Łącza</div>${Object.keys(LACZA).map((k) => wiersz('l:' + k, LACZA[k], mc.couches[k])).join('')}` : ''}
-    <div class="pw-sekcja">Na mapie</div>${mapa.join('')}`;
+    <div class="pw-sekcja">Na mapie</div>${wiersz('g:chaleur', 'Aktywność (ostatnie 10 min)', !!(etat.legende && etat.legende.chaleur))}${mapa.join('')}`;
   p.querySelector('.pw-x').onclick = () => { p.remove(); const b = $('.btn-warstwy'); if (b) b.classList.remove('actif'); };
   p.querySelectorAll('[data-pw]').forEach((b) => (b.onclick = () => {
     const [typ, k] = b.dataset.pw.split(':');
     if (typ === 'c') { const o = document.querySelector(`.menu-couches:not(.menu-outils) .bascule[data-couche="${k}"]`); if (o) o.click(); }
     else if (typ === 'r') { mc.roles[k] = !mc.roles[k]; try { localStorage.setItem('gaulix_mc_roles', JSON.stringify(mc.roles)); } catch { /* idem */ } mcDessinerNoeuds(); rendreLegende(); }
     else if (typ === 'l') { mc.couches[k] = !mc.couches[k]; mcDessinerLiens(); rendreLegende(); }
+    else if (typ === 'g') { let o = document.querySelector(`[data-leg="${k}"]`); if (!o) { rendreLegende(); o = document.querySelector(`[data-leg="${k}"]`); } if (o) o.click(); }
     rysujPanelWarstw();
   }));
 }
