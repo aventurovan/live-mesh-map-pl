@@ -183,6 +183,7 @@ function initCarte() {
   L.control.zoom({ position: 'bottomleft' }).addTo(carte);
   installerMaPosition();
   installerWarstwyMobilne();
+  installerMobilne();
   const t = etat.config.tuiles;
   const wmts = (couche, format = 'image/png', style = 'normal') => `https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${couche}&STYLE=${style}&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=${format}`;
   const ign = '&copy; <a href="https://www.ign.fr/" target="_blank" rel="noopener">IGN</a> Géoplateforme';
@@ -252,7 +253,7 @@ function initCarte() {
   majFondSombre();
   for (const n of surcouchesMemo || []) if (surcouches[n]) surcouches[n].addTo(carte);
   if (etat.config.reseaux !== 'meshcore') carte.attributionControl.addAttribution('Meshtastic® est une marque de Meshtastic LLC');
-  carte.attributionControl.setPrefix('Carte live par F4GLD · <a href="https://www.helloasso.com/associations/radioclub-du-velay/formulaires/2" target="_blank" rel="noopener" title="Soutenir le projet (don au Radio-club du Velay)">♥ Soutenir le projet</a> · <a href="https://meshcoresouth.pl" target="_blank" rel="noopener">MeshCore Południe</a> · <a href="https://github.com/aventurovan/live-mesh-map-pl" target="_blank" rel="noopener" title="Code source sur GitHub">Code sur GitHub</a> · <a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
+  carte.attributionControl.setPrefix('Carte live par F4GLD · <a href="https://meshcoresouth.pl" target="_blank" rel="noopener">MeshCore Południe</a> · <a href="https://github.com/aventurovan/live-mesh-map-pl" target="_blank" rel="noopener" title="Code source sur GitHub">Code sur GitHub</a> · <a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
   // Choix du fond et des surcouches dans le menu « Couches »
   const menu = document.querySelector('.menu-couches .menu');
   menu.insertAdjacentHTML('afterbegin', `<div class="titre-menu">Fond de carte</div>${Object.keys(fonds).map((n) => `<button data-fond="${n}" class="${n === choix ? 'actif' : ''}">${n}</button>`).join('')}
@@ -6030,7 +6031,8 @@ function appliquerZone(recadrer) {
   b.options[1].textContent = `${nom} + voisins`;
   b.options[1].title = v ? v.departements.map((d) => `${d.code} ${d.nom}`).join(', ') : '';
   b.options[1].hidden = !v;
-  { const fr = b.querySelector('option[value="france"]'); if (fr) fr.hidden = !!etat.config.horsFrance; }
+  { const fr = b.querySelector('option[value="france"]'); if (fr && etat.config.horsFrance) { fr.remove(); if (etat.zoneMode === 'france') etat.zoneMode = 'dep'; } }
+  if (!v && b.options[1] && b.options[1].value === 'voisins') b.options[1].disabled = true;
   b.value = etat.zoneMode;
   b.title = etat.zoneMode === 'voisins' && v ? `${nom} et départements voisins : ${v.departements.map((d) => d.nom).join(', ')}` : reg ? `Région ${reg.nom}` : 'Secteur affiché : votre département, avec ses voisins, une région ou toute la France';
   b.classList.toggle('actif', etat.zone);
@@ -8679,6 +8681,7 @@ function installerWarstwyMobilne() {
   new Ctrl({ position: 'topright' }).addTo(carte);
 }
 function przelaczPanelWarstw(btn) {
+  if (typeof zamknijArkusz === 'function') zamknijArkusz();
   let p = $('#panel-warstw');
   if (p) { p.remove(); btn.classList.remove('actif'); return; }
   p = document.createElement('div');
@@ -8698,11 +8701,14 @@ function rysujPanelWarstw() {
     .filter((b) => !b.hidden && !['feux', 'federation'].includes(b.dataset.couche)) // także te ukryte poziomem wyświetlania
     .map((b) => wiersz('c:' + b.dataset.couche, b.textContent.trim(), b.classList.contains('actif')));
   const mcOk = typeof mc !== 'undefined' && mc.roles;
+  const kopiaSelect = (id) => { const o = $('#' + id); if (!o) return ''; return `<select class="pw-select" data-pw-sel="${id}">${[...o.options].filter((x) => !x.hidden && !x.disabled).map((x) => `<option value="${esc(x.value)}" ${x.value === o.value ? 'selected' : ''}>${esc(x.textContent)}</option>`).join('')}</select>`; };
   p.innerHTML = `<div class="pw-naglowek"><b>Warstwy</b><button type="button" class="pw-x" aria-label="Zamknij">✕</button></div>
+    <div class="pw-wybory"><label>Obszar ${kopiaSelect('sel-zone')}</label><label>Łącza z ${kopiaSelect('fenetre')}</label></div>
     ${mcOk ? `<div class="pw-sekcja">Węzły</div>${Object.keys(ROLE).filter((k) => k in mc.roles).map((k) => wiersz('r:' + k, ROLE[k], mc.roles[k])).join('')}
     <div class="pw-sekcja">Łącza</div>${Object.keys(LACZA).map((k) => wiersz('l:' + k, LACZA[k], mc.couches[k])).join('')}` : ''}
     <div class="pw-sekcja">Na mapie</div>${wiersz('g:chaleur', 'Aktywność (ostatnie 10 min)', !!(etat.legende && etat.legende.chaleur))}${mapa.join('')}`;
   p.querySelector('.pw-x').onclick = () => { p.remove(); const b = $('.btn-warstwy'); if (b) b.classList.remove('actif'); };
+  p.querySelectorAll('[data-pw-sel]').forEach((sel) => (sel.onchange = () => { const o = $('#' + sel.dataset.pwSel); if (o) { o.value = sel.value; o.dispatchEvent(new Event('change', { bubbles: true })); } }));
   p.querySelectorAll('[data-pw]').forEach((b) => (b.onclick = () => {
     const [typ, k] = b.dataset.pw.split(':');
     if (typ === 'c') { const o = document.querySelector(`.menu-couches:not(.menu-outils) .bascule[data-couche="${k}"]`); if (o) o.click(); }
@@ -8711,5 +8717,67 @@ function rysujPanelWarstw() {
     else if (typ === 'g') { let o = document.querySelector(`[data-leg="${k}"]`); if (!o) { rendreLegende(); o = document.querySelector(`[data-leg="${k}"]`); } if (o) o.click(); }
     rysujPanelWarstw();
   }));
+}
+
+// ---- PL: telefon: zamiast dolnego paska — przyciski na mapie po prawej i arkusze od dołu ----
+// (menu przenosimy do arkusza na czas otwarcia, więc działają ich własne obsługi kliknięć)
+const SVG_MOB = {
+  zasieg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 13v8"/><circle cx="12" cy="11" r="2"/><path d="M8.5 7.5a5 5 0 0 0 0 7M15.5 7.5a5 5 0 0 1 0 7M5.6 4.6a9 9 0 0 0 0 12.8M18.4 4.6a9 9 0 0 1 0 12.8"/></svg>',
+  narzedzia: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg>',
+};
+function installerMobilne() {
+  const ctrl = (cls, tytul, svg, fn) => {
+    const C = L.Control.extend({ onAdd() { const b = L.DomUtil.create('button', 'btn-position btn-mob ' + cls); b.type = 'button'; b.title = tytul; b.setAttribute('aria-label', tytul); b.innerHTML = svg; L.DomEvent.disableClickPropagation(b); b.onclick = () => fn(b); return b; } });
+    new C({ position: 'topright' }).addTo(carte);
+  };
+  ctrl('btn-zasieg-mob', 'Zasięg radiowy', SVG_MOB.zasieg, (b) => otworzArkusz('#menu-radio > .menu', 'Zasięg radiowy', b));
+  ctrl('btn-narzedzia-mob', 'Narzędzia', SVG_MOB.narzedzia, (b) => otworzArkusz('.menu-outils > .menu', 'Narzędzia', b, true));
+  // „Wyczyść mapę” jako pływający przycisk, gdy na mapie jest zasięg, trasa itp.
+  const be = $('#btn-effacer');
+  if (be) {
+    const f = document.createElement('button');
+    f.id = 'wyczysc-mob'; f.type = 'button'; f.textContent = '✕ Wyczyść mapę'; f.hidden = true;
+    f.onclick = () => be.click();
+    document.body.appendChild(f);
+    new MutationObserver(() => { f.hidden = be.hidden; }).observe(be, { attributes: true, attributeFilter: ['hidden'] });
+  }
+}
+let arkuszStan = null;
+function zamknijArkusz() {
+  if (!arkuszStan) return;
+  const { menu, rodzic, nastepny, przycisk, el } = arkuszStan;
+  if (menu && rodzic) rodzic.insertBefore(menu, nastepny);
+  if (przycisk) przycisk.classList.remove('actif');
+  el.remove();
+  arkuszStan = null;
+}
+function otworzArkusz(selektor, tytul, przycisk, dodatki) {
+  const wasOpen = arkuszStan && arkuszStan.przycisk === przycisk;
+  zamknijArkusz();
+  const wp = $('#panel-warstw'); if (wp) { wp.remove(); const bw = $('.btn-warstwy'); if (bw) bw.classList.remove('actif'); }
+  if (wasOpen) return;
+  const menu = document.querySelector(selektor);
+  if (!menu) return;
+  const el = document.createElement('div');
+  el.id = 'arkusz';
+  el.innerHTML = `<div class="ark-naglowek"><b>${esc(tytul)}</b><button type="button" class="pw-x" aria-label="Zamknij">✕</button></div>${dodatki ? `<div class="ark-szybkie">
+      <button type="button" data-proxy="#btn-chercher-reglage">🔎 Szukaj funkcji</button>
+      <button type="button" data-proxy="#btn-rejeu">⏪ Odtwórz 24 h</button>
+      <button type="button" data-proxy="#btn-motyw">◐ Jasny / ciemny</button>
+      <button type="button" data-proxy="#btn-admin">${esc(($('#btn-admin') || {}).textContent || 'Logowanie')}</button>
+    </div>` : ''}<div class="ark-tresc"></div>`;
+  document.body.appendChild(el);
+  arkuszStan = { menu, rodzic: menu.parentNode, nastepny: menu.nextSibling, przycisk, el };
+  el.querySelector('.ark-tresc').appendChild(menu);
+  przycisk.classList.add('actif');
+  el.querySelector('.pw-x').onclick = zamknijArkusz;
+  el.querySelectorAll('[data-proxy]').forEach((b) => (b.onclick = () => { const o = $(b.dataset.proxy); zamknijArkusz(); if (o) o.click(); }));
+  // wybór pozycji menu zamyka arkusz (po wykonaniu jej własnej obsługi)
+  menu.addEventListener('click', function poKliknieciu(e) {
+    const t = e.target.closest('button, a');
+    if (!t || !arkuszStan || arkuszStan.menu !== menu) return;
+    menu.removeEventListener('click', poKliknieciu, true);
+    setTimeout(zamknijArkusz, 0);
+  }, true); // faza przechwytywania: niektóre przyciski zatrzymują propagację
 }
 

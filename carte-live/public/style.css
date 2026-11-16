@@ -1737,4 +1737,43 @@ fieldset.mqtt2 legend { font-weight: 800; padding: 0 6px; }
 .pw-przel::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
 .pw-wiersz.on .pw-przel { background: var(--accent); }
 .pw-wiersz.on .pw-przel::after { left: 19px; }
+/* ---- PL: telefon — nagłówek w jednej linii, wyszukiwarka pod nim, bez dolnego paska ---- */
+.soutien { display: none !important; }
+.btn-mob { display: none; align-items: center; justify-content: center; margin-top: 8px !important; }
+.btn-mob.actif { color: #fff; background: var(--accent); border-color: var(--accent); }
+#wyczysc-mob, #arkusz { display: none; }
+@media (max-width: 900px) {
+  .btn-mob { display: flex; }
+  .outils { display: none !important; }
+  :root { --h-outils: 0px !important; }
+  .barre { top: calc(6px + env(safe-area-inset-top)); left: 8px; right: 8px; }
+  .barre .marque { padding: 6px 10px; gap: 8px; flex-wrap: nowrap; }
+  .barre .marque .sous, .barre .marque .version, .barre .lien-github { display: none !important; }
+  .barre .marque .nom { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .barre .direct { margin-left: auto; }
+  .recherche-lieu { top: calc(62px + env(safe-area-inset-top)) !important; left: 8px !important; right: 8px !important; width: auto !important; min-width: 0 !important; }
+  .recherche-lieu input { font-size: 16px; padding-top: 9px; padding-bottom: 9px; }
+  .leaflet-top.leaflet-right { top: calc(112px + env(safe-area-inset-top)) !important; }
+  .leaflet-bottom.leaflet-right { bottom: calc(var(--h-tiroir-reel, 96px) + 8px) !important; }
+  .panneau { bottom: 0 !important; padding-bottom: env(safe-area-inset-bottom); }
+  .fiche { bottom: 0 !important; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  .fab-plus { bottom: calc(var(--h-tiroir-reel, 96px) + 16px) !important; }
+  #panel-warstw { top: calc(112px + env(safe-area-inset-top)); right: 64px; width: min(290px, calc(100vw - 76px)); max-height: calc(100dvh - 140px - var(--h-tiroir-reel, 96px)); }
+  .pw-wybory { display: grid; gap: 8px; margin: 4px 2px 6px; }
+  .pw-wybory label { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 14px; }
+  .pw-select { flex: 1 1 auto; max-width: 62%; padding: 6px 8px; border-radius: 9px; border: 1px solid var(--bord); background: var(--surface-2); color: inherit; }
+  #wyczysc-mob { display: block; position: fixed; z-index: 1100; left: 50%; transform: translateX(-50%); top: calc(114px + env(safe-area-inset-top)); padding: 9px 16px; border-radius: 99px; border: 0; background: var(--accent); color: #fff; font: 700 14px 'Nunito Sans', sans-serif; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+  #wyczysc-mob[hidden] { display: none; }
+  #arkusz { display: flex; flex-direction: column; position: fixed; z-index: 1300; left: 0; right: 0; bottom: 0; max-height: 72dvh; background: var(--surface); color: var(--texte); border-radius: 18px 18px 0 0; box-shadow: 0 -8px 30px rgba(0,0,0,.45); padding: 6px 12px calc(12px + env(safe-area-inset-bottom)); }
+  .ark-naglowek { display: flex; justify-content: space-between; align-items: center; padding: 8px 2px; font-size: 16px; }
+  .ark-szybkie { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+  .ark-szybkie button { padding: 10px; border-radius: 12px; border: 1px solid var(--bord); background: var(--surface-2); color: inherit; font: 600 14px 'Nunito Sans', sans-serif; text-align: left; }
+  .ark-tresc { overflow-y: auto; }
+  #arkusz .menu { position: static !important; display: block !important; max-height: none !important; overflow: visible !important; box-shadow: none !important; border: 0 !important; background: transparent !important; padding: 0 !important; margin: 0 !important; width: auto !important; }
+  #arkusz .menu .bascule, #arkusz .menu a.bascule { display: block; width: 100%; text-align: left; padding: 12px 12px; margin: 0 0 6px; font: 600 15px 'Nunito Sans', sans-serif; border-radius: 12px; background: var(--surface-2) !important; color: var(--texte) !important; border: 1px solid var(--bord) !important; text-decoration: none; }
+  #arkusz .menu .bascule.actif { border-color: var(--accent) !important; box-shadow: inset 0 0 0 1px var(--accent); }
+  #arkusz #note-outils { display: none; }
+  #arkusz .menu .bascule[hidden] { display: none !important; }
+  #arkusz .titre-outils { margin: 10px 4px 2px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--doux); }
+}
 

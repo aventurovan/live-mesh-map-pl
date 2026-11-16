@@ -286,7 +286,7 @@ function rendreHubReglages() {
       <div class="actions-prop"><button type="button" class="mini" id="hub-visite">Revoir la visite guidée</button><button type="button" class="mini" id="hub-aide">Aide</button></div>
     </div>
     ${bloc('Compte', compte)}${bloc('Modules et réseaux', modules)}${etat.admin && etat.config.meshcore && !lesDeux ? `<p class="note">${vue === 'meshtastic' ? 'Réglages MeshCore et passerelle : choisissez « MeshCore » ou « Les deux » en haut du panneau.' : 'Réglages Meshtastic (équipes) et passerelle : choisissez « Meshtastic » ou « Les deux » en haut du panneau.'}</p>` : ''}${bloc('La carte (administrateur)', carteL)}
-    <p class="note a-propos">Carte live MeshCore v${esc((etat.config.version && etat.config.version.version) || '')} · créée par F4GLD · <a href="https://www.helloasso.com/associations/radioclub-du-velay/formulaires/2" target="_blank" rel="noopener">♥ Soutenir le projet</a> (Radio-club du Velay) · <a href="https://github.com/aventurovan/live-mesh-map-pl" target="_blank" rel="noopener">code source</a> · <span translate="no">wersja polska: MeshCore Południe</span></p></div>`;
+    <p class="note a-propos">Carte live MeshCore v${esc((etat.config.version && etat.config.version.version) || '')} · créée par F4GLD · <a href="https://github.com/aventurovan/live-mesh-map-pl" target="_blank" rel="noopener">code source</a> · <span translate="no">wersja polska: MeshCore Południe</span></p></div>`;
   z.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => { try { actions[b.dataset.go](); } catch (e) { annonce('⚠ ' + e.message, 'erreur'); } }));
   $('#hub-chercher').onclick = () => ouvrirRechercheReglages();
   $('#hub-niveau').onchange = (e) => appliquerNiveau(e.target.value, true);
