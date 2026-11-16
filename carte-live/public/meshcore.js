@@ -1,5 +1,7 @@
 /* Carte live — réseau MeshCore : nœuds, liens déduits des chemins, analyseur de paquets, companion */
 'use strict';
+// PL: mapa nie korzysta z companiona: bez programowania/administracji repeaterów, bez łączenia companiona
+const BEZ_COMPANIONA = true; window.BEZ_COMPANIONA = BEZ_COMPANIONA;
 
 // Couleurs par type de paquet MeshCore (clé courte renvoyée par le serveur)
 const MC_TYPES = {
@@ -1231,7 +1233,7 @@ function mcRendreCompanion() {
   const formOuvert = ae && z.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
   if (formOuvert && !mcRendreCompanion.force) return;
   mcRendreCompanion.force = false;
-  z.innerHTML = `
+  z.innerHTML = `${BEZ_COMPANIONA ? '<h3>Ustawienia MeshCore</h3>' : ''}<div ${BEZ_COMPANIONA ? 'hidden' : ''}>
     <h3>Companion de la carte</h3>
     <div class="bloc-usb ${c.connecte ? 'relie' : ''}">
       <div class="titre-usb"><span class="point ${c.connecte ? 'actif' : c.cible || c.navigateur ? 'recent' : 'inactif'}"></span><b>${esc(c.nom || (c.connecte ? 'Companion relié, mais muet' : 'Aucun companion relié'))}</b><small>${c.connecte && !c.nom ? `${c.erreur ? esc(c.erreur) + ' · ' : ''}${source} · vérifiez le firmware (« companion USB » pour l’USB) puis « Relancer »` : c.connecte ? 'relié · ' + source : c.erreur ? esc(c.erreur) : source === 'aucun' ? 'choisissez une liaison ci-dessous' : 'en attente · ' + source}</small></div>
@@ -1245,8 +1247,8 @@ function mcRendreCompanion() {
         <div class="mesure"><span>Relié depuis</span><b>${c.depuis ? ilYa(c.depuis).replace('il y a ', '') : '–'}</b></div>
       </div>
       <div class="note">${esc([c.modele, c.firmware].filter(Boolean).join(' · '))}${mcAvertRadio(r)}</div>` : ''}
-    </div>
-    ${etat.admin ? `
+    </div></div>
+    ${etat.admin ? `<div ${BEZ_COMPANIONA ? 'hidden' : ''}>
     <div class="actions-prop">
       ${c.connecte ? '<button data-mc-act="annonce0" title="Annonce entendue seulement par les voisins directs">Annonce voisins</button><button data-mc-act="annonce1" title="Annonce relayée par les répéteurs">Annonce réseau</button><button data-mc-act="contacts" title="Relire les contacts du companion">Contacts</button>' : ''}
       ${c.connecte && !c.pret ? '<button data-mc-act="relancer" title="Redemander ses informations au companion, sans couper la liaison">↻ Relancer</button>' : ''}
@@ -1271,7 +1273,7 @@ function mcRendreCompanion() {
     <p class="note">Depuis le firmware 1.18, le companion BLE des cartes ESP32-S3 (Heltec V3/V4, XIAO ESP32-S3…) sait aussi se relier au Wi-Fi : renseignez le réseau et le mot de passe dans l’application MeshCore (Réglages → Wi-Fi), puis indiquez ici son adresse IP (port 5000 par défaut). Donnez-lui une adresse fixe dans votre box.</p>
     <h4>Par un agent (companion USB sur un autre PC)</h4>
     ${(e.agents || []).length ? `<div class="liste">${e.agents.map((a) => `<div class="ligne"><span class="point ${a.occupe ? 'actif' : 'recent'}"></span><span class="titre">${esc(a.nom)}<small>${esc(a.source)}</small></span><span class="meta"><button class="mini" data-mc-agent="${esc(a.hote)}">${c.cible && c.cible.hote === a.hote ? 'Choisi' : 'Utiliser'}</button>${!a.occupe && !(c.cible && c.cible.hote === a.hote) ? ` <button class="mini" data-mc-agent-ecoute="${esc(a.hote)}" title="En plus du companion principal, pour l'écoute">👂</button>` : ''}</span></div>`).join('')}</div>` : '<div class="vide">Aucun agent en ligne. L’agent se télécharge dans Réseau › Modules radio › Module par agent (choisissez le port COM du companion).</div>'}
-    <h4>Republication MQTT</h4>
+    </div><h4>Republication MQTT</h4>
     <div class="note">${e.republication.actif ? `${e.republication.connecte ? '● connecté' : '○ en attente'} · ${e.republication.publies} paquet(s) publié(s) sur <span class="mono">${esc(e.republication.sujet)}</span>${e.republication.refus ? ` · <b style="color:var(--attention)">${esc(e.republication.refus)}</b>` : ''}` : 'désactivée'}</div>
     <form id="mc-f-reglages" class="form-edit">
       <div class="grille-edit">
@@ -1634,7 +1636,7 @@ async function mcOuvrirFiche(cle, ongletInitial) {
       ${n.observateur ? `<span class="badge passerelle" title="${obs.carte ? 'Relié à cette carte : il lui transmet ce qu’il entend (indépendant de la republication MQTT)' : 'Publie ce qu’il entend sur le broker MQTT, où la carte le lit'}">${esc(mcLibObservateur(n, true))}</span>` : ''}
       <span class="badge reseau-mc">MeshCore</span>
     </div>
-    <nav class="onglets-fiche"><button data-of="infos" class="actif">Informations</button><button data-of="voisins">Voisins (${d.voisins.length})</button><button data-of="trames">Paquets</button>${etat.membre && ['repeteur', 'salon', 'capteur'].includes(n.role) ? '<button data-of="capteurs">Capteurs</button>' : ''}${gerable(n.cle) && ['repeteur', 'salon', 'capteur', 'companion'].includes(n.role) ? '<button data-of="admin">Administration</button>' : ''}</nav>
+    <nav class="onglets-fiche"><button data-of="infos" class="actif">Informations</button><button data-of="voisins">Voisins (${d.voisins.length})</button><button data-of="trames">Paquets</button>${etat.membre && ['repeteur', 'salon', 'capteur'].includes(n.role) ? '<button data-of="capteurs">Capteurs</button>' : ''}${!BEZ_COMPANIONA && gerable(n.cle) && ['repeteur', 'salon', 'capteur', 'companion'].includes(n.role) ? '<button data-of="admin">Administration</button>' : ''}</nav>
     <div data-pf="infos">
       <div class="grille">${mesures.map(([l, v]) => `<div class="mesure"><span>${l}</span><b>${esc(v)}</b></div>`).join('')}</div>
       <div class="boutons">
@@ -1645,7 +1647,7 @@ async function mcOuvrirFiche(cle, ongletInitial) {
         ${n.lat != null ? `<button id="mc-couv">Couverture selon le relief</button><label class="champ-mini">antenne <input id="mc-h" type="number" min="0.5" max="80" step="0.5" value="${n.infrastructure ? 6 : 2}"> m</label>` : ''}
       </div>
       <div id="mc-test-zone">${d.chemin ? mcHtmlChemin(d.chemin, n) : ''}</div>
-      ${etat.membre && mc.etat && mc.etat.companion && mc.etat.companion.cle !== n.cle ? '<div id="mc-chemin" class="bloc-chemin"><h4>🧭 Chemin depuis le companion</h4><div class="vide">…</div></div>' : ''}
+      ${!BEZ_COMPANIONA && etat.membre && mc.etat && mc.etat.companion && mc.etat.companion.cle !== n.cle ? '<div id="mc-chemin" class="bloc-chemin"><h4>🧭 Chemin depuis le companion</h4><div class="vide">…</div></div>' : ''}
       ${mcHtmlTelemetrie(d.telemetrie)}
       ${d.entenduPar.length ? `<h4>Entendu par (observateurs)</h4><table class="voisins"><thead><tr><th>Observateur</th><th class="num">Paquets</th><th class="num">SNR</th><th class="num">RSSI</th><th class="num">Sauts min.</th></tr></thead><tbody>
         ${d.entenduPar.map((e) => `<tr data-mc="${e.observateur}"><td>${esc(e.nom || e.observateur.slice(0, 8))}</td><td class="num">${e.nb}</td><td class="num">${fmt(e.snr, 1)}</td><td class="num">${fmt(e.rssi, 0)}</td><td class="num">${e.sauts_min ?? '–'}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -1881,8 +1883,8 @@ function demarrerMeshcore() {
   if (sv) sv.hidden = !etat.membre;
   if (!etat.membre && mc.vue === 'messages') mc.vue = 'noeuds';
   const sg = document.querySelector('.sous-onglets-mc button[data-mc-vue="gestion"]');
-  if (sg) sg.hidden = !etat.gestion;
-  if (!etat.gestion && mc.vue === 'gestion') mc.vue = 'noeuds';
+  if (sg) sg.hidden = BEZ_COMPANIONA || !etat.gestion;
+  if ((BEZ_COMPANIONA || !etat.gestion) && mc.vue === 'gestion') mc.vue = 'noeuds';
   // Clic sur un message : répondre (message direct reçu) ou écrire sur son canal
   document.body.addEventListener('click', (e) => {
     const r = e.target.closest('[data-mc-repondre], [data-mc-canal]');

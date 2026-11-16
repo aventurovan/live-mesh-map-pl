@@ -124,7 +124,7 @@ function majGroupes() {
     const g = b.dataset.groupe;
     b.classList.toggle('actif', g === ergo.groupe);
     b.setAttribute('aria-selected', g === ergo.groupe ? 'true' : 'false');
-    b.hidden = g !== 'reglages' && !GROUPES[g].some((o) => ongletVisible(o) && (o !== 'meshcore' || g === 'reseau' || (g === 'messages' && etat.membre) || (g === 'gerer' && etat.gestion)));
+    b.hidden = (g === 'gerer' && !!window.BEZ_COMPANIONA) || g !== 'reglages' && !GROUPES[g].some((o) => ongletVisible(o) && (o !== 'meshcore' || g === 'reseau' || (g === 'messages' && etat.membre) || (g === 'gerer' && etat.gestion)));
     // Nouveaux messages : la pastille de l'onglet Messages remonte sur la rubrique
     if (g === 'messages') { const p = (bOnglet('messages') || document).querySelector('.pastille, .badge, span'); let c = b.querySelector('.pastille-groupe'); const n = p ? p.textContent.trim() : ''; if (n && n !== '0') { if (!c) { c = document.createElement('span'); c.className = 'pastille-groupe'; b.appendChild(c); } c.textContent = n; } else if (c) c.remove(); }
   });
@@ -194,7 +194,7 @@ function tuilesAccueil() {
   // Poza Francją (PL) ostrzeżenia Météo-France nic nie dają: kafelek znika
   if (typeof masquee === 'function' && masquee('signalements') && etat.config && etat.config.horsFrance) t.splice(2, 1);
   else if (typeof masquee === 'function' && masquee('signalements')) t[2] = { ic: 'zglos', nom: 'Alertes météo', aide: 'Vigilance Météo-France en cours', go: () => ficheAlertesOff() };
-  if (etat.gestion) t.push({ ic: 'wezly', nom: 'Gérer mes nœuds', aide: 'Programmer, équipes, positions', go: () => allerGroupe('gerer') });
+  if (etat.gestion && !window.BEZ_COMPANIONA) t.push({ ic: 'wezly', nom: 'Gérer mes nœuds', aide: 'Programmer, équipes, positions', go: () => allerGroupe('gerer') });
   t.push({ ic: 'ustawienia', nom: etat.membre ? 'Régler la carte' : 'Se connecter, affichage', aide: etat.admin ? 'Tous les réglages au même endroit' : 'Compte, affichage, aide', go: () => allerGroupe('reglages') });
   return t;
 }
@@ -291,7 +291,7 @@ async function ficheDiagnostic() {
   try { r = await api('/api/diagnostic?reseau=' + encodeURIComponent(etat.vueReseau || 'les-deux')); } catch (x) { z.innerHTML = `<div class="vide">${esc(x.message)}</div>`; return; }
   const ACTIONS = {
     mqtt: ['Régler le serveur MQTT', () => ouvrirDlg('reglages', '[name=mqttUrl]')], canaux: ['Régler les canaux', () => ouvrirDlg('reglages', '[name=canaux]')],
-    module: ['Connecter un module', () => { const b = $('#outil-connecter'); if (b) b.click(); }], companion: ['Relier le module MeshCore', () => ouvrirMcVue('companion', '#mc-f-wifi')],
+    module: ['Connecter un module', () => { const b = $('#outil-connecter'); if (b) b.click(); }], companion: ['Ustawienia MeshCore', () => ouvrirMcVue('companion', '#mc-f-reglages [name=iata]')],
     meshcore: ['Régler MeshCore', () => ouvrirMcVue('companion', '#mc-f-reglages [name=iata]')], passerelle: ['Ouvrir la passerelle', () => ouvrirPasserelle()], maj: ['Mise à jour', () => ficheMaj()],
   };
   const IC = { ok: '✅', attention: '⚠️', ko: '❌', info: 'ℹ️' };

@@ -1655,3 +1655,5 @@ body.uklad-nowy .legende { width: 340px; overflow: visible; }
 /* PL: zasięg na jasnym podkładzie: mocniejsze, ciemniejsze kolory (żółte i pomarańczowe pasma były prawie niewidoczne) */
 body.theme-clair .leaflet-couverture-pane img { mix-blend-mode: multiply; opacity: .9 !important; }
 body:not(.theme-clair) .leaflet-couverture-pane img { opacity: .85 !important; }
+/* PL: bez companiona: brak przycisku łączenia companiona */
+#outil-companion-mc { display: none !important; }
