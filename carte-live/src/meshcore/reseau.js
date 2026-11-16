@@ -321,19 +321,23 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
     return q.liens.all(Math.max(Date.now() - depuisMs, dejaVu || 0)).map((l) => ({ a: l.a, b: l.b, source: l.source, snr: l.snr, rssi: l.rssi, nb: l.nb, dernierVu: l.dernier_vu }));
   }
 
+  const qObsOd = db.prepare('SELECT DISTINCT observateur FROM mc_receptions WHERE heure >= ?');
   function statistiques() {
     const maintenant = Date.now();
     const noeuds = noeudsCache();
     const parType = {};
     for (const r of q.compteType.all(maintenant - 3600000)) parType[r.type] = r.nb;
-    // PL: liczymy tylko obserwatorów, którzy wysłali coś w ostatnich 24 h (bez starych wpisów z dawnych brokerów)
-    const observateurs = noeuds.filter((n) => n.observateur && maintenant - (n.observateur_vu || 0) < 24 * 3600000);
+    // PL: obserwator = ten, od którego mapa faktycznie dostała pakiety (sam status z innego brokera się nie liczy);
+    // „online” = pakiety w ostatnich 30 min, łącznie = w ostatnich 24 h
+    const obsDoba = new Set(qObsOd.all(maintenant - 24 * 3600000).map((r) => r.observateur));
+    const obsTeraz = new Set(qObsOd.all(maintenant - 30 * 60000).map((r) => r.observateur));
+    const observateurs = noeuds.filter((n) => n.observateur && obsDoba.has(n.cle));
     return {
       noeuds: noeuds.length,
       actifs: noeuds.filter((n) => statut(n, maintenant) === 'actif').length,
       repeteurs: noeuds.filter((n) => n.role === 'repeteur').length,
       observateurs: observateurs.length,
-      observateursEnLigne: observateurs.filter((n) => n.etat_observateur !== 'offline' && maintenant - (n.observateur_vu || 0) < config.seuils.muetMinutes * 60000).length,
+      observateursEnLigne: observateurs.filter((n) => obsTeraz.has(n.cle)).length,
       liens: q.liens.all(maintenant - 24 * 3600000).length,
       paquetsMinute: Math.round((q.compte.get(maintenant - 5 * 60000).nb / 5) * 10) / 10,
       paquetsHeure: Object.values(parType).reduce((a, b) => a + b, 0),
