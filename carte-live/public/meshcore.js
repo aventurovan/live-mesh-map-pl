@@ -166,6 +166,27 @@ function mcDessinerNoeuds() {
   }
 }
 const SASIEDZI_MIN = 5;
+// PL: linie od wybranego węzła do jego sąsiadów (z karty „Sąsiedzi”): kolor wg SNR, grubość wg liczby obserwacji
+let mcSasiedzi = null, mcSasiedziCle = null;
+function mcPokazSasiadow(n, lista) {
+  if (mcSasiedzi) { mcSasiedzi.remove(); mcSasiedzi = null; }
+  if (mcSasiedziCle === n.cle) { mcSasiedziCle = null; return; }
+  const g = L.layerGroup();
+  const maxNb = Math.max(1, ...lista.map((v) => v.nb || 1));
+  for (const v of lista) {
+    const x = mc.noeuds.get(v.cle);
+    if (!x || x.lat == null) continue;
+    const snr = v.snrEntendu ?? v.snrEmis;
+    const zmierzone = (v.sources || []).some((s) => s === 'rf' || s === 'trace');
+    L.polyline([[n.lat, n.lon], [x.lat, x.lon]], { pane: 'traces', color: snr != null ? couleurSnr(snr) : '#fb923c', weight: 1.5 + 3 * Math.sqrt((v.nb || 1) / maxNb), opacity: 0.9, dashArray: zmierzone ? null : '6 5' })
+      .bindTooltip(`<b>${esc(n.nom || n.id)} ↔ ${esc(x.nom || x.id || v.cle.slice(0, 8))}</b><br>${v.distanceKm != null ? fmt(v.distanceKm, 1) + ' km · ' : ''}${v.nb} obserwacji${snr != null ? ' · SNR ' + fmt(snr, 1) + ' dB' : ''}<br><small>${zmierzone ? 'zmierzone łącze' : 'z kolejności w ścieżkach pakietów'}</small>`, { className: 'info', sticky: true })
+      .on('click', () => mcOuvrirFiche(v.cle))
+      .addTo(g);
+  }
+  mcSasiedzi = g.addTo(carte);
+  mcSasiedziCle = n.cle;
+  const be = $('#btn-effacer'); if (be) { be.hidden = false; be.addEventListener('click', () => { if (mcSasiedzi) { mcSasiedzi.remove(); mcSasiedzi = null; mcSasiedziCle = null; } }, { once: true }); }
+}
 function mcDessinerLiens() {
   if (!mc.coucheLiens) return;
   mc.coucheLiens.clearLayers();
@@ -1685,6 +1706,7 @@ async function mcOuvrirFiche(cle, ongletInitial) {
         ${etat.admin && n.role !== 'repeteur' && !(mc.etat && mc.etat.companion && mc.etat.companion.cle === n.cle) ? '<button id="mc-ecrire">✉️ Message direct</button>' : ''}
         ${etat.admin && mc.etat && mc.etat.companion && mc.etat.companion.connecte && mc.etat.companion.cle !== n.cle ? '<button id="mc-tester" title="Découverte du chemin aller et retour depuis le companion de la carte">Tester la liaison</button>' : ''}
         <button id="mc-qr" title="QR code à scanner dans l’appli MeshCore pour ajouter ce contact">🔳 QR code</button>
+        ${n.lat != null && d.voisins.some((v) => { const x = mc.noeuds.get(v.cle); return x && x.lat != null; }) ? `<button id="mc-linie-sas" class="${mcSasiedziCle === n.cle ? 'actif' : ''}" title="Linie do sąsiadów tego węzła (z pakietów i pomiarów)">Linie do sąsiadów</button>` : ''}
         ${n.lat != null ? `<button id="mc-couv">Couverture selon le relief</button>${n.infrastructure ? '<button id="mc-couv-rpt" title="Gdzie ten repeater usłyszy inny repeater na maszcie 10 m (do 150 km)">Zasięg do repeaterów</button>' : ''}<label class="champ-mini">antenne <input id="mc-h" type="number" min="0.5" max="80" step="0.5" value="${n.infrastructure ? 10 : 2}"> m</label>` : ''}
       </div>
       <div id="mc-test-zone">${d.chemin ? mcHtmlChemin(d.chemin, n) : ''}</div>
@@ -1695,6 +1717,7 @@ async function mcOuvrirFiche(cle, ongletInitial) {
       <p class="note">Le SNR et le RSSI d’un observateur ne valent que pour les paquets entendus <b>en direct</b> (0 saut). Les « sauts » comptent les répéteurs traversés.</p>
     </div>
     <div data-pf="voisins" hidden>
+      ${voisins && n.lat != null ? `<div class="actions-prop"><button class="mini" id="mc-linie-sas2">${mcSasiedziCle === n.cle ? 'Ukryj linie na mapie' : 'Pokaż linie na mapie'}</button></div>` : ''}
       ${voisins ? `<table class="voisins"><thead><tr><th>Nœud</th><th class="num">SNR reçu</th><th class="num">SNR émis</th><th class="num">km</th><th class="num">Obs.</th><th>Source</th><th></th></tr></thead><tbody>${voisins}</tbody></table>
       <p class="note">« Mesuré » : dernier saut vers un observateur (SNR réel). « Chemin » : déduit de la liste des répéteurs traversés par un paquet (préfixes de clé, rapprochés par la géographie).</p>` : '<div class="vide">Aucune liaison connue.</div>'}
     </div>
@@ -1731,6 +1754,9 @@ async function mcOuvrirFiche(cle, ongletInitial) {
     setTimeout(() => { const t = $('#mc-texte'); if (t) t.focus(); }, 400);
   };
   const c = $('#mc-centrer'); if (c) c.onclick = () => carte.flyTo([n.lat, n.lon], Math.max(carte.getZoom(), 12));
+  const przelaczSas = () => { mcPokazSasiadow(n, d.voisins); const b = $('#mc-linie-sas'); if (b) b.classList.toggle('actif', mcSasiedziCle === n.cle); const b2 = $('#mc-linie-sas2'); if (b2) b2.textContent = mcSasiedziCle === n.cle ? 'Ukryj linie na mapie' : 'Pokaż linie na mapie'; };
+  const ls = $('#mc-linie-sas'); if (ls) ls.onclick = przelaczSas;
+  const ls2 = $('#mc-linie-sas2'); if (ls2) ls2.onclick = przelaczSas;
   const cvr = $('#mc-couv-rpt'); if (cvr) cvr.onclick = () => voirCouvertureSite({ lat: n.lat, lon: n.lon }, (n.nom || n.id) + ' → repeatery', Number($('#mc-h').value) || 10, { cadrer: true, preset: 'MESHCORE_FR', tryb: 'rpt' });
   const cv = $('#mc-couv'); if (cv) cv.onclick = () => voirCouvertureSite({ lat: n.lat, lon: n.lon }, n.nom || n.id, Number($('#mc-h').value) || 2, { cadrer: true, preset: 'MESHCORE_FR' });
   zc.querySelectorAll('tr[data-mc]').forEach((tr) => (tr.onclick = (e) => { if (!e.target.closest('[data-mc-profil]')) mcOuvrirFiche(tr.dataset.mc); }));
