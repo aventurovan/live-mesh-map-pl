@@ -384,8 +384,15 @@ function mcLignePaquet(p, nouveau) {
     <div class="entete"><span class="heure">${heure(p.heure)}</span><span class="tag"><i style="background:${t.hex}"></i>${esc(t.nom)}</span>${p.canal ? `<span>${esc(p.canal)}</span>` : ''}<span class="hach mono">${esc((p.hachage || '').slice(0, 8))}</span></div>
     <div class="corps">${de}${vers} <span class="radio">${esc(resume || '')}</span></div>
     ${p.texte ? `<div class="corps">💬 ${esc(p.texte)}</div>` : ''}${chemin}
-    ${radio ? `<div class="radio">${radio}</div>` : ''}</div>`;
+    ${radio ? `<div class="radio">${radio}</div>` : ''}${p.dePrefixe && !p.de ? `<button type="button" class="mini nam-btn" data-namierz="${esc(p.dePrefixe)}" title="Skąd nadaje węzeł ${esc(p.dePrefixe)}…">🎯 Namierz ${esc(p.dePrefixe)}</button>` : ''}</div>`;
 }
+// PL: „Namierz” z listy pakietów (działa też na telefonie)
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-namierz]');
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  if (typeof otworzNamierzanie === 'function') otworzNamierzanie(b.dataset.namierz);
+}, true);
 async function mcRendrePaquets() {
   const z = $('#mc-contenu');
   z.innerHTML = `<div class="filtres" id="mc-filtres">${Object.entries(MC_TYPES).map(([k, t]) => `<button data-mc-type="${k}" class="${mc.filtresTypes.has(k) ? 'actif' : ''}"><i style="background:${t.hex}"></i>${esc(t.nom)}</button>`).join('')}</div>

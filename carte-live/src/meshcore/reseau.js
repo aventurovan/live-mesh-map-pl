@@ -260,7 +260,7 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
 
       sortie = {
         genre: 'mc-paquet', rowid: r.rowid, hachage: p.hachage, type: p.type, cleType: p.cleType, typeFr: p.typeFr, route: p.route,
-        de: origine, nom: noeudOrig ? noeudOrig.nom : c.expediteur || null, observateur: obsCle, snr: obs.snr ?? null, rssi: obs.rssi ?? null,
+        de: origine, dePrefixe: c.de || null, nom: noeudOrig ? noeudOrig.nom : c.expediteur || null, observateur: obsCle, snr: obs.snr ?? null, rssi: obs.rssi ?? null,
         chemin: p.chemin, cheminResolu: resolu.map((n) => (n ? n.cle : null)), dernier: dernier ? dernier.cle : null,
         sauts, canal: c.canal || null, expediteur: c.expediteur || null, texte: garderTexte ? c.texte : undefined,
         resume: resumer(p), premiere, heure, via: obs.via, nouveauNoeud: p.type === 'ADVERT',
