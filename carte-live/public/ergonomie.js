@@ -269,7 +269,7 @@ function rendreHubReglages() {
   // Réglages propres à un réseau : seulement quand ce réseau est affiché (Meshtastic, MeshCore ou les deux)
   const vue = etat.vueReseau || 'les-deux', voitMc = vue !== 'meshtastic', lesDeux = vue === 'les-deux';
   const modules = !etat.membre ? [] : [
-    ['🔌', 'Connecter un module', vue === 'meshtastic' ? 'Bluetooth, USB ou adresse IP' : vue === 'meshcore' ? 'Companion MeshCore : Bluetooth, USB ou Wi-Fi' : 'Bluetooth, USB ou adresse IP, Meshtastic ou MeshCore', () => { const b = $('#outil-connecter'); if (b) b.click(); }],
+    ...(window.BEZ_COMPANIONA ? [] : [['🔌', 'Connecter un module', vue === 'meshtastic' ? 'Bluetooth, USB ou adresse IP' : vue === 'meshcore' ? 'Companion MeshCore : Bluetooth, USB ou Wi-Fi' : 'Bluetooth, USB ou adresse IP, Meshtastic ou MeshCore', () => { const b = $('#outil-connecter'); if (b) b.click(); }]]),
     ...(etat.admin && etat.config.meshcore && voitMc ? [['🟠', 'MeshCore', 'Module (companion), code de zone, canaux, périmètre', () => ouvrirMcVue('companion')]] : []),
     ...(etat.admin && etat.config.passerelleDispo && lesDeux ? [['⇄', 'Passerelle Meshtastic ⇄ MeshCore', 'Activer, choisir les canaux reliés, filtres', () => ouvrirPasserelle()]] : []),
     ...(etat.admin && vue !== 'meshcore' ? [['🔐', 'Équipes', 'Canal chiffré par équipe sur les nœuds des intervenants', () => ouvrirOutilProgrammer('voir-equipes')]] : []),
@@ -306,7 +306,7 @@ async function ficheDiagnostic() {
   try { r = await api('/api/diagnostic?reseau=' + encodeURIComponent(etat.vueReseau || 'les-deux')); } catch (x) { z.innerHTML = `<div class="vide">${esc(x.message)}</div>`; return; }
   const ACTIONS = {
     mqtt: ['Régler le serveur MQTT', () => ouvrirDlg('reglages', '[name=mqttUrl]')], canaux: ['Régler les canaux', () => ouvrirDlg('reglages', '[name=canaux]')],
-    module: ['Connecter un module', () => { const b = $('#outil-connecter'); if (b) b.click(); }], companion: ['Ustawienia MeshCore', () => ouvrirMcVue('companion', '#mc-f-reglages [name=iata]')],
+    ...(window.BEZ_COMPANIONA ? {} : { module: ['Connecter un module', () => { const b = $('#outil-connecter'); if (b) b.click(); }] }), companion: ['Ustawienia MeshCore', () => ouvrirMcVue('companion', '#mc-f-reglages [name=iata]')],
     meshcore: ['Régler MeshCore', () => ouvrirMcVue('companion', '#mc-f-reglages [name=iata]')], passerelle: ['Ouvrir la passerelle', () => ouvrirPasserelle()], maj: ['Mise à jour', () => ficheMaj()],
   };
   const IC = { ok: '✅', attention: '⚠️', ko: '❌', info: 'ℹ️' };

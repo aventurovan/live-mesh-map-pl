@@ -77,7 +77,7 @@ function dessinerAxes() {
     x.t = x.t.filter((t) => t >= limite);
     if (!x.t.length) { anim.axes.delete(k); continue; }
   }
-  if (!etat.couches.animations) return;
+  if (!etat.couches.animations || etat.couches.slady === false) return; // PL: „Ślady pakietów” można wyłączyć osobno
   // Seulement le réseau affiché (Meshtastic, MeshCore ou les deux)
   const vue = typeof etat !== 'undefined' ? etat.vueReseau : null;
   for (const x of anim.axes.values()) {
