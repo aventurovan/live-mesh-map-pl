@@ -12,6 +12,7 @@ const R_TERRE = 6371000;
 const K = 4 / 3;
 // Fréquence de calcul : RADIO_FREQ_MHZ (ex. 906.875 aux États-Unis), 869,525 MHz par défaut (Europe)
 const FREQ = (Number(process.env.RADIO_FREQ_MHZ) || 869.525) * 1e6;
+const SRODOWISKO_PL = process.env.RELIEF_SRODOWISKO_DB === '' ? NaN : Number(process.env.RELIEF_SRODOWISKO_DB ?? 33);
 const LAMBDA = 299792458 / FREQ;
 const M_PAR_DEG = 111320;
 const PARAMS_LORA = {
@@ -416,7 +417,9 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       gains: (opts.ga ?? 5) + (opts.gb ?? 2.15),
       pertes: opts.pertes ?? 0,
       margeSecurite: opts.marge ?? 6, // évanouissements
-      env: opts.env ?? (calibration && calibration.perteEnvironnementDb != null ? calibration.perteEnvironnementDb : (fournisseurs.envDefaut && fournisseurs.envDefaut()) ?? 12), // végétation, bâti (autre département : calibration de la carte)
+      // PL: straty środowiskowe skalibrowane pomiarami Mappera SF6 (companion w samochodzie / w kieszeni):
+      // Bielsko OSP −23 dB, Szyndzielnia −19 dB względem 12 dB → ok. 33 dB. RELIEF_SRODOWISKO_DB w .env zmienia wartość.
+      env: opts.env ?? (Number.isFinite(SRODOWISKO_PL) ? SRODOWISKO_PL : (calibration && calibration.perteEnvironnementDb != null ? calibration.perteEnvironnementDb : (fournisseurs.envDefaut && fournisseurs.envDefaut()) ?? 12)),
       seuil: bruit + SNR_LIMITE[p.sf], // sensibilité
       rayonMax: (opts.rayonKm ?? 40) * 1000,
     };
