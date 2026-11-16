@@ -2029,6 +2029,48 @@ app.get('/api/mapper', async (req, res) => {
   res.set('Cache-Control', 'public, max-age=300');
   res.json({ ok: true, ts: mapper.ts, pts: mapper.pts, rep: mapper.rep, blad: mapperBlad });
 });
+// ---- PL: walidacja modelu zasięgu pomiarami Mappera SF6 dla jednego repeatera ----
+// /api/relief/walidacja?cle=<klucz>&hs=6 : dla pomiarów w promieniu (domyślnie 40 km) porównuje przewidywany margines
+// z tym, czy repeater faktycznie odpowiedział. Podaje trafność i przesunięcie strat środowiskowych, które najlepiej pasuje.
+const odlM = (a, b) => { const R = 6371000, r2 = Math.PI / 180, dl = (b.lat - a.lat) * r2, dn = (b.lon - a.lon) * r2; const x = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r2) * Math.cos(b.lat * r2) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
+app.get('/api/relief/walidacja', async (req, res) => {
+  try {
+    const cle = String(req.query.cle || '').toLowerCase().replace(/[^0-9a-f]/g, '');
+    if (cle.length < 8) return res.status(400).json({ erreur: 'Podaj klucz repeatera (cle)' });
+    const wiersz = reseauMc.q.noeud.get(cle) || (reseauMc.q.noeuds.all().find((n) => n.cle.startsWith(cle)) || null);
+    if (!wiersz || wiersz.lat == null) return res.status(404).json({ erreur: 'Repeater bez pozycji albo nieznany' });
+    if (!mapper.pts.length) await odswiezMapper();
+    const nb = (v, d) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? d : Number(v));
+    const opts = { preset: 'MESHCORE_FR', hs: nb(req.query.hs, 6), ht: nb(req.query.ht, 2), ptx: nb(req.query.ptx, 22), ga: nb(req.query.ga, 5), gb: nb(req.query.gb, 2.15), pertes: nb(req.query.pertes, 0), rayonKm: nb(req.query.rayon, 40) };
+    const P = relief.parametry(opts);
+    const site = { lat: wiersz.lat, lon: wiersz.lon };
+    const pref = wiersz.cle.slice(0, 16);
+    const R = P.rayonMax;
+    // pingi: grupowane po czasie i miejscu; trafienie = ten repeater odpowiedział w tym pingu
+    const pingi = new Map();
+    for (const p of mapper.pts) {
+      const d = odlM(site, { lat: p[0], lon: p[1] });
+      if (d > R || d < 100) continue;
+      const k = p[4] + '|' + p[0] + '|' + p[1];
+      let g = pingi.get(k); if (!g) pingi.set(k, (g = { lat: p[0], lon: p[1], d, slyszal: false, snr: null }));
+      if (p[2] && pref.startsWith(String(p[2]).toLowerCase())) { g.slyszal = true; g.snr = p[3]; }
+    }
+    let lista = [...pingi.values()];
+    if (lista.length > 4000) { const krok = lista.length / 4000; lista = lista.filter((_, i) => Math.floor(i % krok) === 0); }
+    const wyniki = [];
+    for (const g of lista) { const l = relief.margines(site, g, opts); if (l) wyniki.push({ ...g, marge: l.marge }); }
+    if (!wyniki.length) return res.json({ ok: false, erreur: 'Brak pomiarów w promieniu albo brak terenu dla tego obszaru' });
+    const ocen = (o) => { let tp = 0, fn = 0, fp = 0, tn = 0; for (const w of wyniki) { const pr = w.marge + o >= 0; if (w.slyszal) pr ? tp++ : fn++; else pr ? fp++ : tn++; } return { tp, fn, fp, tn, trafnosc: Math.round(((tp + tn) / wyniki.length) * 1000) / 10 }; };
+    const obecny = ocen(0);
+    let najlepszy = { o: 0, ...obecny };
+    for (let o = -30; o <= 30; o++) { const r = ocen(o); if (r.trafnosc > najlepszy.trafnosc) najlepszy = { o, ...r }; }
+    const pasma = [0, 5, 10, 20, 30, 40].map((km, i, a) => i < a.length - 1 ? (() => { const w = wyniki.filter((x) => x.d >= km * 1000 && x.d < a[i + 1] * 1000); const s = w.filter((x) => x.slyszal).length; const pr = w.filter((x) => x.marge >= 0).length; return { od: km, do: a[i + 1], pomiary: w.length, slyszal: s, przewidziano: pr }; })() : null).filter(Boolean);
+    res.json({ ok: true, repeater: wiersz.nom, parametry: { hs: P.hs, ht: P.ht, ptx: P.ptx, zyski: P.gains, straty: P.pertes, zapas: P.margeSecurite, srodowisko: P.env, promienKm: R / 1000 },
+      pomiary: wyniki.length, slyszal: wyniki.filter((w) => w.slyszal).length, obecnie: obecny,
+      najlepszePrzesuniecieDb: najlepszy.o, poPrzesunieciu: najlepszy, pasma,
+      opis: 'tp = odpowiedział i model przewidział zasięg; fn = odpowiedział, choć model mówi, że nie ma zasięgu (model zbyt ostrożny); fp = model przewiduje zasięg, ale nie odpowiedział; tn = brak i model też mówi brak. Przesunięcie > 0: model jest zbyt ostrożny (zasięg większy niż liczy); < 0: zbyt optymistyczny.' });
+  } catch (e) { res.status(500).json({ erreur: e.message }); }
+});
 app.get('/api/sf8', async (req, res) => {
   if (!SF8_URL) return res.json({ ok: false, wylaczone: true, nodes: [] });
   if (!sf8) await odswiezSf8();

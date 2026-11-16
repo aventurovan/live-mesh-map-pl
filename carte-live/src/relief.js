@@ -411,9 +411,10 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       preset,
       hs: opts.hs ?? 6, // antenne du site (m)
       ht: opts.ht ?? 2, // antenne du point desservi (m)
-      ptx: opts.ptx ?? 27,
-      gains: (opts.ga ?? 2.15) + (opts.gb ?? 2.15),
-      pertes: opts.pertes ?? 1.5,
+      // PL: sprzęt sieci Południe: 22 dBm, antena repeatera 5 dBi, odbiornik 2,15 dBi, bez strat w kablu
+      ptx: opts.ptx ?? 22,
+      gains: (opts.ga ?? 5) + (opts.gb ?? 2.15),
+      pertes: opts.pertes ?? 0,
       margeSecurite: opts.marge ?? 6, // évanouissements
       env: opts.env ?? (calibration && calibration.perteEnvironnementDb != null ? calibration.perteEnvironnementDb : (fournisseurs.envDefaut && fournisseurs.envDefaut()) ?? 12), // végétation, bâti (autre département : calibration de la carte)
       seuil: bruit + SNR_LIMITE[p.sf], // sensibilité
@@ -1344,6 +1345,9 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       meilleursIndividuels: classement.meilleursIndividuels.map((p) => ({ ...p, commune: sommets[p.id] ? sommets[p.id].commune : p.commune })),
     },
     couverturePng,
+    // PL: margines łącza site → punkt (dB) z podanymi parametrami (walidacja z pomiarami Mappera)
+    margines: (a, b, opts = {}) => { const P = parametres(opts); return liaison(a, b, P, P.hs, P.ht); },
+    parametry: (opts = {}) => parametres(opts),
     couverturePngMulti,
     couvertureReseau,
     simuler,

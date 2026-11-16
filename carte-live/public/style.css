@@ -1652,3 +1652,5 @@ body.uklad-nowy .legende { width: 340px; overflow: visible; }
 .tuile-accueil { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 12px 13px; min-height: 0; }
 .tuile-accueil .ic { width: 38px; height: 38px; margin-bottom: 2px; }
 .tuile-accueil b { line-height: 1.2; }
+/* PL: zasięg na jasnym podkładzie: mocniejsze, ciemniejsze kolory (żółte i pomarańczowe pasma były prawie niewidoczne) */
+body.theme-clair .leaflet-couverture-pane img { filter: saturate(1.9) brightness(.78) contrast(1.15); opacity: .85 !important; }
