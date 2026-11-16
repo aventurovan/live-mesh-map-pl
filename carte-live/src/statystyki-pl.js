@@ -56,7 +56,7 @@ function creerStatystyki({ db, config, liczPokrycie, journal = () => {} }) {
   const q = {
     noeuds: db.prepare('SELECT cle, nom, role, lat, lon, premier_vu, dernier_vu FROM mc_noeuds'),
     liens: db.prepare(`SELECT a, b, source, snr, nb, premier_vu, dernier_vu FROM mc_liens WHERE dernier_vu >= ? AND premier_vu < ? AND source IN ('rf', 'trace', 'voisinage', 'chemin')`),
-    skoki: db.prepare('SELECT de, sauts, heure FROM mc_paquets WHERE heure >= ? AND heure < ? AND sauts IS NOT NULL AND sauts < 64 ORDER BY sauts DESC, heure DESC LIMIT 1'),
+    skoki: db.prepare('SELECT de, sauts, heure, chemin FROM mc_paquets WHERE heure >= ? AND heure < ? AND sauts IS NOT NULL AND sauts < 64 ORDER BY sauts DESC, heure DESC LIMIT 1'),
     pakietyCzas: db.prepare('SELECT heure FROM mc_paquets WHERE heure >= ? AND heure < ?'),
     licz: db.prepare('SELECT COUNT(*) n FROM mc_paquets WHERE heure >= ? AND heure < ?'),
     kanaly: db.prepare(`SELECT COALESCE(canal, '') canal, COUNT(*) nb FROM mc_paquets WHERE type = 'GRP_TXT' AND heure >= ? AND heure < ? GROUP BY canal ORDER BY nb DESC`),
@@ -81,33 +81,37 @@ function creerStatystyki({ db, config, liczPokrycie, journal = () => {} }) {
     return lista.sort((x, y) => y.km - x.km).slice(0, ile);
   }
   // Trasa pakietu: nadawca → kolejne repeatery z prefiksów ścieżki (jednoznaczny albo najbliższy poprzedniemu punktowi)
-  function topTrasyOkna(od, doT, ile = 10) {
-    const wezly = q.noeuds.all();
-    const mapa = new Map(wezly.map((n) => [n.cle, n]));
-    const rpt = wezly.filter((n) => n.lat != null && ['repeteur', 'salon'].includes(n.role));
+  function rozwinTrase(de, hopy, mapa) {
+    if (!Array.isArray(hopy) || hopy.length < 2) return null;
+    const rpt = [...mapa.values()].filter((n) => n.lat != null && ['repeteur', 'salon'].includes(n.role));
     const maxSkok = config.lienDistanceMaxKm || 120;
+    const pkt = [];
+    const nad = mapa.get(de);
+    if (nad && nad.lat != null) pkt.push(punkt(nad));
+    for (const h of hopy) {
+      const pref = String(h).toUpperCase();
+      let c = rpt.filter((n) => n.cle.toUpperCase().startsWith(pref));
+      if (!c.length) continue;
+      const ost = pkt[pkt.length - 1];
+      if (c.length > 1) { if (!ost) continue; c = [c.reduce((m, n) => (odlKm(ost, n) < odlKm(ost, m) ? n : m))]; }
+      const p = punkt(c[0]);
+      if (ost && ost.cle === p.cle) continue;
+      if (ost && odlKm(ost, p) > maxSkok) return null;
+      pkt.push(p);
+    }
+    if (pkt.length < 3) return null;
+    let km = 0; for (let i = 1; i < pkt.length; i++) km += odlKm(pkt[i - 1], pkt[i]);
+    return { km: Math.round(km * 10) / 10, punkty: pkt, nad };
+  }
+  function topTrasyOkna(od, doT, ile = 10) {
+    const mapa = new Map(q.noeuds.all().map((n) => [n.cle, n]));
     const wyniki = [];
     for (const r of q.trasy.all(od, doT)) {
       let hopy; try { hopy = JSON.parse(r.chemin); } catch { continue; }
-      if (!Array.isArray(hopy) || hopy.length < 2) continue;
-      const pkt = [];
-      const nad = mapa.get(r.de);
-      if (nad && nad.lat != null) pkt.push(punkt(nad));
-      let zle = false;
-      for (const h of hopy) {
-        const pref = String(h).toUpperCase();
-        let c = rpt.filter((n) => n.cle.toUpperCase().startsWith(pref));
-        if (!c.length) continue;
-        const ost = pkt[pkt.length - 1];
-        if (c.length > 1) { if (!ost) continue; c = [c.reduce((m, n) => (odlKm(ost, n) < odlKm(ost, m) ? n : m))]; }
-        const p = punkt(c[0]);
-        if (ost && ost.cle === p.cle) continue;
-        if (ost && odlKm(ost, p) > maxSkok) { zle = true; break; }
-        pkt.push(p);
-      }
-      if (zle || pkt.length < 3) continue;
-      let km = 0; for (let i = 1; i < pkt.length; i++) km += odlKm(pkt[i - 1], pkt[i]);
-      wyniki.push({ km: Math.round(km * 10) / 10, skoki: r.sauts, od: nad ? { nazwa: nad.nom || nad.cle.slice(0, 8), cle: nad.cle } : null, punkty: pkt, czas: r.heure, klucz: (r.de || '') + '|' + r.chemin });
+      const t = rozwinTrase(r.de, hopy, mapa);
+      if (!t) continue;
+      const nad = t.nad;
+      wyniki.push({ km: t.km, skoki: r.sauts, od: nad ? { nazwa: nad.nom || nad.cle.slice(0, 8), cle: nad.cle } : null, punkty: t.punkty, czas: r.heure, klucz: (r.de || '') + '|' + r.chemin });
     }
     const uniq = new Map();
     for (const w of wyniki) { const k = w.punkty.map((p) => p.cle.slice(0, 8)).join('>'); if (!uniq.has(k) || uniq.get(k).km < w.km) uniq.set(k, w); }
@@ -145,10 +149,12 @@ function creerStatystyki({ db, config, liczPokrycie, journal = () => {} }) {
       const km = odlKm(a, b);
       if (km > (config.lienDistanceMaxKm || 120)) continue;
       if (!lacze || km > lacze.km) lacze = { km: Math.round(km * 10) / 10, a: opis(a), b: opis(b), czas: l.dernier_vu };
-      if (l.snr != null && km >= 10 && (!snr || l.snr > snr.snr)) snr = { snr: Math.round(l.snr * 10) / 10, km: Math.round(km * 10) / 10, a: opis(a), b: opis(b), czas: l.dernier_vu };
+      if (l.snr != null && km >= 30 && (!snr || l.snr > snr.snr)) snr = { snr: Math.round(l.snr * 10) / 10, km: Math.round(km * 10) / 10, a: opis(a), b: opis(b), czas: l.dernier_vu };
     }
     const s = q.skoki.get(od, doT);
-    const skoki = s ? { skoki: s.sauts, od: opis(wezly.get(s.de)) || (s.de ? { nazwa: s.de.slice(0, 8), cle: null } : null), czas: s.heure } : null;
+    let trasa = null;
+    if (s) { try { const t = rozwinTrase(s.de, JSON.parse(s.chemin || '[]'), wezly); if (t) trasa = t.punkty.map((p) => p.cle.slice(0, 16)); } catch { /* bez trasy */ } }
+    const skoki = s ? { skoki: s.sauts, od: opis(wezly.get(s.de)) || (s.de ? { nazwa: s.de.slice(0, 8), cle: null } : null), czas: s.heure, trasa } : null;
     return { lacze, snr, skoki };
   }
   const lepszy = (a, b, k) => (!a ? b : !b ? a : (b[k] > a[k] ? b : a));

@@ -44,7 +44,7 @@ const mc = {
   vue: (() => { try { return localStorage.getItem('gaulix_mc_vue') || 'noeuds'; } catch { return 'noeuds'; } })(),
   filtresTypes: new Set(Object.keys(MC_TYPES)),
   roles: (() => { try { return { ...Object.fromEntries(Object.keys(MC_ROLES).map((k) => [k, true])), ...JSON.parse(localStorage.getItem('gaulix_mc_roles') || '{}') }; } catch { return Object.fromEntries(Object.keys(MC_ROLES).map((k) => [k, true])); } })(),
-  couches: { rf: true, chemin: true, trace: true, voisinage: true },
+  couches: { rf: true, chemin: false, trace: true, voisinage: true }, // PL: „Ścieżki” domyślnie wyłączone
   selection: null,
   nav: { etat: 'aucun', ws: null, port: null, lecteur: null, ecrivain: null, ble: null, type: null, erreur: null, role: 'principal' },
 };
@@ -1605,8 +1605,35 @@ async function mcOuvrirQr(q) {
 
 // ---- Fiche d'un nœud MeshCore ------------------------------------------------------------------
 // PL: link z zewnątrz (np. strona statystyk): ?mc=<klucz lub jego początek> → wyśrodkuj i otwórz kartę węzła
+// ?lacze=<kluczA>,<kluczB> albo ?trasa=<k1>,<k2>,… → wyróżnione łącze / trasa na mapie (link ze strony statystyk)
+function mcWezelPoKluczu(k) {
+  const p = String(k || '').toUpperCase().replace(/[^0-9A-F]/g, '');
+  if (p.length < 4) return null;
+  return mc.noeuds.get(p) || [...mc.noeuds.values()].find((x) => String(x.cle).toUpperCase().startsWith(p)) || null;
+}
+let mcWyroznienie = null;
+function mcPokazWyroznienie(klucze, trasa) {
+  const w = klucze.map(mcWezelPoKluczu).filter((n) => n && n.lat != null);
+  if (w.length < 2) return false;
+  if (mcWyroznienie) mcWyroznienie.remove();
+  const pts = w.map((n) => [n.lat, n.lon]);
+  const g = L.layerGroup();
+  const kol = trasa ? '#7c3aed' : '#d97706';
+  let km = 0; for (let i = 1; i < pts.length; i++) km += carte.distance(pts[i - 1], pts[i]) / 1000;
+  const opis = `<b>${trasa ? 'Trasa' : 'Łącze'}: ${fmt(km, 1)} km</b><br>${w.map((n) => esc(n.nom || n.cle.slice(0, 8))).join(trasa ? ' → ' : ' ↔ ')}`;
+  L.polyline(pts, { color: '#ffffff', weight: 9, opacity: 0.7, pane: 'traces', interactive: false }).addTo(g);
+  L.polyline(pts, { color: kol, weight: 5, opacity: 1, dashArray: trasa ? '10 7' : null, pane: 'traces' }).bindTooltip(opis, { className: 'info', sticky: true }).addTo(g);
+  w.forEach((n, i) => L.marker([n.lat, n.lon], { pane: 'traces', icon: L.divIcon({ className: 'rek-et' + (trasa ? ' rek-trasa' : ''), html: trasa ? String(i + 1) + ' · ' + esc(n.nom || n.cle.slice(0, 8)) : esc(n.nom || n.cle.slice(0, 8)), iconSize: null }) }).addTo(g));
+  mcWyroznienie = g.addTo(carte);
+  carte.fitBounds(L.latLngBounds(pts), { padding: [80, 80], maxZoom: 12 });
+  const be = $('#btn-effacer'); if (be) { be.hidden = false; be.addEventListener('click', () => { if (mcWyroznienie) { mcWyroznienie.remove(); mcWyroznienie = null; } }, { once: true }); }
+  return true;
+}
 function mcOtworzZAdresu() {
-  const p = (new URLSearchParams(location.search).get('mc') || '').toUpperCase().replace(/[^0-9A-F]/g, '');
+  const u = new URLSearchParams(location.search);
+  if (u.get('lacze')) { mcPokazWyroznienie(u.get('lacze').split(','), false); return; }
+  if (u.get('trasa')) { mcPokazWyroznienie(u.get('trasa').split(','), true); return; }
+  const p = (u.get('mc') || '').toUpperCase().replace(/[^0-9A-F]/g, '');
   if (p.length < 4) return;
   const n = mc.noeuds.get(p) || [...mc.noeuds.values()].find((x) => String(x.cle).toUpperCase().startsWith(p));
   if (!n) return;

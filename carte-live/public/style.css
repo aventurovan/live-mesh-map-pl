@@ -661,11 +661,11 @@ body[data-reseau="meshcore"] .kpis .kpi-mc:first-of-type, body[data-reseau="mesh
 .mkc .c { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; transform: translate(-50%, -50%); background: var(--mcc); border: 1.5px solid rgba(11,17,23,.95); }
 /* PL: repeater = złote kółko z białą obwódką i ciemnym obrysem (aktywny jasny, ostatnio słyszany ciemniejszy, nieaktywny szary);
    podpis na ciemnej plakietce, czytelny na każdym podkładzie */
-.mkc.repeteur .c { width: 18px; height: 18px; border-radius: 50%; background: #fbbf24; border: 2px solid #fff; box-shadow: 0 0 0 2px #0b1117; }
-.mkc.repeteur.actif .c { box-shadow: 0 0 0 2px #0b1117, 0 0 10px rgba(251,191,36,.8); }
+.mkc.repeteur .c { width: 13px; height: 13px; border-radius: 50%; background: #fbbf24; border: 1.5px solid #fff; box-shadow: 0 0 0 1.5px #0b1117; } /* PL: o 30% mniejsze */
+.mkc.repeteur.actif .c { box-shadow: 0 0 0 1.5px #0b1117, 0 0 7px rgba(251,191,36,.8); }
 .mkc.repeteur.recent .c { background: #ca8a04; }
 .mkc.repeteur.inactif .c { background: #6b7280; opacity: .7; }
-.mkc.repeteur .lbl { top: 13px; font-size: 12px; font-weight: 600; color: #fff; background: rgba(10,14,18,.8); padding: 1px 6px; border-radius: 4px; text-shadow: none; }
+.mkc.repeteur .lbl { top: 10px; font-size: 12px; font-weight: 600; color: #fff; background: rgba(10,14,18,.8); padding: 1px 6px; border-radius: 4px; text-shadow: none; }
 .mkc.salon .c { border-radius: 3px; }
 .mkc.companion .c, .mkc.inconnu .c { width: 12px; height: 12px; border-radius: 50%; background: rgba(11,17,23,.9); border: 3px solid var(--mcc); }
 .mkc.capteur .c { width: 14px; height: 13px; border: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
@@ -1530,7 +1530,7 @@ body.theme-clair .leaflet-control-attribution { background: rgba(251, 246, 238, 
 /* podpisy repeaterów na jasnej mapie: biała plakietka z ciemnym tekstem */
 body.theme-clair .mkc.repeteur .lbl { color: #1F2A26; background: rgba(255, 255, 255, .92); border: 1px solid #EADFCF; }
 body.theme-clair .mkc .lbl { color: #1F4D40; }
-body.theme-clair .mkc.repeteur .c { box-shadow: 0 0 0 2px #1F2A26; }
+body.theme-clair .mkc.repeteur .c { box-shadow: 0 0 0 1.5px #1F2A26; }
 /* przycisk ＋ na mapie */
 .fab-plus { background: var(--zielen) !important; color: #fff !important; }
 /* poprawki po podglądzie */
