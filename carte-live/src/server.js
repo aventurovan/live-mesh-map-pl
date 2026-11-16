@@ -2056,7 +2056,16 @@ app.get('/api/relief/walidacja', async (req, res) => {
       let g = pingi.get(k); if (!g) pingi.set(k, (g = { lat: p[0], lon: p[1], d, slyszal: false, snr: null }));
       if (p[2] && pref.startsWith(String(p[2]).toLowerCase())) { g.slyszal = true; g.snr = p[3]; }
     }
-    let lista = [...pingi.values()];
+    // Kratki ok. 500 m: kratka „słyszy”, jeśli repeater odpowiedział tam choć raz; „nie słyszy”, jeśli było ≥ 3 pingi
+    // i żadnej odpowiedzi. Pojedyncze pingi bez odpowiedzi (kolizje odpowiedzi discovery, chwilowy zanik) nie zawyżają błędu.
+    const krat = new Map();
+    for (const g of pingi.values()) {
+      const k = Math.round(g.lat / 0.0045) + ':' + Math.round(g.lon / 0.007);
+      let c = krat.get(k); if (!c) krat.set(k, (c = { lat: 0, lon: 0, n: 0, traf: 0, d: 0 }));
+      c.lat += g.lat; c.lon += g.lon; c.d += g.d; c.n++; if (g.slyszal) c.traf++;
+    }
+    const kratki = [...krat.values()].map((c) => ({ lat: c.lat / c.n, lon: c.lon / c.n, d: c.d / c.n, pingi: c.n, slyszal: c.traf > 0, odsetek: c.traf / c.n })).filter((c) => c.slyszal || c.pingi >= 3);
+    let lista = req.query.tryb === 'pingi' ? [...pingi.values()] : kratki;
     if (lista.length > 4000) { const krok = lista.length / 4000; lista = lista.filter((_, i) => Math.floor(i % krok) === 0); }
     const wyniki = [];
     for (const g of lista) { const l = relief.margines(site, g, opts); if (l) wyniki.push({ ...g, marge: l.marge }); }
@@ -2064,10 +2073,11 @@ app.get('/api/relief/walidacja', async (req, res) => {
     const ocen = (o) => { let tp = 0, fn = 0, fp = 0, tn = 0; for (const w of wyniki) { const pr = w.marge + o >= 0; if (w.slyszal) pr ? tp++ : fn++; else pr ? fp++ : tn++; } return { tp, fn, fp, tn, trafnosc: Math.round(((tp + tn) / wyniki.length) * 1000) / 10 }; };
     const obecny = ocen(0);
     let najlepszy = { o: 0, ...obecny };
-    for (let o = -30; o <= 30; o++) { const r = ocen(o); if (r.trafnosc > najlepszy.trafnosc) najlepszy = { o, ...r }; }
+    for (let o = -50; o <= 30; o++) { const r = ocen(o); if (r.trafnosc > najlepszy.trafnosc) najlepszy = { o, ...r }; }
     const pasma = [0, 5, 10, 20, 30, 40].map((km, i, a) => i < a.length - 1 ? (() => { const w = wyniki.filter((x) => x.d >= km * 1000 && x.d < a[i + 1] * 1000); const s = w.filter((x) => x.slyszal).length; const pr = w.filter((x) => x.marge >= 0).length; return { od: km, do: a[i + 1], pomiary: w.length, slyszal: s, przewidziano: pr }; })() : null).filter(Boolean);
     res.json({ ok: true, repeater: wiersz.nom, parametry: { hs: P.hs, ht: P.ht, ptx: P.ptx, zyski: P.gains, straty: P.pertes, zapas: P.margeSecurite, srodowisko: P.env, promienKm: R / 1000 },
-      pomiary: wyniki.length, slyszal: wyniki.filter((w) => w.slyszal).length, obecnie: obecny,
+      tryb: req.query.tryb === 'pingi' ? 'pojedyncze pingi' : 'kratki ~500 m (słyszy = choć raz odpowiedział; nie słyszy = ≥3 pingi bez odpowiedzi)',
+      pomiary: wyniki.length, slyszal: wyniki.filter((w) => w.slyszal).length, najdalejSlyszalKm: Math.round(Math.max(0, ...wyniki.filter((w) => w.slyszal).map((w) => w.d)) / 100) / 10, obecnie: obecny,
       najlepszePrzesuniecieDb: najlepszy.o, poPrzesunieciu: najlepszy, pasma,
       opis: 'tp = odpowiedział i model przewidział zasięg; fn = odpowiedział, choć model mówi, że nie ma zasięgu (model zbyt ostrożny); fp = model przewiduje zasięg, ale nie odpowiedział; tn = brak i model też mówi brak. Przesunięcie > 0: model jest zbyt ostrożny (zasięg większy niż liczy); < 0: zbyt optymistyczny.' });
   } catch (e) { res.status(500).json({ erreur: e.message }); }
