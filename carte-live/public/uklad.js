@@ -75,6 +75,19 @@
     while (lista.children.length > 14) lista.lastElementChild.remove();
   };
 
-  const start = () => { ulozUklad(); dodajPasek(); };
+  // Na start: kilka ostatnich pakietów z serwera, żeby pasek nie był pusty
+  async function zasiejPasek() {
+    try {
+      const lista = document.querySelector('.pasek-pakietow .pp-lista');
+      if (!lista || !lista.querySelector('.pp-pusty')) return;
+      const r = await fetch('/api/mc/paquets?limite=8');
+      if (!r.ok) return;
+      const d = await r.json();
+      const p = Array.isArray(d) ? d : (d.paquets || []);
+      p.slice(0, 8).reverse().forEach((x) => window.tickerPakietow({ ...x, premiere: true }));
+      lista.querySelectorAll('.nowy').forEach((e) => e.classList.remove('nowy'));
+    } catch { /* bez paska startowego */ }
+  }
+  const start = () => { ulozUklad(); dodajPasek(); setTimeout(zasiejPasek, 2500); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

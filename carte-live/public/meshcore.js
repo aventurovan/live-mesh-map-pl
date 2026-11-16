@@ -1877,9 +1877,10 @@ function mcRecevoir(m) {
       if (n) { n.dernierVu = m.heure; if (n.statut !== 'actif') { n.statut = 'actif'; mcDessinerNoeuds(); } }
       if (m.chemin && m.chemin.length && Math.random() < 0.2) mcPlanifier();
     }
-    mcAnimer(m);
-    mcAjouterAuFlux(m);
-    if (typeof window.tickerPakietow === 'function') window.tickerPakietow(m); // PL: pasek pakietów na żywo
+    // PL: pasek pakietów na żywo — najpierw, i każdy krok osobno, żeby błąd animacji nie blokował reszty
+    try { if (typeof window.tickerPakietow === 'function') window.tickerPakietow(m); } catch (e) { console.warn('pasek pakietów:', e); }
+    try { mcAnimer(m); } catch (e) { console.warn('animacja:', e); }
+    try { mcAjouterAuFlux(m); } catch (e) { console.warn('flux:', e); }
     mcNoterActivite(m.de); (m.cheminResolu || []).forEach(mcNoterActivite);
     if (m.texte && m.premiere && etat.membre) { mcNoterMessageRecu({ canal: m.canal }); mcMessagesARafraichir(); }
   } else if (m.genre === 'mc-etat') {
