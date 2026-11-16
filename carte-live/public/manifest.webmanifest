@@ -1,15 +1,25 @@
 {
-  "name": "Carte live Meshtastic · MeshCore",
-  "short_name": "Carte live",
-  "description": "Carte en temps réel, supervision et relevés de terrain d’un réseau Meshtastic / MeshCore",
+  "name": "Mapa na żywo · MeshCore Południe",
+  "short_name": "Mapa MeshCore",
+  "description": "Mapa sieci MeshCore Południe na żywo: węzły, łącza, pakiety i zasięg",
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#0f172a",
-  "lang": "fr",
+  "background_color": "#16211D",
+  "theme_color": "#2E6B5A",
+  "lang": "pl",
   "icons": [
-    { "src": "/icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "/icone-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icone-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }

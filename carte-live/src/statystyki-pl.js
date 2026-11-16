@@ -111,7 +111,7 @@ function creerStatystyki({ db, config, liczPokrycie, journal = () => {} }) {
       const t = rozwinTrase(r.de, hopy, mapa);
       if (!t) continue;
       const nad = t.nad;
-      wyniki.push({ km: t.km, skoki: r.sauts, od: nad ? { nazwa: nad.nom || nad.cle.slice(0, 8), cle: nad.cle } : null, punkty: t.punkty, czas: r.heure, klucz: (r.de || '') + '|' + r.chemin });
+      wyniki.push({ km: t.km, skoki: r.sauts, od: nad ? { nazwa: nad.nom || nad.cle.slice(0, 8), cle: nad.cle } : null, punkty: t.punkty, sciezka: hopy.map((h) => String(h).toLowerCase()), czas: r.heure, klucz: (r.de || '') + '|' + r.chemin });
     }
     const uniq = new Map();
     for (const w of wyniki) { const k = w.punkty.map((p) => p.cle.slice(0, 8)).join('>'); if (!uniq.has(k) || uniq.get(k).km < w.km) uniq.set(k, w); }

@@ -8368,7 +8368,7 @@ async function dessinerMapper(wczytaj) {
 
 // ---- PL: warstwa rekordów (jak CoreScope): lista po prawej, włączanie łączy/tras, wybór jednej ścieżki ----
 let coucheRekordy = null, minuteurRekordy = null;
-const REK = { dane: null, dni: 30, lacza: true, trasy: true, wybor: null };
+const REK = { dane: null, dni: 30, tryb: 'lacza', wybor: null }; // tryb: 'lacza' albo 'trasy' (jedno naraz)
 async function dessinerRekordy(odswiez = true) {
   clearTimeout(minuteurRekordy);
   if (!etat.couches.rekordy) {
@@ -8395,13 +8395,13 @@ function rysujRekordy() {
   };
   const etykieta = (ll, html, trasa) => L.marker(ll, { pane: 'traces', icon: L.divIcon({ className: 'rek-et' + (trasa ? ' rek-trasa' : ''), html, iconSize: null }) }).addTo(g);
   const w = REK.wybor;
-  const trasy = (r.trasy || []).map((t, i) => ({ t, i: i + 1 })).filter(({ i }) => (w ? w === 't' + i : REK.trasy));
-  const lacza = (r.lacza || []).map((l, i) => ({ l, i: i + 1 })).filter(({ i }) => (w ? w === 'l' + i : REK.lacza));
+  const trasy = REK.tryb !== 'trasy' ? [] : (r.trasy || []).map((t, i) => ({ t, i: i + 1 })).filter(({ i }) => (w ? w === 't' + i : true));
+  const lacza = REK.tryb !== 'lacza' ? [] : (r.lacza || []).map((l, i) => ({ l, i: i + 1 })).filter(({ i }) => (w ? w === 'l' + i : true));
   for (const { t, i } of trasy.reverse()) {
     const pts = t.punkty.map((p) => [p.lat, p.lon]);
     const opis = `<b>Trasa nr ${i}: ${fmt(t.km, 1)} km</b> · ${t.skoki} skoków<br>${t.punkty.map((p) => esc(p.nazwa)).join(' → ')}<br><small>${rekKiedy(t.czas)}</small>`;
     linia(pts, '#7c3aed', true, opis, !!w).on('click', () => wybierzRekord('t' + i));
-    if (w) t.punkty.forEach((p, k) => etykieta([p.lat, p.lon], `${k + 1} · ${esc(p.nazwa)}`, true));
+    if (w) t.punkty.forEach((p, k) => etykieta([p.lat, p.lon], `${k + 1}`, true).bindTooltip(`${k + 1}. ${esc(p.nazwa)}`, { className: 'info', direction: 'top' }));
     else etykieta(pts[pts.length - 1], `T${i}`, true);
   }
   for (const { l, i } of lacza.reverse()) {
@@ -8434,33 +8434,41 @@ function panelRekordy() {
   if (w && w[0] === 't') {
     const t = r.trasy[Number(w.slice(1)) - 1];
     const maks = Math.max(1, ...t.punkty.slice(1).map((p, k) => carte.distance([t.punkty[k].lat, t.punkty[k].lon], [p.lat, p.lon])));
+    // Ścieżka do odtworzenia z companiona: hashe repeaterów z pakietu („a1b2, c3d4”), a dla starszych zapisów z kluczy
+    const sciezka = (t.sciezka && t.sciezka.length ? t.sciezka : t.punkty.slice(1).map((p) => String(p.cle || '').slice(0, 4).toLowerCase())).join(', ');
     szczegol = `<div class="rek-szczegol"><b>Trasa nr ${w.slice(1)}</b> · ${fmt(t.km, 1)} km · ${t.skoki} skoków · ${rekKiedy(t.czas)}
+      <div class="rek-sciezka"><code>${esc(sciezka)}</code><button type="button" class="pilule" id="rek-kopiuj" data-sciezka="${esc(sciezka)}">Kopiuj ścieżkę</button></div>
       <ol class="rek-hopy">${t.punkty.map((p, k) => { const d = k ? carte.distance([t.punkty[k - 1].lat, t.punkty[k - 1].lon], [p.lat, p.lon]) : 0; return `<li><span>${esc(p.nazwa)}</span>${k ? `<small>${fmt(d / 1000, 0)} km</small><i style="width:${(d / maks) * 100}%"></i>` : '<small>nadawca</small>'}</li>`; }).join('')}</ol></div>`;
   } else if (w && w[0] === 'l') {
     const l = r.lacza[Number(w.slice(1)) - 1];
     szczegol = `<div class="rek-szczegol"><b>Łącze nr ${w.slice(1)}</b> · ${fmt(l.km, 1)} km<br>${esc(l.a.nazwa)} ↔ ${esc(l.b.nazwa)}<br><small>${l.snr != null ? 'SNR ' + fmt(l.snr, 1) + ' dB · ' : ''}${l.zrodlo === 'rf' ? 'zmierzone' : l.zrodlo === 'trace' ? 'ze śladu (trace)' : l.zrodlo === 'voisinage' ? 'sąsiad zgłoszony przez repeater' : 'ze ścieżek pakietów'} · ostatnio ${rekKiedy(l.czas)}</small></div>`;
   }
   const wiersz = (id, nr, tytul, wartosc, pod) => `<button type="button" class="rek-wiersz${w === id ? ' on' : ''}" data-rek="${id}"><span class="rek-nr">${nr}</span><span class="rek-opis"><b>${tytul}</b><small>${pod}</small></span><span class="rek-km">${wartosc}</span></button>`;
+  const lista = REK.tryb === 'lacza'
+    ? `<h3>Najdłuższe łącza</h3><div class="rek-lista">${(r.lacza || []).map((l, i) => wiersz('l' + (i + 1), i + 1, `${esc(l.a.nazwa)} ↔ ${esc(l.b.nazwa)}`, `${fmt(l.km, 1)} km`, `${l.snr != null ? 'SNR ' + fmt(l.snr, 1) + ' dB · ' : ''}${rekKiedy(l.czas)}`)).join('') || '<div class="vide">Brak łączy w tym okresie</div>'}</div>`
+    : `<h3>Najdłuższe trasy</h3><div class="rek-lista">${(r.trasy || []).map((t, i) => wiersz('t' + (i + 1), 'T' + (i + 1), `${esc(t.punkty[0].nazwa)} → ${esc(t.punkty[t.punkty.length - 1].nazwa)}`, `${fmt(t.km, 0)} km`, `${t.skoki} skoków · ${rekKiedy(t.czas)}`)).join('') || '<div class="vide">Brak tras w tym okresie</div>'}</div>`;
   $('#fiche-contenu').innerHTML = `<div id="rek-panel">
     <h2>Rekordy sieci</h2>
-    <div class="ident">10 najdłuższych łączy i tras pakietów · kliknij pozycję, aby zobaczyć tylko ją</div>
+    <div class="ident">10 najdłuższych ${REK.tryb === 'lacza' ? 'łączy bezpośrednich' : 'tras pakietów'} · kliknij pozycję, aby zobaczyć tylko ją</div>
     <div class="rek-opcje">
-      <label class="case"><input type="checkbox" id="rek-l" ${REK.lacza ? 'checked' : ''}> <span class="rek-kol l"></span> Łącza</label>
-      <label class="case"><input type="checkbox" id="rek-t" ${REK.trasy ? 'checked' : ''}> <span class="rek-kol t"></span> Trasy</label>
-      <select id="rek-dni" aria-label="Okres">${[1, 7, 30].map((d) => `<option value="${d}" ${REK.dni === d ? 'selected' : ''}>${d === 1 ? 'doba' : d + ' dni'}</option>`).join('')}</select>
-      ${w ? '<button type="button" class="mini" id="rek-wszystkie">Pokaż wszystkie</button>' : ''}
+      <button type="button" class="pilule ${REK.tryb === 'lacza' ? 'on' : ''}" data-rek-tryb="lacza"><span class="rek-kol l"></span> Łącza</button>
+      <button type="button" class="pilule ${REK.tryb === 'trasy' ? 'on' : ''}" data-rek-tryb="trasy"><span class="rek-kol t"></span> Trasy</button>
+      <select id="rek-dni" class="mini-select" aria-label="Okres">${[1, 7, 30].map((d) => `<option value="${d}" ${REK.dni === d ? 'selected' : ''}>${d === 1 ? 'doba' : d + ' dni'}</option>`).join('')}</select>
+      ${w ? '<button type="button" class="pilule" id="rek-wszystkie">Pokaż wszystkie</button>' : ''}
     </div>
     ${szczegol}
-    <h3>Najdłuższe łącza</h3>
-    <div class="rek-lista">${(r.lacza || []).map((l, i) => wiersz('l' + (i + 1), i + 1, `${esc(l.a.nazwa)} ↔ ${esc(l.b.nazwa)}`, `${fmt(l.km, 1)} km`, `${l.snr != null ? 'SNR ' + fmt(l.snr, 1) + ' dB · ' : ''}${rekKiedy(l.czas)}`)).join('') || '<div class="vide">Brak łączy w tym okresie</div>'}</div>
-    <h3>Najdłuższe trasy</h3>
-    <div class="rek-lista">${(r.trasy || []).map((t, i) => wiersz('t' + (i + 1), 'T' + (i + 1), `${esc(t.punkty[0].nazwa)} → ${esc(t.punkty[t.punkty.length - 1].nazwa)}`, `${fmt(t.km, 0)} km`, `${t.skoki} skoków · ${t.punkty.length} punktów · ${rekKiedy(t.czas)}`)).join('') || '<div class="vide">Brak tras w tym okresie</div>'}</div>
+    ${lista}
   </div>`;
   $('#fiche-contenu').querySelectorAll('[data-rek]').forEach((b) => (b.onclick = () => wybierzRekord(b.dataset.rek)));
-  $('#rek-l').onchange = (e) => { REK.lacza = e.target.checked; REK.wybor = null; rysujRekordy(); panelRekordy(); };
-  $('#rek-t').onchange = (e) => { REK.trasy = e.target.checked; REK.wybor = null; rysujRekordy(); panelRekordy(); };
+  $('#fiche-contenu').querySelectorAll('[data-rek-tryb]').forEach((b) => (b.onclick = () => { if (REK.tryb === b.dataset.rekTryb) return; REK.tryb = b.dataset.rekTryb; REK.wybor = null; rysujRekordy(); panelRekordy(); }));
   $('#rek-dni').onchange = (e) => { REK.dni = Number(e.target.value); REK.wybor = null; dessinerRekordy(true); };
   const ws = $('#rek-wszystkie'); if (ws) ws.onclick = () => { REK.wybor = null; rysujRekordy(); panelRekordy(); };
+  const kp = $('#rek-kopiuj');
+  if (kp) kp.onclick = async () => {
+    const tekst = kp.dataset.sciezka;
+    try { await navigator.clipboard.writeText(tekst); } catch { const t = document.createElement('textarea'); t.value = tekst; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+    kp.textContent = 'Skopiowano ✓'; setTimeout(() => { kp.textContent = 'Kopiuj ścieżkę'; }, 1800);
+  };
 }
 
 // ---- PL: karta repeatera SF8: zasięg terenu i zasięg do innych repeaterów (zawsze liczone dla radia SF6) ----
