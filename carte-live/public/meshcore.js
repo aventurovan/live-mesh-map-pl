@@ -1625,7 +1625,7 @@ function mcPokazWyroznienie(klucze, trasa) {
   L.polyline(pts, { color: kol, weight: 5, opacity: 1, dashArray: trasa ? '10 7' : null, pane: 'traces' }).bindTooltip(opis, { className: 'info', sticky: true }).addTo(g);
   w.forEach((n, i) => L.marker([n.lat, n.lon], { pane: 'traces', icon: L.divIcon({ className: 'rek-et' + (trasa ? ' rek-trasa' : ''), html: trasa ? String(i + 1) + ' · ' + esc(n.nom || n.cle.slice(0, 8)) : esc(n.nom || n.cle.slice(0, 8)), iconSize: null }) }).addTo(g));
   mcWyroznienie = g.addTo(carte);
-  carte.fitBounds(L.latLngBounds(pts), { padding: [80, 80], maxZoom: 12 });
+  carte.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [window.innerWidth > 900 ? 470 : 30, 80], paddingBottomRight: [30, 90], maxZoom: 12 });
   const be = $('#btn-effacer'); if (be) { be.hidden = false; be.addEventListener('click', () => { if (mcWyroznienie) { mcWyroznienie.remove(); mcWyroznienie = null; } }, { once: true }); }
   return true;
 }

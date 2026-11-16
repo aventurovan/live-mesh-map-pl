@@ -3129,6 +3129,7 @@ async function voirCouvertureSite(p, titre, hauteur, opts = {}) {
   g.addTo(carte);
   etat.coucheCouverture = g;
   $('#btn-effacer').hidden = false;
+  if (opts.tryb === 'rpt') dorysujWidoczneRpt(p, hs, g);
   if (!titre) carte.flyTo([p.lat, p.lon], Math.min(carte.getZoom(), 10), { duration: 0.6 });
   if (opts.cadrer) carte.fitBounds(L.latLng(p.lat, p.lon).toBounds(2 * 1000 * (r.rayonKm || 40)), { padding: [30, 30] });
   const info = $('#couverture-info');
@@ -8297,9 +8298,9 @@ async function dessinerSf8() {
   const dzien = (t) => (t > 0 ? new Date(t * 1000).toLocaleDateString('pl-PL') : '–');
   for (const n of r.nodes) {
     const std = Math.abs((n.f || 0) - 869.618) < 0.01 && Math.abs((n.bw || 0) - 62.5) < 0.1; // standard MeshCore Polska
-    L.circleMarker([n.lat, n.lon], { radius: 6, weight: 2, color: '#6d28d9', fillColor: std ? '#c4b5fd' : '#fff', fillOpacity: 0.95, renderer: rendSf8 })
+    L.circleMarker([n.lat, n.lon], { radius: 6, weight: 2, color: '#0b4f8a', fillColor: std ? '#4f9be0' : '#fff', fillOpacity: 0.95, renderer: rendSf8 })
       .bindTooltip(`<b>${esc(n.name || 'repeater SF8')}</b> <small>SF8 · MeshCore Polska</small><br>${n.f ? String(n.f.toFixed(3)).replace('.', ',') + ' MHz' : '–'} · BW ${n.bw != null ? String(n.bw).replace('.', ',') : '–'} · SF8<br><small>ostatni advert ${dzien(n.la)} · klucz ${esc((n.id || '').slice(0, 8).toUpperCase())}</small>`, { className: 'info', direction: 'top' })
-      .on('click', () => { if (etat.modeProfil && typeof choisirPointProfil === 'function') choisirPointProfil({ lat: n.lat, lon: n.lon, nom: (n.name || 'RPT') + ' (SF8)', h: 6 }); })
+      .on('click', () => { if (etat.modeProfil && typeof choisirPointProfil === 'function') choisirPointProfil({ lat: n.lat, lon: n.lon, nom: (n.name || 'RPT') + ' (SF8)', h: H_RPT }); else fichaSf8(n); })
       .addTo(g);
   }
   if (coucheSf8) coucheSf8.remove();
@@ -8365,38 +8366,145 @@ async function dessinerMapper(wczytaj) {
   MP.warstwa = g.addTo(carte);
 }
 
-// ---- PL: warstwa rekordów: 10 najdłuższych łączy (złote) i 10 najdłuższych tras pakietów (fioletowe), 30 dni ----
+// ---- PL: warstwa rekordów (jak CoreScope): lista po prawej, włączanie łączy/tras, wybór jednej ścieżki ----
 let coucheRekordy = null, minuteurRekordy = null;
-async function dessinerRekordy() {
+const REK = { dane: null, dni: 30, lacza: true, trasy: true, wybor: null };
+async function dessinerRekordy(odswiez = true) {
   clearTimeout(minuteurRekordy);
-  if (!etat.couches.rekordy) { if (coucheRekordy) { coucheRekordy.remove(); coucheRekordy = null; } return; }
-  let r;
-  try { r = await api('/api/mc/najdluzsze?dni=30'); } catch (e) { if (typeof toast === 'function') toast('Rekordy: ' + e.message); return; }
-  if (!etat.couches.rekordy) return;
+  if (!etat.couches.rekordy) {
+    if (coucheRekordy) { coucheRekordy.remove(); coucheRekordy = null; }
+    if ($('#rek-panel')) $('#fiche').hidden = true;
+    REK.wybor = null;
+    return;
+  }
+  if (odswiez || !REK.dane) {
+    try { REK.dane = await api(`/api/mc/najdluzsze?dni=${REK.dni}`); } catch (e) { $('#fiche').hidden = false; $('#fiche-contenu').innerHTML = `<div id="rek-panel"><h2>Rekordy</h2><div class="vide">${esc(e.message)}</div></div>`; return; }
+    if (!etat.couches.rekordy) return;
+  }
+  rysujRekordy();
+  panelRekordy();
+  minuteurRekordy = setTimeout(() => dessinerRekordy(true), 10 * 60000);
+}
+const rekKiedy = (t) => (t ? new Date(t).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' }) : '');
+function rysujRekordy() {
+  const r = REK.dane || { lacza: [], trasy: [] };
   const g = L.layerGroup();
-  const kiedy = (t) => (t ? new Date(t).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' }) : '');
-  // trasy pod spodem
-  (r.trasy || []).slice().reverse().forEach((t, iOd) => {
-    const i = r.trasy.length - iOd;
+  const linia = (pts, kol, przer, opis, gruba) => {
+    L.polyline(pts, { color: '#ffffff', weight: gruba ? 9 : 7, opacity: 0.55, pane: 'traces', interactive: false }).addTo(g);
+    return L.polyline(pts, { color: kol, weight: gruba ? 5 : 3.5, opacity: 0.95, dashArray: przer ? '8 6' : null, pane: 'traces' }).bindTooltip(opis, { className: 'info', sticky: true }).addTo(g);
+  };
+  const etykieta = (ll, html, trasa) => L.marker(ll, { pane: 'traces', icon: L.divIcon({ className: 'rek-et' + (trasa ? ' rek-trasa' : ''), html, iconSize: null }) }).addTo(g);
+  const w = REK.wybor;
+  const trasy = (r.trasy || []).map((t, i) => ({ t, i: i + 1 })).filter(({ i }) => (w ? w === 't' + i : REK.trasy));
+  const lacza = (r.lacza || []).map((l, i) => ({ l, i: i + 1 })).filter(({ i }) => (w ? w === 'l' + i : REK.lacza));
+  for (const { t, i } of trasy.reverse()) {
     const pts = t.punkty.map((p) => [p.lat, p.lon]);
-    const opis = `<b>Trasa nr ${i}: ${fmt(t.km, 1)} km</b> · ${t.skoki} skoków<br>${t.punkty.map((p) => esc(p.nazwa)).join(' → ')}<br><small>${kiedy(t.czas)}${t.od ? ' · nadawca ' + esc(t.od.nazwa) : ''}</small>`;
-    L.polyline(pts, { color: '#ffffff', weight: 6, opacity: 0.55, pane: 'traces', interactive: false }).addTo(g);
-    L.polyline(pts, { color: '#7c3aed', weight: 3.5, opacity: 0.9, dashArray: '8 6', pane: 'traces' }).bindTooltip(opis, { className: 'info', sticky: true }).addTo(g);
-    const k = pts[pts.length - 1];
-    L.marker(k, { pane: 'traces', icon: L.divIcon({ className: 'rek-et rek-trasa', html: `T${i}`, iconSize: null }) }).bindTooltip(opis, { className: 'info' }).addTo(g);
-  });
-  (r.lacza || []).slice().reverse().forEach((l, iOd) => {
-    const i = r.lacza.length - iOd;
+    const opis = `<b>Trasa nr ${i}: ${fmt(t.km, 1)} km</b> · ${t.skoki} skoków<br>${t.punkty.map((p) => esc(p.nazwa)).join(' → ')}<br><small>${rekKiedy(t.czas)}</small>`;
+    linia(pts, '#7c3aed', true, opis, !!w).on('click', () => wybierzRekord('t' + i));
+    if (w) t.punkty.forEach((p, k) => etykieta([p.lat, p.lon], `${k + 1} · ${esc(p.nazwa)}`, true));
+    else etykieta(pts[pts.length - 1], `T${i}`, true);
+  }
+  for (const { l, i } of lacza.reverse()) {
     const pts = [[l.a.lat, l.a.lon], [l.b.lat, l.b.lon]];
-    const opis = `<b>Łącze nr ${i}: ${fmt(l.km, 1)} km</b><br>${esc(l.a.nazwa)} ↔ ${esc(l.b.nazwa)}<br><small>${l.snr != null ? 'SNR ' + fmt(l.snr, 1) + ' dB · ' : ''}ostatnio ${kiedy(l.czas)}</small>`;
-    L.polyline(pts, { color: '#ffffff', weight: 8, opacity: 0.6, pane: 'traces', interactive: false }).addTo(g);
-    L.polyline(pts, { color: '#d97706', weight: 4.5, opacity: 0.95, pane: 'traces' }).bindTooltip(opis, { className: 'info', sticky: true }).addTo(g);
-    const m = [(l.a.lat + l.b.lat) / 2, (l.a.lon + l.b.lon) / 2];
-    L.marker(m, { pane: 'traces', icon: L.divIcon({ className: 'rek-et', html: `${i} · ${fmt(l.km, 0)} km`, iconSize: null }) }).bindTooltip(opis, { className: 'info' }).addTo(g);
-  });
+    const opis = `<b>Łącze nr ${i}: ${fmt(l.km, 1)} km</b><br>${esc(l.a.nazwa)} ↔ ${esc(l.b.nazwa)}<br><small>${l.snr != null ? 'SNR ' + fmt(l.snr, 1) + ' dB · ' : ''}ostatnio ${rekKiedy(l.czas)}</small>`;
+    linia(pts, '#d97706', false, opis, !!w).on('click', () => wybierzRekord('l' + i));
+    if (w) { etykieta(pts[0], esc(l.a.nazwa)); etykieta(pts[1], esc(l.b.nazwa)); }
+    else etykieta([(l.a.lat + l.b.lat) / 2, (l.a.lon + l.b.lon) / 2], `${i} · ${fmt(l.km, 0)} km`);
+  }
   if (coucheRekordy) coucheRekordy.remove();
   coucheRekordy = g.addTo(carte);
-  if (!(r.lacza || []).length && !(r.trasy || []).length && typeof toast === 'function') toast('Rekordy: brak łączy i tras z ostatnich 30 dni');
-  minuteurRekordy = setTimeout(dessinerRekordy, 10 * 60000);
+}
+function wybierzRekord(id) {
+  REK.wybor = REK.wybor === id ? null : id;
+  rysujRekordy();
+  panelRekordy();
+  const r = REK.dane || {};
+  if (REK.wybor) {
+    const n = Number(REK.wybor.slice(1)) - 1;
+    const pts = REK.wybor[0] === 'l' ? (() => { const l = r.lacza[n]; return [[l.a.lat, l.a.lon], [l.b.lat, l.b.lon]]; })() : r.trasy[n].punkty.map((p) => [p.lat, p.lon]);
+    carte.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [window.innerWidth > 900 ? 470 : 30, 80], paddingBottomRight: [window.innerWidth > 900 ? 430 : 30, 90], maxZoom: 11 }); // panele po bokach
+  }
+}
+function panelRekordy() {
+  const r = REK.dane || { lacza: [], trasy: [] };
+  $('#fiche').hidden = false;
+  etat.selection = null;
+  const w = REK.wybor;
+  let szczegol = '';
+  if (w && w[0] === 't') {
+    const t = r.trasy[Number(w.slice(1)) - 1];
+    const maks = Math.max(1, ...t.punkty.slice(1).map((p, k) => carte.distance([t.punkty[k].lat, t.punkty[k].lon], [p.lat, p.lon])));
+    szczegol = `<div class="rek-szczegol"><b>Trasa nr ${w.slice(1)}</b> · ${fmt(t.km, 1)} km · ${t.skoki} skoków · ${rekKiedy(t.czas)}
+      <ol class="rek-hopy">${t.punkty.map((p, k) => { const d = k ? carte.distance([t.punkty[k - 1].lat, t.punkty[k - 1].lon], [p.lat, p.lon]) : 0; return `<li><span>${esc(p.nazwa)}</span>${k ? `<small>${fmt(d / 1000, 0)} km</small><i style="width:${(d / maks) * 100}%"></i>` : '<small>nadawca</small>'}</li>`; }).join('')}</ol></div>`;
+  } else if (w && w[0] === 'l') {
+    const l = r.lacza[Number(w.slice(1)) - 1];
+    szczegol = `<div class="rek-szczegol"><b>Łącze nr ${w.slice(1)}</b> · ${fmt(l.km, 1)} km<br>${esc(l.a.nazwa)} ↔ ${esc(l.b.nazwa)}<br><small>${l.snr != null ? 'SNR ' + fmt(l.snr, 1) + ' dB · ' : ''}${l.zrodlo === 'rf' ? 'zmierzone' : l.zrodlo === 'trace' ? 'ze śladu (trace)' : l.zrodlo === 'voisinage' ? 'sąsiad zgłoszony przez repeater' : 'ze ścieżek pakietów'} · ostatnio ${rekKiedy(l.czas)}</small></div>`;
+  }
+  const wiersz = (id, nr, tytul, wartosc, pod) => `<button type="button" class="rek-wiersz${w === id ? ' on' : ''}" data-rek="${id}"><span class="rek-nr">${nr}</span><span class="rek-opis"><b>${tytul}</b><small>${pod}</small></span><span class="rek-km">${wartosc}</span></button>`;
+  $('#fiche-contenu').innerHTML = `<div id="rek-panel">
+    <h2>Rekordy sieci</h2>
+    <div class="ident">10 najdłuższych łączy i tras pakietów · kliknij pozycję, aby zobaczyć tylko ją</div>
+    <div class="rek-opcje">
+      <label class="case"><input type="checkbox" id="rek-l" ${REK.lacza ? 'checked' : ''}> <span class="rek-kol l"></span> Łącza</label>
+      <label class="case"><input type="checkbox" id="rek-t" ${REK.trasy ? 'checked' : ''}> <span class="rek-kol t"></span> Trasy</label>
+      <select id="rek-dni" aria-label="Okres">${[1, 7, 30].map((d) => `<option value="${d}" ${REK.dni === d ? 'selected' : ''}>${d === 1 ? 'doba' : d + ' dni'}</option>`).join('')}</select>
+      ${w ? '<button type="button" class="mini" id="rek-wszystkie">Pokaż wszystkie</button>' : ''}
+    </div>
+    ${szczegol}
+    <h3>Najdłuższe łącza</h3>
+    <div class="rek-lista">${(r.lacza || []).map((l, i) => wiersz('l' + (i + 1), i + 1, `${esc(l.a.nazwa)} ↔ ${esc(l.b.nazwa)}`, `${fmt(l.km, 1)} km`, `${l.snr != null ? 'SNR ' + fmt(l.snr, 1) + ' dB · ' : ''}${rekKiedy(l.czas)}`)).join('') || '<div class="vide">Brak łączy w tym okresie</div>'}</div>
+    <h3>Najdłuższe trasy</h3>
+    <div class="rek-lista">${(r.trasy || []).map((t, i) => wiersz('t' + (i + 1), 'T' + (i + 1), `${esc(t.punkty[0].nazwa)} → ${esc(t.punkty[t.punkty.length - 1].nazwa)}`, `${fmt(t.km, 0)} km`, `${t.skoki} skoków · ${t.punkty.length} punktów · ${rekKiedy(t.czas)}`)).join('') || '<div class="vide">Brak tras w tym okresie</div>'}</div>
+  </div>`;
+  $('#fiche-contenu').querySelectorAll('[data-rek]').forEach((b) => (b.onclick = () => wybierzRekord(b.dataset.rek)));
+  $('#rek-l').onchange = (e) => { REK.lacza = e.target.checked; REK.wybor = null; rysujRekordy(); panelRekordy(); };
+  $('#rek-t').onchange = (e) => { REK.trasy = e.target.checked; REK.wybor = null; rysujRekordy(); panelRekordy(); };
+  $('#rek-dni').onchange = (e) => { REK.dni = Number(e.target.value); REK.wybor = null; dessinerRekordy(true); };
+  const ws = $('#rek-wszystkie'); if (ws) ws.onclick = () => { REK.wybor = null; rysujRekordy(); panelRekordy(); };
+}
+
+// ---- PL: karta repeatera SF8: zasięg terenu i zasięg do innych repeaterów (zawsze liczone dla radia SF6) ----
+function fichaSf8(n) {
+  const nazwa = n.name || 'repeater SF8';
+  $('#fiche').hidden = false;
+  etat.selection = null;
+  const dzien = (t) => (t > 0 ? new Date(t * 1000).toLocaleDateString('pl-PL') : '–');
+  $('#fiche-contenu').innerHTML = `
+    <h2>${esc(nazwa)}</h2>
+    <div class="ident">Repeater SF8 · MeshCore Polska · klucz ${esc((n.id || '').slice(0, 8).toUpperCase())}</div>
+    ${blocCoords(n.lat, n.lon, {})}
+    <div class="grille">
+      <div class="mesure"><span>Częstotliwość</span><b>${n.f ? String(n.f.toFixed(3)).replace('.', ',') + ' MHz' : '–'}</b></div>
+      <div class="mesure"><span>Pasmo / SF</span><b>BW ${n.bw != null ? String(n.bw).replace('.', ',') : '–'} · SF8</b></div>
+      <div class="mesure"><span>Ostatni advert</span><b>${dzien(n.la)}</b></div>
+    </div>
+    <p class="note">Zasięg liczymy dla radia <b>SF6</b> (sieć Południe): jak daleko sięgałby repeater postawiony w tym miejscu.</p>
+    <div class="actions-prop">
+      <button id="sf8-couv" class="principal">Zasięg z ukształtowania terenu</button>
+      <button id="sf8-couv-rpt" title="Gdzie ten punkt usłyszy inny repeater na maszcie 10 m (do 100 km) + linie do repeaterów SF6 i SF8 w zasięgu">Zasięg do repeaterów</button>
+      <label class="champ-mini">antena <input id="sf8-h" type="number" min="1" max="80" step="1" value="${H_RPT}"> m</label>
+    </div>`;
+  const h = () => Number($('#sf8-h').value) || H_RPT;
+  $('#sf8-couv').onclick = () => voirCouvertureSite({ lat: n.lat, lon: n.lon }, nazwa + ' (SF6)', h(), { cadrer: true, preset: 'MESHCORE_FR' });
+  $('#sf8-couv-rpt').onclick = () => voirCouvertureSite({ lat: n.lat, lon: n.lon }, nazwa + ' → repeatery', h(), { cadrer: true, preset: 'MESHCORE_FR', tryb: 'rpt' });
+}
+
+// Linie do repeaterów SF6 i SF8 w zasięgu radiowym (łącze RPT ↔ RPT, radio SF6): ciągła = pełna widoczność, przerywana = przez ugięcie
+async function dorysujWidoczneRpt(p, hs, g) {
+  let r;
+  try { r = await api(`/api/relief/widoczne-rpt?lat=${p.lat}&lon=${p.lon}&h=${hs}`); } catch (e) { if (typeof toast === 'function') toast('Repeatery w zasięgu: ' + e.message); return; }
+  if (etat.coucheCouverture !== g) return;
+  const lista = r.lista || [];
+  for (const c of lista) {
+    const kol = c.siec === 'SF8' ? '#0b4f8a' : '#15803d';
+    L.polyline([[p.lat, p.lon], [c.lat, c.lon]], { color: '#ffffff', weight: 4, opacity: 0.5, pane: 'traces', interactive: false }).addTo(g);
+    L.polyline([[p.lat, p.lon], [c.lat, c.lon]], { color: kol, weight: 2.5, opacity: 0.9, dashArray: c.los ? null : '6 5', pane: 'traces' })
+      .bindTooltip(`<b>${esc(c.nazwa)}</b> <small>${c.siec}</small><br>${fmt(c.km, 1)} km · zapas ${fmt(c.marge, 1)} dB<br><small>${c.los ? 'pełna widoczność (LOS)' : 'przez ugięcie za przeszkodą'} · radio SF6, maszty ${hs} / 10 m</small>`, { className: 'info', sticky: true }).addTo(g);
+  }
+  const sf6 = lista.filter((c) => c.siec === 'SF6').length, sf8n = lista.length - sf6, los = lista.filter((c) => c.los).length;
+  const info = $('#couverture-info');
+  const tekst = `W zasięgu radiowym: <b>${sf6}</b> repeaterów SF6 i <b>${sf8n}</b> SF8 (${los} w pełnej widoczności). Zielone linie: SF6, granatowe: SF8; przerywane: łącze przez ugięcie.`;
+  if (info) info.innerHTML += '<br>' + tekst;
+  if (typeof toast === 'function') toast(`Repeatery w zasięgu: ${sf6} SF6 · ${sf8n} SF8`);
 }
 

@@ -2102,6 +2102,18 @@ app.get('/api/relief/walidacja', async (req, res) => {
       opis: 'tp = odpowiedział i model przewidział zasięg; fn = odpowiedział, choć model mówi, że nie ma zasięgu (model zbyt ostrożny); fp = model przewiduje zasięg, ale nie odpowiedział; tn = brak i model też mówi brak. Przesunięcie > 0: model jest zbyt ostrożny (zasięg większy niż liczy); < 0: zbyt optymistyczny.' });
   } catch (e) { res.status(500).json({ erreur: e.message }); }
 });
+// PL: repeatery SF6 i SF8 w zasięgu radiowym (liczone dla radia SF6) z punktu: ?lat&lon&h=10
+app.get('/api/relief/widoczne-rpt', async (req, res) => {
+  const lat = Number(req.query.lat), lon = Number(req.query.lon), h = Math.min(Math.max(Number(req.query.h) || 10, 1), 80);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return res.status(400).json({ erreur: 'Point invalide' });
+  if (!relief.pret()) return res.status(503).json({ erreur: 'Model terenu jeszcze się wczytuje' });
+  if (!sf8 && SF8_URL) { try { await odswiezSf8(); } catch { /* bez SF8 */ } }
+  const cele = [
+    ...reseauMc.q.noeuds.all().filter((n) => n.lat != null && ['repeteur', 'salon'].includes(n.role) && (n.dernier_vu || 0) >= Date.now() - 7 * 86400000).map((n) => ({ nazwa: n.nom || n.cle.slice(0, 8), cle: n.cle, lat: n.lat, lon: n.lon, siec: 'SF6' })),
+    ...((sf8 && sf8.nodes) || []).filter((n) => Number.isFinite(n.lat) && Number.isFinite(n.lon)).map((n) => ({ nazwa: n.name || 'RPT SF8', cle: n.id || null, lat: n.lat, lon: n.lon, siec: 'SF8' })),
+  ];
+  try { res.json({ h, lista: relief.widoczneRpt({ lat, lon }, cele, h).slice(0, 150) }); } catch (e) { res.status(500).json({ erreur: e.message }); }
+});
 app.get('/api/sf8', async (req, res) => {
   if (!SF8_URL) return res.json({ ok: false, wylaczone: true, nodes: [] });
   if (!sf8) await odswiezSf8();

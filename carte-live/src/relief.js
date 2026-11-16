@@ -1404,6 +1404,20 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     },
     couverturePng,
     // PL: margines łącza site → punkt (dB) z podanymi parametrami (walidacja z pomiarami Mappera)
+    // PL: repeatery widoczne z punktu (łącze RPT ↔ RPT, radio SF6, margines ≥ 0 dB, do 100 km)
+    widoczneRpt: (site, cele, h = 10, opts = {}) => {
+      if (etat.mnt !== 'pret' || Number.isNaN(alt(site.lat, site.lon))) return [];
+      const P = parametres({ ...opts, preset: 'MESHCORE_FR' });
+      const s0 = { lat: site.lat, lon: site.lon, h };
+      const out = [];
+      for (const c of cele) {
+        const d = distanceM(s0, c);
+        if (d < 300 || d > ZASIEG_RPT_M || Number.isNaN(alt(c.lat, c.lon))) continue;
+        const l = liaisonRpt(s0, { ...c, h: c.h ?? 10 }, P, h, c.h ?? 10);
+        if (l && l.marge >= 0) out.push({ ...c, km: +(d / 1000).toFixed(1), marge: l.marge, los: !l.obstacle });
+      }
+      return out.sort((a, b) => a.km - b.km);
+    },
     kalibrujRpt: () => calibrerRpt(),
     kalibracjaRpt: () => kalibracjaRpt,
     envRpt: () => envRpt(),

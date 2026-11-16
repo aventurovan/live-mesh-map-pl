@@ -661,11 +661,11 @@ body[data-reseau="meshcore"] .kpis .kpi-mc:first-of-type, body[data-reseau="mesh
 .mkc .c { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; transform: translate(-50%, -50%); background: var(--mcc); border: 1.5px solid rgba(11,17,23,.95); }
 /* PL: repeater = złote kółko z białą obwódką i ciemnym obrysem (aktywny jasny, ostatnio słyszany ciemniejszy, nieaktywny szary);
    podpis na ciemnej plakietce, czytelny na każdym podkładzie */
-.mkc.repeteur .c { width: 13px; height: 13px; border-radius: 50%; background: #fbbf24; border: 1.5px solid #fff; box-shadow: 0 0 0 1.5px #0b1117; } /* PL: o 30% mniejsze */
-.mkc.repeteur.actif .c { box-shadow: 0 0 0 1.5px #0b1117, 0 0 7px rgba(251,191,36,.8); }
+.mkc.repeteur .c { width: 9px; height: 9px; border-radius: 50%; background: #fbbf24; border: 1.5px solid #fff; box-shadow: 0 0 0 1px #0b1117; } /* PL: wielkość jak pinezki SF8 (ok. 14 px) */
+.mkc.repeteur.actif .c { box-shadow: 0 0 0 1px #0b1117, 0 0 6px rgba(251,191,36,.8); }
 .mkc.repeteur.recent .c { background: #ca8a04; }
 .mkc.repeteur.inactif .c { background: #6b7280; opacity: .7; }
-.mkc.repeteur .lbl { top: 10px; font-size: 12px; font-weight: 600; color: #fff; background: rgba(10,14,18,.8); padding: 1px 6px; border-radius: 4px; text-shadow: none; }
+.mkc.repeteur .lbl { top: 8px; font-size: 12px; font-weight: 600; color: #fff; background: rgba(10,14,18,.8); padding: 1px 6px; border-radius: 4px; text-shadow: none; }
 .mkc.salon .c { border-radius: 3px; }
 .mkc.companion .c, .mkc.inconnu .c { width: 12px; height: 12px; border-radius: 50%; background: rgba(11,17,23,.9); border: 3px solid var(--mcc); }
 .mkc.capteur .c { width: 14px; height: 13px; border: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
@@ -1530,7 +1530,7 @@ body.theme-clair .leaflet-control-attribution { background: rgba(251, 246, 238, 
 /* podpisy repeaterów na jasnej mapie: biała plakietka z ciemnym tekstem */
 body.theme-clair .mkc.repeteur .lbl { color: #1F2A26; background: rgba(255, 255, 255, .92); border: 1px solid #EADFCF; }
 body.theme-clair .mkc .lbl { color: #1F4D40; }
-body.theme-clair .mkc.repeteur .c { box-shadow: 0 0 0 1.5px #1F2A26; }
+body.theme-clair .mkc.repeteur .c { box-shadow: 0 0 0 1px #1F2A26; }
 /* przycisk ＋ na mapie */
 .fab-plus { background: var(--zielen) !important; color: #fff !important; }
 /* poprawki po podglądzie */
@@ -1677,4 +1677,26 @@ body:not(.theme-clair) .ligne-reglage .ic { background: rgba(255, 255, 255, .08)
 /* PL: etykiety warstwy rekordów */
 .rek-et { background: #d97706; color: #fff; font: 700 11px/1 'Nunito Sans', sans-serif; padding: 3px 6px; border-radius: 9px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.35); transform: translate(-50%, -50%); width: max-content; }
 .rek-et.rek-trasa { background: #7c3aed; }
+/* PL: panel rekordów (jak CoreScope) */
+#rek-panel h3 { margin: 16px 0 6px; font-size: 11.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--doux); }
+.rek-opcje { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 10px 0; }
+.rek-opcje label.case { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.rek-kol { width: 18px; height: 4px; border-radius: 2px; display: inline-block; background: #d97706; }
+.rek-kol.t { background: repeating-linear-gradient(90deg, #7c3aed 0 6px, transparent 6px 9px); }
+.rek-lista { display: flex; flex-direction: column; gap: 4px; }
+.rek-wiersz { display: grid; grid-template-columns: 30px 1fr auto; gap: 8px; align-items: center; text-align: left; width: 100%; padding: 7px 9px; border-radius: 10px; border: 1px solid transparent; background: var(--karta-4, rgba(255,255,255,.05)); color: inherit; font: inherit; cursor: pointer; }
+.rek-wiersz:hover { border-color: var(--accent); }
+.rek-wiersz.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.rek-nr { font-weight: 800; font-size: 12px; color: var(--accent); }
+.rek-opis { display: flex; flex-direction: column; min-width: 0; }
+.rek-opis b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rek-opis small { color: var(--doux); font-size: 11.5px; }
+.rek-km { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rek-szczegol { margin: 8px 0 4px; padding: 10px 12px; border-radius: 12px; background: var(--karta-1, rgba(255,255,255,.06)); font-size: 13px; line-height: 1.5; }
+.rek-hopy { list-style: none; margin: 8px 0 0; padding: 0; max-height: 300px; overflow: auto; counter-reset: h; }
+.rek-hopy li { counter-increment: h; display: grid; grid-template-columns: 22px 1fr auto; gap: 2px 8px; align-items: center; padding: 3px 0; border-top: 1px solid rgba(127,127,127,.15); }
+.rek-hopy li::before { content: counter(h); font-size: 11px; font-weight: 800; color: #7c3aed; }
+.rek-hopy li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rek-hopy li small { color: var(--doux); }
+.rek-hopy li i { grid-column: 2 / 4; height: 3px; border-radius: 2px; background: #7c3aed; opacity: .7; }
 
