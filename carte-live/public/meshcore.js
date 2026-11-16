@@ -165,13 +165,18 @@ function mcDessinerNoeuds() {
       (n.snr != null ? ` · SNR ${fmt(n.snr, 1, ' dB')}` : ''));
   }
 }
+const SASIEDZI_MIN = 5;
 function mcDessinerLiens() {
   if (!mc.coucheLiens) return;
   mc.coucheLiens.clearLayers();
   if (!mcAffiche()) return;
   const maintenant = Date.now(), fenetre = mcFenetreHeures() * 3600000;
   const fusion = new Map();
-  for (const l of mc.liens) {
+  for (const l0 of mc.liens) {
+    // PL: „Sąsiedzi” = sąsiedzi z pakietów: kolejne repeatery w ścieżkach, powtórzone co najmniej SASIEDZI_MIN razy
+    // (+ dawne listy „neighbors” z administracji). Same „Ścieżki” pokazują wszystkie, także pojedyncze, dopasowania.
+    let l = l0;
+    if (l0.source === 'chemin' && !mc.couches.chemin && mc.couches.voisinage && (l0.nb || 0) >= SASIEDZI_MIN) l = { ...l0, source: 'voisinage', zPakietow: true };
     if (!mc.couches[l.source]) continue;
     if (maintenant - l.dernierVu > fenetre) continue;
     const a = mc.noeuds.get(l.a), b = mc.noeuds.get(l.b);
@@ -181,7 +186,7 @@ function mcDessinerLiens() {
     // Vue large : seulement les liaisons mesurées (les chemins déduits surchargent la carte)
     if (l.source === 'chemin' && carte.getZoom() < 9) continue;
     const dkm = distanceKm(a, b);
-    if (dkm != null && dkm > (MC_DIST_MAX[l.source] || 150)) continue;
+    if (dkm != null && dkm > (l.zPakietow ? 120 : MC_DIST_MAX[l.source] || 150)) continue;
     const cle = [l.a < l.b ? l.a : l.b, l.a < l.b ? l.b : l.a, l.source].join(':');
     const f = fusion.get(cle);
     if (!f) fusion.set(cle, { ...l, na: a, nbN: b });
@@ -198,7 +203,7 @@ function mcDessinerLiens() {
     });
     const d = distanceKm(l.na, l.nbN);
     ligne.bindTooltip(`<b>${esc(l.na.nom || l.na.id)} ↔ ${esc(l.nbN.nom || l.nbN.id)}</b> <small>MeshCore</small><br>` +
-      `${{ rf: 'Liaison radio mesurée (dernier saut vers un observateur)', chemin: 'Liaison déduite du chemin d’un paquet', trace: 'Mesure directe (trace ou découverte, SNR mesuré)', voisinage: 'Voisin déclaré par le répéteur (SNR mesuré par lui)' }[l.source]}` +
+      `${{ rf: 'Liaison radio mesurée (dernier saut vers un observateur)', chemin: 'Liaison déduite du chemin d’un paquet', trace: 'Mesure directe (trace ou découverte, SNR mesuré)', voisinage: 'Voisin déclaré par le répéteur (SNR mesuré par lui)' }[l.source] && !l.zPakietow ? { rf: 'Liaison radio mesurée (dernier saut vers un observateur)', chemin: 'Liaison déduite du chemin d’un paquet', trace: 'Mesure directe (trace ou découverte, SNR mesuré)', voisinage: 'Voisin déclaré par le répéteur (SNR mesuré par lui)' }[l.source] : `Sąsiedzi z pakietów: kolejne repeatery w ścieżkach (${l.nb} obserwacji)`}` +
       `${l.snr != null ? '<br>SNR ' + fmt(l.snr, 1, ' dB') : ''}${l.rssi != null ? ' · RSSI ' + fmt(l.rssi, 0, ' dBm') : ''}` +
       `<br>${l.nb} observation${l.nb > 1 ? 's' : ''}${d != null ? ' · ' + fmt(d, 1, ' km') : ''} · ${ilYa(l.dernierVu)}`, { className: 'info', sticky: true });
     ligne.addTo(mc.coucheLiens);
@@ -246,7 +251,7 @@ function mcHtmlLegende() {
     <div class="leg-ligne"><span class="leg-nom">Liens vus depuis</span><select id="mc-fenetre" class="mini-select" title="Durée pendant laquelle un lien MeshCore reste affiché après sa dernière observation">${[[0.25, '15 min'], [0.5, '30 min'], [1, '1 h'], [3, '3 h'], [6, '6 h'], [24, '24 h']].map(([v, t]) => `<option value="${v}" ${mcFenetreHeures() === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
     <div class="leg-ligne"><span class="leg-nom">Liens</span>${b(mc.couches.rf, 'data-mc-couche="rf"', 'Mesurés')}${b(mc.couches.chemin, 'data-mc-couche="chemin"', 'Chemins')}${b(mc.couches.trace, 'data-mc-couche="trace"', 'Traces')}${b(mc.couches.voisinage, 'data-mc-couche="voisinage"', 'Voisins')}</div>
     <div class="rang">◆ répéteur · ■ room server · ◯ companion · ▲ capteur · anneau = observateur</div>
-    <div class="rang">— mesuré (SNR) · - - chemin d’un paquet · ··· trace · -·- voisin déclaré</div>`;
+    <div class="rang">— mesuré (SNR) · - - chemin d’un paquet · ··· trace · -·- sąsiad (z pakietów, min. ${SASIEDZI_MIN} obserwacji)</div>`;
 }
 function mcBrancherLegende(z) {
   z.querySelectorAll('[data-mc-role]').forEach((b) => (b.onclick = () => {
