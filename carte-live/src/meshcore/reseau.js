@@ -326,7 +326,8 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
     const noeuds = noeudsCache();
     const parType = {};
     for (const r of q.compteType.all(maintenant - 3600000)) parType[r.type] = r.nb;
-    const observateurs = noeuds.filter((n) => n.observateur);
+    // PL: liczymy tylko obserwatorów, którzy wysłali coś w ostatnich 24 h (bez starych wpisów z dawnych brokerów)
+    const observateurs = noeuds.filter((n) => n.observateur && maintenant - (n.observateur_vu || 0) < 24 * 3600000);
     return {
       noeuds: noeuds.length,
       actifs: noeuds.filter((n) => statut(n, maintenant) === 'actif').length,
