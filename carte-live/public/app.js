@@ -3480,7 +3480,39 @@ function compresserPhoto(fichier) {
   });
 }
 function arreterGps() { if (terrain.suivi != null) navigator.geolocation.clearWatch(terrain.suivi); terrain.suivi = null; }
+// PL: tryb terenowy = Mapper SF6 (pomiary zasięgu); dawne relewé / fondy offline z wersji francuskiej wyłączone
 function ficheTerrain() {
+  $('#fiche').hidden = false;
+  etat.selection = null;
+  const ik = (d) => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const IK = {
+    mapa: ik('<path d="m9 4-6 2v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>'),
+    info: ik('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>'),
+    android: ik('<rect x="5" y="9" width="14" height="10" rx="2"/><path d="M8 9a4 4 0 0 1 8 0M9 13v.01M15 13v.01M8 5 6.5 3M16 5l1.5-2"/>'),
+    iphone: ik('<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>'),
+    kratki: ik('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'),
+  };
+  const kafel = (href, ikona, tytul, opis) => `<a class="mt-kafel" href="${href}" target="_blank" rel="noopener"><span class="mt-ik">${ikona}</span><span class="mt-tekst"><b>${tytul}</b><small>${opis}</small></span><span class="mt-strz">↗</span></a>`;
+  const rysuj = () => {
+    const wl = !!etat.couches.mapper;
+    $('#fiche-contenu').innerHTML = `<h2>📍 Tryb terenowy</h2>
+      <div class="mapper-terrain">
+        <b>Mapper SF6: pomiary zasięgu w terenie</b>
+        <p>Aplikacja <b>Mapper SF6</b> z companionem w kieszeni albo w samochodzie co chwilę pinguje repeatery i zapisuje, które odpowiedziały i z jakim sygnałem. Pomiary trafiają na wspólną mapę i do tej mapy jako kratki.</p>
+      </div>
+      <button type="button" id="terrain-kafelki" class="mt-przelacz${wl ? ' on' : ''}"><span class="mt-ik">${IK.kratki}</span><span class="mt-tekst"><b>Kratki pomiarów na mapie</b><small>${wl ? 'widoczne · dotknij, aby ukryć' : 'ukryte · dotknij, aby pokazać'}</small></span><i class="pw-przel"></i></button>
+      <div class="mt-siatka">
+        ${kafel('https://meshcoresouth.pl/mapper/', IK.mapa, 'Mapa Mappera', 'wszystkie pomiary')}
+        ${kafel('https://meshcoresouth.pl/mapper-sf6.php', IK.info, 'O aplikacji', 'jak mapować')}
+        ${kafel('https://meshcoresouth.pl/mapper/apk/', IK.android, 'Android', 'pobierz APK')}
+        ${kafel('https://testflight.apple.com/join/er4ZSaRm', IK.iphone, 'iPhone', 'przez TestFlight')}
+      </div>
+      <p class="note">Kolor kratki = najlepszy SNR odebrany tam od repeatera; szara = pingi bez odpowiedzi. Dotknij kratki na mapie, aby zobaczyć szczegóły.</p>`;
+    $('#terrain-kafelki').onclick = () => { const o = document.querySelector('.bascule[data-couche="mapper"]'); if (o) o.click(); if (etat.couches.mapper) carte.setZoom(Math.max(carte.getZoom(), 11)); rysuj(); };
+  };
+  rysuj();
+}
+function ficheTerrainFR() {
   $('#fiche').hidden = false;
   etat.selection = null;
   const attente = lireAttente();
@@ -3488,18 +3520,6 @@ function ficheTerrain() {
   const types = Object.keys(terrain.types).length ? terrain.types : { site: 'Site relais possible', point_haut: 'Point haut', test: 'Test de couverture', probleme: 'Problème / panne', installation: 'Installation réalisée', autre: 'Autre' };
   const installable = !!terrain.invite;
   $('#fiche-contenu').innerHTML = `<h2>📍 Mode terrain</h2>
-    <div class="mapper-terrain">
-      <b>Mapper SF6: pomiary zasięgu w terenie</b>
-      <p>Najlepszy sposób, żeby zmierzyć zasięg: aplikacja <b>Mapper SF6</b> z companionem w kieszeni albo w samochodzie co chwilę pinguje repeatery i zapisuje, które odpowiedziały i z jakim sygnałem. Pomiary trafiają na wspólną mapę i do tej mapy jako kratki.</p>
-      <div class="actions-prop">
-        <button type="button" id="terrain-kafelki" class="${etat.couches.mapper ? 'principal' : ''}">${etat.couches.mapper ? '✓ Kratki pomiarów widoczne' : 'Pokaż kratki pomiarów'}</button>
-        <a class="mini" href="https://meshcoresouth.pl/mapper/" target="_blank" rel="noopener">Mapa Mappera ↗</a>
-        <a class="mini" href="https://meshcoresouth.pl/mapper-sf6.php" target="_blank" rel="noopener">O aplikacji ↗</a>
-        <a class="mini" href="https://meshcoresouth.pl/mapper/apk/" target="_blank" rel="noopener">Android (APK) ↗</a>
-        <a class="mini" href="https://testflight.apple.com/join/er4ZSaRm" target="_blank" rel="noopener">iPhone (TestFlight) ↗</a>
-      </div>
-      <p class="note">Kolor kratki = najlepszy SNR odebrany tam od repeatera; szara = pingi bez odpowiedzi. Dotknij kratki, aby zobaczyć szczegóły.</p>
-    </div>
     ${!etat.membre ? '<div class="alerte attention">Connectez-vous (compte membre) pour enregistrer des relevés.</div>' : `
     <form id="f-releve" class="form-edit">
       <div class="gps-terrain" id="gps-terrain">📡 Recherche de la position GPS…</div>
@@ -3524,7 +3544,6 @@ function ficheTerrain() {
     ${terrain.liste.length ? `<h3>Derniers relevés</h3>${terrain.liste.slice(-15).reverse().map((r) => `<div class="ligne cliquable" data-aller-releve="${r.lat},${r.lon}"><span>${ICONE_RELEVE[r.type] || '📝'}</span><span class="titre">${esc(terrain.types[r.type] || r.type)}<small>${esc((r.note || '').slice(0, 60))} · ${esc(r.auteur || '')} · ${ilYa(r.heure)}${r.photo ? ' · 📷' : ''}</small></span></div>`).join('')}` : ''}`;
   document.querySelectorAll('[data-aller-releve]').forEach((el) => (el.onclick = () => { const [a, b] = el.dataset.allerReleve.split(',').map(Number); carte.setView([a, b], Math.max(carte.getZoom(), 14)); }));
   $('#terrain-tuiles').onclick = prechargerTuiles;
-  { const bk = $('#terrain-kafelki'); if (bk) bk.onclick = () => { const o = document.querySelector('.bascule[data-couche="mapper"]'); if (o) o.click(); bk.classList.toggle('principal', !!etat.couches.mapper); bk.textContent = etat.couches.mapper ? '✓ Kratki pomiarów widoczne' : 'Pokaż kratki pomiarów'; if (etat.couches.mapper) carte.setZoom(Math.max(carte.getZoom(), 11)); }; }
   const bi = $('#terrain-installer');
   if (bi) bi.onclick = async () => { terrain.invite.prompt(); await terrain.invite.userChoice.catch(() => {}); terrain.invite = null; bi.remove(); };
   const f = $('#f-releve');

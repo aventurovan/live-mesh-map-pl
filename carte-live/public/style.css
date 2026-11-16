@@ -1780,4 +1780,17 @@ fieldset.mqtt2 legend { font-weight: 800; padding: 0 6px; }
 .mapper-terrain { margin: 8px 0 14px; padding: 12px 14px; border-radius: 14px; background: var(--karta-2, rgba(46,107,90,.12)); line-height: 1.5; }
 .mapper-terrain p { margin: 6px 0; font-size: 13.5px; }
 .mapper-terrain .actions-prop { flex-wrap: wrap; gap: 6px; }
+.mt-siatka { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+.mt-kafel, .mt-przelacz { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 14px; background: var(--karta-1, rgba(127,127,127,.1)); color: var(--texte); text-decoration: none; border: 1px solid transparent; min-height: 64px; }
+.mt-kafel:hover, .mt-kafel:focus-visible, .mt-przelacz:hover { border-color: var(--accent); }
+.mt-przelacz { width: 100%; font: inherit; cursor: pointer; text-align: left; background: var(--karta-3, rgba(127,127,127,.1)); margin: 4px 0; }
+.mt-przelacz.on .pw-przel { background: var(--accent); }
+.mt-przelacz.on .pw-przel::after { left: 19px; }
+.mt-ik { flex: 0 0 38px; width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.7); color: var(--accent); }
+body:not(.theme-clair) .mt-ik { background: rgba(255,255,255,.08); }
+.mt-tekst { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.mt-tekst b { font-family: var(--naglowki, inherit); font-size: 14px; color: var(--texte); }
+.mt-tekst small { color: var(--doux); font-size: 12px; }
+.mt-strz { color: var(--doux); font-weight: 700; }
+@media (max-width: 380px) { .mt-siatka { grid-template-columns: 1fr; } }
 
