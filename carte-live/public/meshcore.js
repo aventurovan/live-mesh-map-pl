@@ -1636,7 +1636,7 @@ async function mcOuvrirFiche(cle, ongletInitial) {
       ${n.observateur ? `<span class="badge passerelle" title="${obs.carte ? 'Relié à cette carte : il lui transmet ce qu’il entend (indépendant de la republication MQTT)' : 'Publie ce qu’il entend sur le broker MQTT, où la carte le lit'}">${esc(mcLibObservateur(n, true))}</span>` : ''}
       <span class="badge reseau-mc">MeshCore</span>
     </div>
-    <nav class="onglets-fiche"><button data-of="infos" class="actif">Informations</button><button data-of="voisins">Voisins (${d.voisins.length})</button><button data-of="trames">Paquets</button>${etat.membre && ['repeteur', 'salon', 'capteur'].includes(n.role) ? '<button data-of="capteurs">Capteurs</button>' : ''}${!BEZ_COMPANIONA && gerable(n.cle) && ['repeteur', 'salon', 'capteur', 'companion'].includes(n.role) ? '<button data-of="admin">Administration</button>' : ''}</nav>
+    <nav class="onglets-fiche"><button data-of="infos" class="actif">Informations</button><button data-of="voisins">Voisins (${d.voisins.length})</button><button data-of="trames">Paquets</button>${!BEZ_COMPANIONA && etat.membre && ['repeteur', 'salon', 'capteur'].includes(n.role) ? '<button data-of="capteurs">Capteurs</button>' : ''}${!BEZ_COMPANIONA && gerable(n.cle) && ['repeteur', 'salon', 'capteur', 'companion'].includes(n.role) ? '<button data-of="admin">Administration</button>' : ''}</nav>
     <div data-pf="infos">
       <div class="grille">${mesures.map(([l, v]) => `<div class="mesure"><span>${l}</span><b>${esc(v)}</b></div>`).join('')}</div>
       <div class="boutons">
