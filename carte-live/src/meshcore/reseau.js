@@ -496,7 +496,7 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
     const zone = Array.isArray(zoneBbox) ? zoneBbox : zoneBbox ? config.zone : null;
     const z = zone || config.zone;
     // Zone : paquets entendus par au moins un observateur situé dans la zone
-    const filtre = zone ? ` AND p.rowid IN (SELECT r.paquet FROM mc_receptions r JOIN mc_noeuds o ON o.cle = r.observateur WHERE r.heure >= @d AND o.lat BETWEEN ${z[0]} AND ${z[2]} AND o.lon BETWEEN ${z[1]} AND ${z[3]})` : '';
+    const filtre = zone ? ` AND p.rowid IN (SELECT r.paquet FROM mc_receptions r LEFT JOIN mc_noeuds o ON o.cle = r.observateur WHERE r.heure >= @d AND (o.lat IS NULL OR (o.lat BETWEEN ${z[0]} AND ${z[2]} AND o.lon BETWEEN ${z[1]} AND ${z[3]})))` : ''; // PL: obserwator bez pozycji (przyjęty po kodzie IATA) też się liczy
     const P = { d: depuis };
     const parType = db.prepare(`SELECT p.type, COUNT(*) AS nb, SUM(p.taille) AS octets, SUM(p.nb_receptions) AS receptions FROM mc_paquets p WHERE p.heure >= @d${filtre} GROUP BY p.type ORDER BY nb DESC`).all(P)
       .map((r) => ({ ...r, airtimeS: Math.round(r.nb * tempsEmission(Math.round((r.octets || 0) / Math.max(r.nb, 1)), 'MESHCORE_FR') * 10) / 10 }));
@@ -505,7 +505,7 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
         FROM mc_paquets p LEFT JOIN mc_noeuds n ON n.cle = p.de WHERE p.heure >= @d AND p.de IS NOT NULL${filtre} GROUP BY p.de ORDER BY nb DESC LIMIT 40`).all(P);
     const sauts = db.prepare(`SELECT p.sauts, COUNT(*) AS nb FROM mc_paquets p WHERE p.heure >= @d AND p.sauts IS NOT NULL${filtre} GROUP BY p.sauts ORDER BY p.sauts`).all(P);
     const observateurs = db.prepare(`SELECT r.observateur, n.nom, COUNT(*) AS nb, ROUND(AVG(r.snr), 1) AS snr, MAX(r.heure) AS dernier
-        FROM mc_receptions r LEFT JOIN mc_noeuds n ON n.cle = r.observateur WHERE r.heure >= @d${zone ? ` AND n.lat BETWEEN ${z[0]} AND ${z[2]} AND n.lon BETWEEN ${z[1]} AND ${z[3]}` : ''} GROUP BY r.observateur ORDER BY nb DESC LIMIT 40`).all(P);
+        FROM mc_receptions r LEFT JOIN mc_noeuds n ON n.cle = r.observateur WHERE r.heure >= @d${zone ? ` AND (n.lat IS NULL OR (n.lat BETWEEN ${z[0]} AND ${z[2]} AND n.lon BETWEEN ${z[1]} AND ${z[3]}))` : ''} GROUP BY r.observateur ORDER BY nb DESC LIMIT 40`).all(P);
     const relais = new Map();
     for (const r of db.prepare(`SELECT p.chemin FROM mc_paquets p WHERE p.heure >= @d AND p.sauts > 0${filtre}`).all(P)) for (const h of JSON.parse(r.chemin || '[]')) relais.set(h, (relais.get(h) || 0) + 1);
     const cache = noeudsCache();
