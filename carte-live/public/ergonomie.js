@@ -181,7 +181,22 @@ const IKONY_KAFELKOW = {
   wezly: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>',
   ustawienia: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
   szukaj: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  konto: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  klucz: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M15 8l2 2"/>',
+  mapa: '<path d="m9 4-6 2v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>',
+  serwer: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+  ludzie: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/>',
+  diagnoza: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+  zapis: '<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
+  oko: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  pobierz: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
+  przywroc: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+  dziennik: '<path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h4"/>',
+  aktualizuj: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+  wezel: '<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
 };
+// PL: emotki w ustawieniach → ikony obrysowe
+const IKONY_USTAWIEN = { '👤': 'konto', '🔑': 'klucz', '🗺️': 'mapa', '📶': 'serwer', '👥': 'ludzie', '🩺': 'diagnoza', '💾': 'zapis', '👁️': 'oko', '📦': 'pobierz', '♻️': 'przywroc', '📜': 'dziennik', '⬆️': 'aktualizuj', '🔌': 'wezel', '🟠': 'siec', '⇄': 'siec', '🔐': 'klucz' };
 const ikonaSvg = (k, r = 22) => `<svg class="ik" viewBox="0 0 24 24" width="${r}" height="${r}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IKONY_KAFELKOW[k] || ''}</svg>`;
 function tuilesAccueil() {
   const t = [
@@ -232,7 +247,7 @@ function installerPliTableau() {
 function rendreHubReglages() {
   const z = $('#hub-reglages');
   if (!z) return;
-  const ligne = (ic, nom, aide, id) => `<button type="button" class="ligne-reglage" data-go="${id}"><span class="ic" aria-hidden="true">${ic}</span><span><b>${esc(nom)}</b><small>${esc(aide)}</small></span><span class="chevron" aria-hidden="true">›</span></button>`;
+  const ligne = (ic, nom, aide, id) => `<button type="button" class="ligne-reglage" data-go="${id}"><span class="ic" aria-hidden="true">${IKONY_USTAWIEN[ic] ? ikonaSvg(IKONY_USTAWIEN[ic], 19) : ic}</span><span><b>${esc(nom)}</b><small>${esc(aide)}</small></span><span class="chevron" aria-hidden="true">›</span></button>`;
   const actions = {};
   const bloc = (titre, lignes) => (lignes.length ? `<h3>${titre}</h3><div class="liste-reglages">${lignes.map(([ic, nom, aide, go]) => { const id = 'r' + Object.keys(actions).length; actions[id] = go; return ligne(ic, nom, aide, id); }).join('')}</div>` : '');
   const compte = etat.consultation ? [] : etat.membre
@@ -249,7 +264,7 @@ function rendreHubReglages() {
     ['♻️', 'Restaurer une sauvegarde complète', 'Reprendre tout depuis le fichier .tar.gz d’un autre serveur (remplace la base, les réglages et les comptes)', () => choisirEtRestaurer()],
     ['📜', 'Journal du serveur', 'Ce que fait la carte, erreurs', () => ouvrirDlg('journal')],
     ['⬆️', 'Mise à jour de la carte', 'Version installée, nouvelle version, mise à jour en un clic', () => ficheMaj()],
-    ['🇫🇷', 'Toute la France', 'Télécharger et installer le relief de tous les départements', () => ficheFrance()],
+    ...(etat.config && etat.config.horsFrance ? [] : [['🇫🇷', 'Toute la France', 'Télécharger et installer le relief de tous les départements', () => ficheFrance()]]),
   ];
   // Réglages propres à un réseau : seulement quand ce réseau est affiché (Meshtastic, MeshCore ou les deux)
   const vue = etat.vueReseau || 'les-deux', voitMc = vue !== 'meshtastic', lesDeux = vue === 'les-deux';
@@ -260,18 +275,18 @@ function rendreHubReglages() {
     ...(etat.admin && vue !== 'meshcore' ? [['🔐', 'Équipes', 'Canal chiffré par équipe sur les nœuds des intervenants', () => ouvrirOutilProgrammer('voir-equipes')]] : []),
   ];
   z.innerHTML = `<div class="hub-reglages">
-    <p class="note">Tous les réglages sont rangés ici. Vous cherchez autre chose ? <button type="button" class="mini" id="hub-chercher">🔎 Chercher</button></p>
+    <p class="note hub-intro">Tous les réglages sont rangés ici. Vous cherchez autre chose ? <button type="button" class="mini" id="hub-chercher">${ikonaSvg('szukaj', 14)} Chercher</button></p>
     <h3>Affichage</h3>
     <div class="liste-reglages bloc-affichage">
       <label>Niveau d’affichage <select id="hub-niveau">${Object.entries(NIVEAUX).map(([k, v]) => `<option value="${k}" ${k === ergo.niveau ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <small class="note">Simple : l’essentiel. Opérateur : couverture avancée, trafic, outils de terrain. Expert : tout.</small>
       <label class="case"><input type="checkbox" id="hub-grand" ${document.body.classList.contains('grand-texte') ? 'checked' : ''}> Grand texte</label>
       <label class="case"><input type="checkbox" id="hub-clair" ${document.body.classList.contains('theme-clair') ? 'checked' : ''}> Thème clair (plein soleil)</label>
-      <label translate="no">🌐 Język · Langue · Language <select id="hub-langue" aria-label="Langue · Language"><option value="pl" ${window.LANGUE === 'pl' ? 'selected' : ''}>Polski</option><option value="en" ${window.LANGUE === 'en' ? 'selected' : ''}>English</option><option value="fr" ${window.LANGUE === 'fr' ? 'selected' : ''}>Français</option></select></label>
-      <div class="actions-prop"><button type="button" class="mini" id="hub-visite">🧭 Revoir la visite guidée</button><button type="button" class="mini" id="hub-aide">❓ Aide</button></div>
+      <label translate="no">Język · Langue · Language <select id="hub-langue" aria-label="Langue · Language"><option value="pl" ${window.LANGUE === 'pl' ? 'selected' : ''}>Polski</option><option value="en" ${window.LANGUE === 'en' ? 'selected' : ''}>English</option><option value="fr" ${window.LANGUE === 'fr' ? 'selected' : ''}>Français</option></select></label>
+      <div class="actions-prop"><button type="button" class="mini" id="hub-visite">Revoir la visite guidée</button><button type="button" class="mini" id="hub-aide">Aide</button></div>
     </div>
     ${bloc('Compte', compte)}${bloc('Modules et réseaux', modules)}${etat.admin && etat.config.meshcore && !lesDeux ? `<p class="note">${vue === 'meshtastic' ? 'Réglages MeshCore et passerelle : choisissez « MeshCore » ou « Les deux » en haut du panneau.' : 'Réglages Meshtastic (équipes) et passerelle : choisissez « Meshtastic » ou « Les deux » en haut du panneau.'}</p>` : ''}${bloc('La carte (administrateur)', carteL)}
-    <p class="note a-propos">Carte live Meshtastic / MeshCore v${esc((etat.config.version && etat.config.version.version) || '')} · créée par F4GLD · <a href="https://www.helloasso.com/associations/radioclub-du-velay/formulaires/2" target="_blank" rel="noopener">♥ Soutenir le projet</a> (Radio-club du Velay) · <a href="https://github.com/aventurovan/live-mesh-map-pl" target="_blank" rel="noopener">code source</a> · <span translate="no">wersja polska: MeshCore Południe</span></p></div>`;
+    <p class="note a-propos">Carte live MeshCore v${esc((etat.config.version && etat.config.version.version) || '')} · créée par F4GLD · <a href="https://www.helloasso.com/associations/radioclub-du-velay/formulaires/2" target="_blank" rel="noopener">♥ Soutenir le projet</a> (Radio-club du Velay) · <a href="https://github.com/aventurovan/live-mesh-map-pl" target="_blank" rel="noopener">code source</a> · <span translate="no">wersja polska: MeshCore Południe</span></p></div>`;
   z.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => { try { actions[b.dataset.go](); } catch (e) { annonce('⚠ ' + e.message, 'erreur'); } }));
   $('#hub-chercher').onclick = () => ouvrirRechercheReglages();
   $('#hub-niveau').onchange = (e) => appliquerNiveau(e.target.value, true);
