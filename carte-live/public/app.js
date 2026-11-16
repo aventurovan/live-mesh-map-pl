@@ -6823,6 +6823,18 @@ async function rendreReglages() {
         <label>Utilisateur MQTT <input name="mqttUtilisateur" value="${esc(r.mqtt.utilisateur)}" autocomplete="off"></label>
         <label>Mot de passe MQTT <input name="mqttMotDePasse" type="password" placeholder="${r.mqtt.motDePasseDefini ? '•••••• (inchangé)' : ''}" autocomplete="new-password"></label>
         <label>Sujets supplémentaires <input name="mqttSujets" value="${esc(r.mqtt.sujetsSupplementaires)}" placeholder="séparés par des virgules"></label>
+        <fieldset class="large-col mqtt2">
+          <legend>Drugi broker MQTT (tylko odczyt MeshCore)</legend>
+          <p class="note">Np. broker kolegi: mapa czyta z niego pakiety i statusy obserwatorów MeshCore, nic tam nie wysyła. Hasło zostaje tylko na serwerze.
+            ${r.mqtt2 && r.mqtt2.actif ? `<br>Stan: <b>${r.mqtt2.stan && r.mqtt2.stan.polaczony ? 'połączony ✓' : 'niepołączony'}</b>${r.mqtt2.stan ? ` · odebrane wiadomości: ${r.mqtt2.stan.odebrane}` : ''}${r.mqtt2.stan && r.mqtt2.stan.blad ? ` · błąd: ${esc(r.mqtt2.stan.blad)}` : ''}` : ''}</p>
+          <label class="case"><input type="checkbox" name="mqtt2Aktywny" ${r.mqtt2 && r.mqtt2.actif ? 'checked' : ''}> Włączony</label>
+          <div class="grille-form">
+            <label>Adres <input name="mqtt2Url" value="${esc((r.mqtt2 || {}).url || '')}" placeholder="mqtt://serwer:1883 albo mqtts://serwer:8883"></label>
+            <label>Temat <input name="mqtt2Sujet" value="${esc((r.mqtt2 || {}).sujet || 'meshcore/#')}" placeholder="meshcore/#"></label>
+            <label>Użytkownik <input name="mqtt2Utilisateur" value="${esc((r.mqtt2 || {}).utilisateur || '')}" autocomplete="off"></label>
+            <label>Hasło <input name="mqtt2MotDePasse" type="password" placeholder="${r.mqtt2 && r.mqtt2.motDePasseDefini ? '•••••• (bez zmian)' : ''}" autocomplete="new-password"></label>
+          </div>
+        </fieldset>
         <label>Inscriptions <select name="inscriptions">${[['validation', 'Sur validation de l’admin'], ['ouvertes', 'Ouvertes à tous'], ['fermees', 'Fermées']].map(([v, l]) => `<option value="${v}" ${r.inscriptions === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <label>Positions publiques <select name="precisionPublique">${[[3, 'Arrondies à ≈ 100 m'], [2, 'Arrondies à ≈ 1 km'], [4, 'Arrondies à ≈ 10 m'], [-1, 'Exactes']].map(([v, l]) => `<option value="${v}" ${r.precisionPublique === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <label>Conservation (jours) <input name="retentionJours" type="number" min="1" max="90" value="${r.retentionJours}"></label>
@@ -6845,6 +6857,7 @@ async function rendreReglages() {
     const corps = {
       titre: f.titre.value, inscriptions: f.inscriptions.value, precisionPublique: Number(f.precisionPublique.value), retentionJours: Number(f.retentionJours.value), canaux: f.canaux.value,
       mqtt: { url: f.mqttUrl.value, racine: f.mqttRacine.value, utilisateur: f.mqttUtilisateur.value, motDePasse: f.mqttMotDePasse.value, sujetsSupplementaires: f.mqttSujets.value },
+      mqtt2: { actif: f.mqtt2Aktywny.checked, url: f.mqtt2Url.value, sujet: f.mqtt2Sujet.value, utilisateur: f.mqtt2Utilisateur.value, motDePasse: f.mqtt2MotDePasse.value },
     };
     if (f.departement.value !== r.departement.code) corps.departement = f.departement.value;
     try { await postJson('/api/reglages', corps); $('#dlg-gestion').close(); attendreRedemarrage('Réglages enregistrés'); }

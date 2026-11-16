@@ -214,6 +214,7 @@ function appliquerReglages(r) {
   if (r.zoneNom) config.zoneNom = r.zoneNom;
   if (Array.isArray(r.centre) && r.centre.length === 2) [config.carte.centreLat, config.carte.centreLon] = r.centre;
   if (Number.isFinite(r.zoom)) config.carte.zoom = r.zoom;
+  if (r.mqtt2 && typeof r.mqtt2 === 'object') config.mqtt2 = { url: r.mqtt2.url || '', utilisateur: r.mqtt2.utilisateur || '', motDePasse: r.mqtt2.motDePasse || '', sujets: Array.isArray(r.mqtt2.sujets) ? r.mqtt2.sujets : ['meshcore/#'], actif: !!r.mqtt2.actif };
   if (r.mqtt) {
     for (const k of ['url', 'utilisateur', 'motDePasse', 'racine']) if (typeof r.mqtt[k] === 'string' && r.mqtt[k] !== '') config.mqtt[k] = r.mqtt[k];
     if (Array.isArray(r.mqtt.sujetsSupplementaires)) config.mqtt.sujetsSupplementaires = r.mqtt.sujetsSupplementaires;

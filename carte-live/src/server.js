@@ -2159,6 +2159,25 @@ function preparerReglages(b, existants = {}) {
     if (typeof b.mqtt.sujetsSupplementaires === 'string') m.sujetsSupplementaires = b.mqtt.sujetsSupplementaires.split(/[,\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 10);
     r.mqtt = m;
   }
+  // PL: drugi broker (tylko odczyt MeshCore), np. sieć kolegi; hasło zapisywane tylko na serwerze
+  if (b.mqtt2) {
+    const m2 = { ...(existants.mqtt2 || {}) };
+    if (typeof b.mqtt2.url === 'string') {
+      const u = b.mqtt2.url.trim();
+      if (u && !/^(mqtts?|wss?):\/\/[^\s]+$/.test(u)) throw new Error('Drugi broker: adres mqtt://serwer:1883 (albo mqtts://, wss://)');
+      m2.url = u;
+    }
+    if (typeof b.mqtt2.utilisateur === 'string') m2.utilisateur = b.mqtt2.utilisateur.trim().slice(0, 80);
+    if (typeof b.mqtt2.motDePasse === 'string' && b.mqtt2.motDePasse !== '') m2.motDePasse = b.mqtt2.motDePasse.slice(0, 200);
+    if (b.mqtt2.usunHaslo) delete m2.motDePasse;
+    if (typeof b.mqtt2.sujet === 'string') {
+      const s2 = b.mqtt2.sujet.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+      if (s2.some((x) => !/^[\w\-+#/]{1,120}$/.test(x))) throw new Error('Drugi broker: temat np. meshcore/# albo meshcore/KTW/#');
+      m2.sujets = s2.slice(0, 5);
+    }
+    m2.actif = !!b.mqtt2.actif;
+    r.mqtt2 = m2;
+  }
   if (typeof b.canaux === 'string' && b.canaux.trim()) {
     const lignes = b.canaux.split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
     for (const l of lignes) {
@@ -2270,6 +2289,7 @@ app.get('/api/reglages', (req, res) => {
     titre: config.carte.titre,
     departement: config.departement,
     mqtt: { url: config.mqtt.url, utilisateur: config.mqtt.utilisateur, motDePasseDefini: !!config.mqtt.motDePasse, racine: config.mqtt.racine, sujetsSupplementaires: config.mqtt.sujetsSupplementaires.join(', ') },
+    mqtt2: { url: (config.mqtt2 || {}).url || '', utilisateur: (config.mqtt2 || {}).utilisateur || '', motDePasseDefini: !!(config.mqtt2 || {}).motDePasse, sujet: ((config.mqtt2 || {}).sujets || ['meshcore/#']).join(', '), actif: !!(config.mqtt2 || {}).actif, stan: stanMqtt2 },
     canaux: config.canaux.map((c) => `${c.nom}=${c.cle}`).join('\n'),
     inscriptions: config.inscriptions,
     precisionPublique: config.precisionPublique,
@@ -2961,6 +2981,25 @@ clientMqtt.on('connect', () => {
 clientMqtt.on('close', () => { statsMqtt.depuis = null; diffuser({ genre: 'mqtt', connecte: false }); });
 clientMqtt.on('reconnect', () => { statsMqtt.reconnexions++; });
 clientMqtt.on('error', (e) => { statsMqtt.derniereErreur = { message: e.message, heure: Date.now() }; journal('Erreur MQTT :', e.message); });
+// ---- PL: drugi broker MQTT (tylko odczyt pakietów i statusów MeshCore) ----
+const RE_MC_SUJET = /^[^/]+\/[^/]+\/[0-9A-Fa-f]{64}\/(packets|status|internal)$/;
+var stanMqtt2 = { polaczony: false, odebrane: 0, blad: null, od: null };
+if (config.meshcore.actif && config.mqtt2 && config.mqtt2.actif && config.mqtt2.url) {
+  const s2 = config.mqtt2.sujets && config.mqtt2.sujets.length ? config.mqtt2.sujets : ['meshcore/#'];
+  const c2 = mqtt.connect(config.mqtt2.url, {
+    username: config.mqtt2.utilisateur || undefined, password: config.mqtt2.motDePasse || undefined,
+    clientId: 'mapa-pl-most-' + crypto.randomBytes(3).toString('hex'), reconnectPeriod: 10000, connectTimeout: 15000, rejectUnauthorized: !config.mqtt.tlsNonVerifie,
+  });
+  c2.on('connect', () => { stanMqtt2.polaczony = true; stanMqtt2.blad = null; stanMqtt2.od = Date.now(); journal(`MQTT (drugi broker) połączony z ${config.mqtt2.url.replace(/\/\/[^@]*@/, '//')}, tematy ${s2.join(', ')}`); c2.subscribe(s2, { qos: 0 }); });
+  c2.on('close', () => { stanMqtt2.polaczony = false; });
+  c2.on('error', (e) => { stanMqtt2.blad = e.message; journal('MQTT (drugi broker):', e.message); });
+  c2.on('message', (topic, message) => {
+    if (!RE_MC_SUJET.test(topic)) return;
+    stanMqtt2.odebrane++;
+    compteurMc.recusMqtt = (compteurMc.recusMqtt || 0) + 1;
+    try { messageMc(topic, message); } catch (e) { compteurMc.erreurs++; }
+  });
+}
 clientMqtt.on('message', (topic, message) => {
   compteur.recus++;
   if (config.meshcore.actif && topic.startsWith(prefixeMc)) { compteurMc.recusMqtt = (compteurMc.recusMqtt || 0) + 1; try { messageMc(topic, message); } catch (e) { compteurMc.erreurs++; journal('Erreur MeshCore :', e.message, topic); } return; }

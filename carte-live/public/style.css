@@ -1713,3 +1713,6 @@ body:not(.theme-clair) .ligne-reglage .ic { background: rgba(255, 255, 255, .08)
 .wr-et.sf8 { background: #2f7fd1; }
 
 .rek-wiersz:focus:not(:focus-visible):not(.on):not(:hover) { border-color: transparent; box-shadow: none; }
+fieldset.mqtt2 { border: 1px solid rgba(127,127,127,.3); border-radius: 12px; padding: 10px 12px 12px; margin: 6px 0; }
+fieldset.mqtt2 legend { font-weight: 800; padding: 0 6px; }
+
