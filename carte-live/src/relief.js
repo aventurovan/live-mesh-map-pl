@@ -418,7 +418,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     const bruit = -174 + 10 * Math.log10(p.bw * 1000) + 6;
     return {
       preset,
-      hs: opts.hs ?? 6, // antenne du site (m)
+      hs: opts.hs ?? 10, // PL: antena przekaźnika domyślnie 10 m
       ht: opts.ht ?? 2, // antenne du point desservi (m)
       // PL: sprzęt sieci Południe: 22 dBm, antena repeatera 5 dBi, odbiornik 2,15 dBi, bez strat w kablu
       ptx: opts.ptx ?? 22,
@@ -876,7 +876,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
   function simuler({ retirer = [], ajouter = [], villes = [] } = {}, opts = {}) {
     if (etat.mnt !== 'pret') throw new Error('Le modèle de terrain est en cours de chargement');
     const P = parametres(opts);
-    const hDefaut = opts.hn ?? 6;
+    const hDefaut = opts.hn ?? 10;
     const base = (opts.noeuds || fournisseurs.noeudsReseau()).filter((n) => celle(n.lat, n.lon) >= 0).map((n) => ({ ...n, h: n.h ?? hDefaut }));
     const ret = new Set(retirer.map(String));
     const ajout = ajouter.filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon) && celle(a.lat, a.lon) >= 0).map((a, i) => ({ num: 'ajout-' + i, nom: a.nom || `Nouveau relais ${i + 1}`, lat: a.lat, lon: a.lon, h: a.h ?? P.hs, nouveau: true }));
@@ -958,7 +958,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     const P = parametres({});
     const min = niveauMin(filtre);
     const W = Math.ceil(nbZone / 32);
-    const reseau = fournisseurs.noeudsReseau().filter((n) => celle(n.lat, n.lon) >= 0 && !n.voisin).slice(0, 60).map((n) => ({ ...n, h: n.h ?? 6 }));
+    const reseau = fournisseurs.noeudsReseau().filter((n) => celle(n.lat, n.lon) >= 0 && !n.voisin).slice(0, 250).map((n) => ({ ...n, h: n.h ?? 10 }));
     const bits = [];
     for (const n of reseau) { bits.push(bitsSite(n, P)); await pause(); }
     // Masques : couvert par au moins un relais (tous), par exactement un (seul)
@@ -1030,7 +1030,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     if (etat.mnt !== 'pret') throw new Error('Le modèle de terrain est en cours de chargement');
     const P = parametres({});
     const W = Math.ceil(nbZone / 32);
-    const reseau = fournisseurs.noeudsReseau().filter((n) => celle(n.lat, n.lon) >= 0).slice(0, 60).map((n) => ({ ...n, h: n.h ?? 6 }));
+    const reseau = fournisseurs.noeudsReseau().filter((n) => celle(n.lat, n.lon) >= 0).slice(0, 250).map((n) => ({ ...n, h: n.h ?? 10 }));
     const tous = new Uint32Array(W);
     for (const n of reseau) { const b = bitsSite(n, P); for (let w = 0; w < W; w++) tous[w] |= b[w]; await pause(); }
     const pop = (x) => { let n = 0; while (x) { x &= x - 1; n++; } return n; };
@@ -1064,8 +1064,8 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     const noeuds = (opts.noeuds || fournisseurs.noeudsReseau()).filter((n) => celle(n.lat, n.lon) >= 0).slice(0, 250); // PL: wcześniej tylko 60 ostatnio słyszanych
     if (!noeuds.length) return { noeuds: [], vide: true };
     // Hauteur, gain, câble et puissance : fiche d'installation du relais, sinon la hauteur supposée
-    const r = couverturePngMulti(noeuds.map((n) => ({ lat: n.lat, lon: n.lon, h: n.h ?? opts.hn ?? 6, gain: n.gain, pertes: n.pertes, ptx: n.ptx })), opts);
-    return { ...r, noeuds: noeuds.map((n, i) => ({ num: n.num, nom: n.nom, lat: n.lat, lon: n.lon, hauteur: n.h ?? opts.hn ?? 6, fiche: n.h != null || n.gain != null, ...r.sites[i] })), sites: undefined, surfaceDepartementKm2: Math.round(nbZone * aireCelleKm2) };
+    const r = couverturePngMulti(noeuds.map((n) => ({ lat: n.lat, lon: n.lon, h: n.h ?? opts.hn ?? 10, gain: n.gain, pertes: n.pertes, ptx: n.ptx })), opts);
+    return { ...r, noeuds: noeuds.map((n, i) => ({ num: n.num, nom: n.nom, lat: n.lat, lon: n.lon, hauteur: n.h ?? opts.hn ?? 10, fiche: n.h != null || n.gain != null, ...r.sites[i] })), sites: undefined, surfaceDepartementKm2: Math.round(nbZone * aireCelleKm2) };
   }
 
   // Couverture cumulée de plusieurs sites (2 à 10) : image commune (meilleure marge par cellule),

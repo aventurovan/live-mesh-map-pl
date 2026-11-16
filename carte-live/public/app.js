@@ -1,5 +1,7 @@
 /* Carte live Meshtastic — interface */
 'use strict';
+// PL: domyślna wysokość anteny przekaźnika (m) w narzędziach zasięgu
+const H_RPT = 10;
 // Démonstration (?consultation, lien « Explorer en détail ») : tous les écrans s'affichent, en lecture seule.
 // Les lectures portent l'en-tête X-Demo (le serveur ouvre alors quelques écrans de membre, secrets masqués) ;
 // aucune écriture ne part : toute requête autre que GET vers le serveur est refusée ici même.
@@ -125,7 +127,7 @@ function blocCoords(lat, lon, opts = {}) {
       <a href="https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lon.toFixed(6)}" target="_blank" rel="noopener">Google Maps</a>
       <a href="geo:${lat.toFixed(6)},${lon.toFixed(6)}">GPS du téléphone</a></div>
     ${opts.approx ? '<div class="note">Position publique arrondie (≈ 100 m) : connectez-vous pour la position exacte.</div>' : ''}
-    ${opts.couv ? `<div class="actions-prop"><button class="mini principal" data-couv-pt="${lat},${lon}" data-couv-nom="${esc(opts.couv.nom || '')}" data-couv-h="${opts.couv.h || 6}" title="Couverture radio d’un relais posé ici (antenne à ${opts.couv.h || 6} m)">📡 Couverture de ce site</button></div>` : ''}
+    ${opts.couv ? `<div class="actions-prop"><button class="mini principal" data-couv-pt="${lat},${lon}" data-couv-nom="${esc(opts.couv.nom || '')}" data-couv-h="${opts.couv.h || H_RPT}" title="Couverture radio d’un relais posé ici (antenne à ${opts.couv.h || H_RPT} m)">📡 Couverture de ce site</button></div>` : ''}
   </div>`;
 }
 // « Couverture de ce site » dans une liste de propositions : la vue précédente (plan, classement) reste disponible
@@ -135,13 +137,13 @@ document.addEventListener('click', async (e) => {
     const [lat, lon] = b.dataset.couvPt.split(',').map(Number);
     const precedente = etat.coucheCouverture;
     b.disabled = true; b.textContent = 'Calcul…';
-    const r = await voirCouvertureSite({ lat, lon }, b.dataset.couvNom || 'Site', Number(b.dataset.couvH) || 6, { cadrer: true });
+    const r = await voirCouvertureSite({ lat, lon }, b.dataset.couvNom || 'Site', Number(b.dataset.couvH) || H_RPT, { cadrer: true });
     b.disabled = false; b.textContent = '📡 Couverture de ce site';
     document.querySelectorAll('.couv-pt-resultat').forEach((x) => x.remove());
     if (!r) return;
     const d = document.createElement('div');
     d.className = 'note couv-pt-resultat';
-    d.innerHTML = `<b>${r.surfaceKm2} km²</b> couverts par ce site seul, ${fmt(r.pctZone, 1, ' %')} du département (antenne ${Number(b.dataset.couvH) || 6} m). ${precedente ? '<button class="mini" data-couv-retour>↩ Revoir la vue précédente</button>' : ''}`;
+    d.innerHTML = `<b>${r.surfaceKm2} km²</b> couverts par ce site seul, ${fmt(r.pctZone, 1, ' %')} du département (antenne ${Number(b.dataset.couvH) || H_RPT} m). ${precedente ? '<button class="mini" data-couv-retour>↩ Revoir la vue précédente</button>' : ''}`;
     b.parentNode.after(d);
     const rb = d.querySelector('[data-couv-retour]');
     if (rb) rb.onclick = () => { if (etat.coucheCouverture) etat.coucheCouverture.remove(); precedente.addTo(carte); etat.coucheCouverture = precedente; d.remove(); };
@@ -1650,7 +1652,7 @@ function poserEpingle(lat, lon, qui, h, ouvrir) {
     div.onclick = (ev) => {
       const a = ev.target.closest('button[data-a]'); if (!a) return;
       carte.closePopup();
-      if (a.dataset.a === 'ici') couvertureIci(L.latLng(lat, lon), 6);
+      if (a.dataset.a === 'ici') couvertureIci(L.latLng(lat, lon), H_RPT);
       else { etat.coucheEpingles.removeLayer(m); epinglesVues.delete(k); }
     };
     epinglesVues.set(k, m);
@@ -3106,7 +3108,7 @@ function dessinerSommets() {
     if (!proche && !s.rangPlan && !(s.rang && s.rang <= 15) && !(s.nom && s.dominance >= 120)) continue;
     L.marker([s.lat, s.lon], { icon: iconeSommet(s), pane: 'sommets', zIndexOffset: s.rangPlan ? 500 : 0 })
       .bindTooltip(infoSommet(s), { className: 'info' })
-      .on('click', () => (etat.modeProfil ? choisirPointProfil({ lat: s.lat, lon: s.lon, nom: nomSommet(s), h: 6 }) : ficheSommet(s)))
+      .on('click', () => (etat.modeProfil ? choisirPointProfil({ lat: s.lat, lon: s.lon, nom: nomSommet(s), h: H_RPT }) : ficheSommet(s)))
       .addTo(g);
   }
   g.addTo(carte);
@@ -3114,7 +3116,7 @@ function dessinerSommets() {
 }
 
 async function voirCouvertureSite(p, titre, hauteur, opts = {}) {
-  const hs = hauteur ?? ($('#relief-hs') ? $('#relief-hs').value : 6);
+  const hs = hauteur ?? ($('#relief-hs') ? $('#relief-hs').value : H_RPT);
   let r;
   try { r = await api(`/api/relief/couverture?lat=${p.lat}&lon=${p.lon}&hs=${hs}${opts.preset ? '&preset=' + opts.preset : ''}`); } catch (e) { if (opts.erreurs) return { erreur: e.message }; alert(e.message); return; }
   if (etat.coucheCouverture) etat.coucheCouverture.remove();
@@ -3152,10 +3154,10 @@ async function ficheSommet(s) {
       ${s.rang ? `<div class="mesure"><span>Classement individuel</span><b>${s.rang}ᵉ</b></div>` : ''}
     </div>
     <div class="actions-prop"><button id="sommet-couvrir">Couvrir ce point (4 points hauts)</button><button id="sommet-ajout-couv" class="principal">${etat.sitesCouv && etat.sitesCouv.length ? `＋ Ajouter à la couverture totale (${etat.sitesCouv.length + 1} sites)` : '＋ Ajouter un site (couverture totale)'}</button></div>
-    <p class="note">Couverture calculée avec une antenne à ${$('#relief-hs') ? $('#relief-hs').value : 6} m (réglable dans l'onglet Couverture).</p>`;
+    <p class="note">Couverture calculée avec une antenne à ${$('#relief-hs') ? $('#relief-hs').value : H_RPT} m (réglable dans l'onglet Couverture).</p>`;
   $('#sommet-couvrir').onclick = () => couvrirPoint(L.latLng(s.lat, s.lon));
   $('#sommet-ajout-couv').onclick = () => {
-    const h = Number($('#relief-hs') ? $('#relief-hs').value : 6) || 6;
+    const h = Number($('#relief-hs') ? $('#relief-hs').value : H_RPT) || H_RPT;
     if (etat.sitesCouv && etat.sitesCouv.length) couvertureMulti([...etat.sitesCouv, { lat: s.lat, lon: s.lon, h, nom: nomSommet(s) }].slice(0, 10));
     else { etat.sitesCouv = [{ lat: s.lat, lon: s.lon, h, nom: nomSommet(s) }]; basculerMode('couv-plus'); }
   };
@@ -3177,7 +3179,7 @@ function ajouterLiaisonsMesurees(n, voisins) {
 
 // Couverture depuis un point quelconque de la carte
 async function couvertureIci(latlng, hauteur) {
-  const h = hauteur ?? 6;
+  const h = hauteur ?? H_RPT;
   const p = { lat: +latlng.lat.toFixed(5), lon: +latlng.lng.toFixed(5) };
   $('#fiche').hidden = false;
   etat.selection = null;
@@ -3209,7 +3211,7 @@ async function couvertureIci(latlng, hauteur) {
       <button id="ajout-site-couv" class="principal">＋ Ajouter un site (couverture totale)</button>
     </div>
     <p class="note">Turquoise : liaison confortable (≥ 10 dB de marge) · jaune : probable (0 à 10 dB) · orange : en limite. Le point desservi est supposé à 2 m du sol. ${r.env != null ? `Pertes de végétation et bâti : ${r.env} dB.` : ''}</p>`;
-  $('#recalc-ici').onclick = () => couvertureIci(latlng, Number($('#h-ici').value) || 6);
+  $('#recalc-ici').onclick = () => couvertureIci(latlng, Number($('#h-ici').value) || H_RPT);
   $('#couvrir-ici').onclick = () => couvrirPoint(latlng);
   $('#ajout-site-couv').onclick = () => { etat.sitesCouv = [{ lat: p.lat, lon: p.lon, h: Number($('#h-ici').value) || h, nom: 'Point choisi' }]; basculerMode('couv-plus'); };
 }
@@ -3242,19 +3244,19 @@ async function couvertureMulti(sites) {
     <div class="actions-prop">${sites.length < 10 ? '<button id="ajout-site-multi" class="principal">＋ Ajouter un site</button>' : ''}<button id="recalc-multi">Recalculer</button><button id="gpx-couv-multi">Télécharger (GPX)</button></div>
     <p class="note">Cliquez « Ajouter un site » puis un point de la carte (ou clic droit → « Ajouter à la couverture totale »). Un site qui couvre peu de surface à lui seul fait doublon avec les autres. Turquoise : ≥ 10 dB de marge · jaune : 0 à 10 dB · orange : en limite.</p>`;
   const ba = $('#ajout-site-multi'); if (ba) ba.onclick = () => basculerMode('couv-plus');
-  $('#recalc-multi').onclick = () => { $('#fiche-contenu').querySelectorAll('[data-h]').forEach((el) => { sites[Number(el.dataset.h)].h = Number(el.value) || 6; }); couvertureMulti(sites); };
+  $('#recalc-multi').onclick = () => { $('#fiche-contenu').querySelectorAll('[data-h]').forEach((el) => { sites[Number(el.dataset.h)].h = Number(el.value) || H_RPT; }); couvertureMulti(sites); };
   $('#fiche-contenu').querySelectorAll('[data-retirer-site]').forEach((b) => (b.onclick = () => couvertureMulti(sites.filter((_, i) => i !== Number(b.dataset.retirerSite)))));
   $('#gpx-couv-multi').onclick = () => telechargerGpx('couverture-sites.gpx', sites.map((x, i) => ({ lat: x.lat, lon: x.lon, alt: r.sites[i].sol, nom: `${i + 1} - ${x.nom || 'Site'}`, desc: `Antenne ${x.h} m, ${r.sites[i].km2} km²` })));
 }
 function ajouterSiteCouverture(latlng) {
   const lieu = nomLieu(latlng);
-  const h = Number($('#relief-hs') ? $('#relief-hs').value : 6) || 6;
+  const h = Number($('#relief-hs') ? $('#relief-hs').value : H_RPT) || H_RPT;
   couvertureMulti([...(etat.sitesCouv || []), { lat: lieu.lat, lon: lieu.lon, h, nom: lieu.nom }].slice(0, 10));
 }
 
 // ---- Couverture actuelle du réseau (relais et passerelles détectés) ----------------------------------
 async function couvertureReseau() {
-  const hn = Number(localStorage.getItem('gaulix_hn')) || 6;
+  const hn = Number(localStorage.getItem('pl_hn')) || H_RPT;
   $('#fiche').hidden = false;
   etat.selection = null;
   $('#fiche-contenu').innerHTML = '<h2>Couverture actuelle du réseau</h2><div class="alerte info-lecture"><span class="sablier"></span> Calcul de la zone couverte par les relais et passerelles détectés…</div>';
@@ -3284,7 +3286,7 @@ async function couvertureReseau() {
     ${tries.map((n) => `<div class="ligne" data-ouvrir-noeud="${esc(String(n.num))}"><span class="point ${n.propreKm2 > 0 ? 'actif' : 'inactif'}"></span><span class="titre">${esc(n.nom || String(n.num))}<small>${n.km2} km² au total · antenne ${n.hauteur} m ${n.fiche ? '<span title="Valeurs de la fiche d’installation">📋</span>' : '(supposée)'}</small></span><span class="meta"><b>${n.propreKm2} km²</b> seul</span></div>`).join('')}
     <div class="actions-prop"><button id="couv-vers-plan" class="principal">🗺️ Où ajouter des relais ? (plan)</button></div>
     <p class="note">Turquoise : ≥ 10 dB de marge · jaune : 0 à 10 dB · orange : en limite. Hypothèse : antennes à ${hn} m, nœud desservi à 2 m du sol. ${r.env != null ? `Pertes de végétation et bâti : ${r.env} dB.` : ''}</p>`;
-  $('#hn-recalc').onclick = () => { try { localStorage.setItem('gaulix_hn', $('#hn-reseau').value); } catch { /* ignoré */ } couvertureReseau(); };
+  $('#hn-recalc').onclick = () => { try { localStorage.setItem('pl_hn', $('#hn-reseau').value); } catch { /* ignoré */ } couvertureReseau(); };
   $('#couv-vers-plan').onclick = () => allerPlan();
   $('#fiche-contenu').querySelectorAll('[data-ouvrir-noeud]').forEach((el) => (el.onclick = () => {
     const n = r.noeuds.find((x) => String(x.num) === el.dataset.ouvrirNoeud);
@@ -3384,7 +3386,7 @@ async function simulation() {
     <div class="actions-prop"><button id="simu-ajout">＋ Ajouter un relais sur la carte</button><button id="simu-lancer" class="principal">Recalculer</button><button id="simu-raz">Tout remettre à zéro</button></div>
     <p class="note">Rouge : zone qui ne serait plus couverte · vert : zone gagnée · turquoise pâle : inchangée. « N relais » = nombre de relais traversés par un message entre deux nœuds situés dans ces villes (calculé d’après le relief, antennes des fiches Installation, sinon 6 m). Villes : les ${r.villes.length} communes les plus peuplées du département.</p>`;
   $('#fiche-contenu').querySelectorAll('[data-retirer]').forEach((c) => (c.onchange = () => { if (c.checked) sm.retirer.add(c.dataset.retirer); else sm.retirer.delete(c.dataset.retirer); }));
-  $('#fiche-contenu').querySelectorAll('[data-h-ajout]').forEach((c) => (c.onchange = () => { sm.ajouter[Number(c.dataset.hAjout)].h = Number(c.value) || 6; }));
+  $('#fiche-contenu').querySelectorAll('[data-h-ajout]').forEach((c) => (c.onchange = () => { sm.ajouter[Number(c.dataset.hAjout)].h = Number(c.value) || H_RPT; }));
   $('#fiche-contenu').querySelectorAll('[data-suppr-ajout]').forEach((b) => (b.onclick = () => { sm.ajouter.splice(Number(b.dataset.supprAjout), 1); simulation(); }));
   $('#simu-ajout').onclick = () => basculerMode('simu-ajout');
   $('#simu-lancer').onclick = () => simulation();
@@ -3392,7 +3394,7 @@ async function simulation() {
 }
 function ajouterRelaisSimulation(latlng) {
   const lieu = nomLieu(latlng);
-  etat.simu.ajouter.push({ lat: lieu.lat, lon: lieu.lon, h: Number($('#relief-hs') ? $('#relief-hs').value : 6) || 6, nom: lieu.nom });
+  etat.simu.ajouter.push({ lat: lieu.lat, lon: lieu.lon, h: Number($('#relief-hs') ? $('#relief-hs').value : H_RPT) || H_RPT, nom: lieu.nom });
   simulation();
 }
 // ---- Mode terrain : application installable, relevés hors connexion, fonds de carte gardés -------------
@@ -3771,7 +3773,7 @@ async function planZoneDessinee(polys, nom, opts = {}) {
   for (const poly of polys) L.polygon(poly, { color: '#facc15', weight: 2.5, fill: false, pane: 'traces', interactive: false }).addTo(g);
   carte.fitBounds(L.latLngBounds(polys.flat()).pad(0.15), { maxZoom: 13 });
   let r;
-  const hs = Number(($('#plan-hs') || {}).value) || 6;
+  const hs = Number(($('#plan-hs') || {}).value) || H_RPT;
   try { r = await postJson('/api/relief/plan-zone', { polygones: polys, objectif, max, acces, reseau, realiste, hs }); } catch (e) { z.innerHTML = `<h2>🖊 ${esc(nom)}</h2><div class="vide">${esc(e.message)}</div>`; return; }
   const e2 = r.emprise;
   L.imageOverlay(r.image, [[e2.sud, e2.ouest], [e2.nord, e2.est]], { opacity: 0.75, pane: 'couverture', className: 'pixelise' }).addTo(g);
@@ -3793,11 +3795,11 @@ async function planZoneDessinee(polys, nom, opts = {}) {
       <div class="meta-longue">${x.alt} m${x.commune ? ' · ' + esc(x.commune) : ''}</div>
       <div class="meta-longue">Accès : ${texteAcces(x.acces)}</div>
       ${x.realisme ? `<div class="meta-longue">Site : ${texteRealisme(x.realisme)}</div>` : ''}
-      ${blocCoords(x.lat, x.lon, { alt: x.alt, couv: { nom: `${x.rang} · ${nomSommet(x)}`, h: (r.parametres && r.parametres.hs) || 6 } })}
+      ${blocCoords(x.lat, x.lon, { alt: x.alt, couv: { nom: `${x.rang} · ${nomSommet(x)}`, h: (r.parametres && r.parametres.hs) || H_RPT } })}
       ${x.alternatives && x.alternatives.length ? `<details class="alt-relier"><summary>Autres emplacements possibles (${x.alternatives.length})</summary>${x.alternatives.map((o, j) => `<div class="ligne-alt" data-lat="${o.lat}" data-lon="${o.lon}" title="Centrer la carte sur cet emplacement"><b class="repere-alt">${x.rang}${String.fromCharCode(97 + j)}</b> ${esc(nomSommet(o))} · ${o.alt} m${o.commune ? ' · ' + esc(o.commune) : ''} · +${o.gainKm2} km² ${o.acces ? ACCES[o.acces.type].icone : ''}${o.realisme && o.realisme.support ? ' 🗼' : ''}</div>`).join('')}</details>` : ''}
     </div>`).join('')}
     <div class="actions-prop">${r.sites.length ? '<button id="zone-gpx">Télécharger les sites (GPX)</button>' : ''}<button id="zone-refaire">🖊 Dessiner une autre zone</button></div>
-    <p class="note">Bleu : déjà couvert · turquoise : apporté par les sites proposés · rouge : non couvert. Sous chaque site, d’autres emplacements possibles (1a, 1b…) qui apportent une surface proche, si le site proposé n’est pas utilisable (le site retenu tient compte aussi du support et de l’électricité). ${r.candidats} points hauts candidats (dans la zone ou à moins de 10 km). Antenne supposée à ${(r.parametres && r.parametres.hs) || 6} m au site, ${(r.parametres && r.parametres.ht) || 2} m au sol. La zone est gardée dans ce navigateur (Couverture › Plan › Zones enregistrées).</p>`;
+    <p class="note">Bleu : déjà couvert · turquoise : apporté par les sites proposés · rouge : non couvert. Sous chaque site, d’autres emplacements possibles (1a, 1b…) qui apportent une surface proche, si le site proposé n’est pas utilisable (le site retenu tient compte aussi du support et de l’électricité). ${r.candidats} points hauts candidats (dans la zone ou à moins de 10 km). Antenne supposée à ${(r.parametres && r.parametres.hs) || H_RPT} m au site, ${(r.parametres && r.parametres.ht) || 2} m au sol. La zone est gardée dans ce navigateur (Couverture › Plan › Zones enregistrées).</p>`;
   const gx = $('#zone-gpx'); if (gx) gx.onclick = () => telechargerGpx(`zone-${nom.replace(/[^\w-]+/g, '-')}.gpx`, r.sites.map((x) => ({ lat: x.lat, lon: x.lon, alt: x.alt, nom: `${x.rang} - ${nomSommet(x)}`, desc: `+${x.gainKm2} km², cumul ${x.totalPct} %` })));
   $('#zone-refaire').onclick = () => commencerZone();
   z.querySelectorAll('.ligne-alt').forEach((el) => (el.onclick = () => carte.flyTo([Number(el.dataset.lat), Number(el.dataset.lon)], 14)));
@@ -3833,13 +3835,13 @@ async function planDepartement() {
       <div class="meta-longue">${x.alt} m${x.commune ? ' · ' + esc(x.commune) : ''}</div>
       <div class="meta-longue">Accès : ${texteAcces(x.acces)}</div>
       <div class="meta-longue">Site : ${texteRealisme(x.realisme)}</div>
-      ${blocCoords(x.lat, x.lon, { alt: x.alt, couv: { nom: `${x.rang} · ${nomSommet(x)}`, h: (r.parametres && r.parametres.hs) || 6 } })}
+      ${blocCoords(x.lat, x.lon, { alt: x.alt, couv: { nom: `${x.rang} · ${nomSommet(x)}`, h: (r.parametres && r.parametres.hs) || H_RPT } })}
     </div>`).join('') || '<div class="vide">Aucun site ne répond à ces critères.</div>'}
     ${r.realiste && r.realismeEtat && !r.realismeEtat.pret ? '<div class="alerte attention">Données OpenStreetMap des sites (supports, zones protégées, habitations) pas encore chargées : le plan n’a pas pu en tenir compte. Réessayez dans quelques minutes.</div>' : ''}
     <div class="actions-prop"><button id="plan-gpx">Télécharger les sites (GPX)</button>${r.sites.length >= 2 && r.sites.length <= 10 ? '<button id="plan-couv">Couverture détaillée (marges)</button>' : ''}</div>
     <p class="note">Bleu : déjà couvert par le réseau · turquoise : apporté par les nouveaux sites · rouge : reste non couvert. Chaque site est choisi pour couvrir le plus de surface encore non desservie. ${r.candidats} points hauts candidats.${r.parametres ? ` Antennes ${r.parametres.hs} m, ${esc(nazwaPresetu(r.parametres.preset))}, marge ${r.parametres.margeSecurite} dB + ${r.parametres.env} dB de pertes d’environnement.` : ''}</p>`;
   $('#plan-gpx').onclick = () => telechargerGpx('plan-couverture.gpx', r.sites.map((x) => ({ lat: x.lat, lon: x.lon, alt: x.alt, nom: `${x.rang} - ${nomSommet(x)}`, desc: `+${x.gainKm2} km², cumul ${x.totalPct} %${x.acces ? ', accès ' + ACCES[x.acces.type].nom : ''}` })));
-  const pc = $('#plan-couv'); if (pc) pc.onclick = () => couvertureMulti(r.sites.map((x) => ({ lat: x.lat, lon: x.lon, h: (r.parametres && r.parametres.hs) || 6, nom: nomSommet(x) })));
+  const pc = $('#plan-couv'); if (pc) pc.onclick = () => couvertureMulti(r.sites.map((x) => ({ lat: x.lat, lon: x.lon, h: (r.parametres && r.parametres.hs) || H_RPT, nom: nomSommet(x) })));
 }
 
 // ---- Sites routiers (webcams du Département et de la DIR Massif Central) ---------------------------------
@@ -3884,7 +3886,7 @@ async function evaluerRoutiers() {
       <div class="entete-prop">${x.nouveauKm2 > 0 && k < 15 ? `<span class="lettre">${k + 1}</span>` : ''}<b>${esc(x.nom)}</b><span class="marge">${x.nouveauKm2 > 0 ? '+' + x.nouveauKm2 + ' km² nouveaux' : 'déjà couvert'}</span></div>
       <div class="meta-longue">${esc(x.gestionnaire)} · ${esc(x.type)} · ${x.altitude || x.altMnt} m${x.dansDepartement ? '' : ' · hors du département'}</div>
       <div class="meta-longue">Un relais ici couvrirait ${x.couvertureKm2} km² ${x.nouveauKm2 > 0 ? `→ couverture totale <b>${fmt(x.apresPct, 1, ' %')}</b>` : ''} · relié par radio à ${x.liaisons}${x.liaisons >= 3 ? ' ou plus' : ''} relais${x.liaisons ? '' : ' (isolé)'}</div>
-      ${blocCoords(x.lat, x.lon, { alt: x.altitude || x.altMnt, couv: { nom: x.nom, h: r.h || 6 } })}
+      ${blocCoords(x.lat, x.lon, { alt: x.altitude || x.altMnt, couv: { nom: x.nom, h: r.h || H_RPT } })}
       <div class="actions-prop"><button class="mini" data-couv-routier="${k}">Couverture de ce site</button></div>
     </div>`).join('')}
     <p class="note">Source : carte publique ${esc(r.source || 'inforoute43.fr')} (webcams du Département de la Haute-Loire et de la DIR Massif Central). Une installation sur ces sites demande l’accord du gestionnaire : ce classement peut appuyer la demande.</p>`;
@@ -3926,7 +3928,7 @@ async function optimiserRelais(rayon, acces, recalculer) {
       <div class="meta-longue">Gagne ${p.nouveauKm2} km² jamais couverts, perd ${p.perduKm2} km² que lui seul couvre aujourd’hui → couverture totale <b>${fmt(p.apresPct, 1, ' %')}</b> · reste relié par radio à ${p.liaisons}${p.liaisons >= 3 ? ' ou plus' : ''} relais</div>
       <div class="meta-longue">Accès : ${texteAcces(p.vers.acces)}</div>
       <div class="meta-longue">Site : ${texteRealisme(p.vers.realisme)}</div>
-      ${blocCoords(p.vers.lat, p.vers.lon, { alt: p.vers.alt, couv: { nom: `${p.nom} → ${nomSommet(p.vers)}`, h: p.hauteur || 6 } })}
+      ${blocCoords(p.vers.lat, p.vers.lon, { alt: p.vers.alt, couv: { nom: `${p.nom} → ${nomSommet(p.vers)}`, h: p.hauteur || H_RPT } })}
       <div class="actions-prop"><button class="mini" data-voir-dep="${k}">Voir gagné / perdu sur la carte</button></div>
     </div>`).join('') : '<div class="vide">Aucun déplacement intéressant (au moins 10 km² de gain net, contact radio conservé) : vos relais sont déjà bien placés dans ce rayon.</div>'}
     <h3>Apport propre de chaque relais</h3>
@@ -3979,12 +3981,12 @@ async function planBudget(o) {
       <div class="meta-longue">${x.alt} m${x.commune ? ' · ' + esc(x.commune) : ''} · alimentation ${x.alimentation}</div>
       <div class="meta-longue">Accès : ${texteAcces(x.acces)}</div>
       <div class="meta-longue">Site : ${texteRealisme(x.realisme)}</div>
-      ${blocCoords(x.lat, x.lon, { alt: x.alt, couv: { nom: `${x.rang} · ${nomSommet(x)}`, h: 6 } })}
+      ${blocCoords(x.lat, x.lon, { alt: x.alt, couv: { nom: `${x.rang} · ${nomSommet(x)}`, h: H_RPT } })}
     </div>`).join('') || '<div class="vide">Aucun site ne répond à ces critères.</div>'}
     <div class="actions-prop"><button id="budget-gpx">Télécharger les sites (GPX)</button>${r.sites.length >= 2 ? '<button id="budget-couv">Couverture détaillée</button>' : ''}</div>
     <p class="note">Ordre de pose conseillé : chaque relais est celui qui apporte le plus de surface nouvelle${r.realiste ? ' (sites en zone protégée écartés, préférence aux châteaux d’eau, pylônes et au secteur proche)' : ''}. Habitants : population des communes dont le bourg passe en zone couverte (${pop.communes} communes, ${pop.totale.toLocaleString('fr-FR')} habitants). Coût : relais ${r.couts.secteur} € (secteur) ou ${r.couts.solaire} € (solaire), + ${r.couts.mat} € de mât s’il n’y a pas de support existant ; hors main-d’œuvre et convention avec le propriétaire.</p>`;
   $('#budget-gpx').onclick = () => telechargerGpx('plan-budget.gpx', r.sites.map((x) => ({ lat: x.lat, lon: x.lon, alt: x.alt, nom: `${x.rang} - ${nomSommet(x)}`, desc: `+${x.gainKm2} km², +${x.habitantsGagnes} hab., ${x.alimentation}, ~${x.cout} €` })));
-  const bc = $('#budget-couv'); if (bc) bc.onclick = () => couvertureMulti(r.sites.map((x) => ({ lat: x.lat, lon: x.lon, h: (r.parametres && r.parametres.hs) || 6, nom: nomSommet(x) })));
+  const bc = $('#budget-couv'); if (bc) bc.onclick = () => couvertureMulti(r.sites.map((x) => ({ lat: x.lat, lon: x.lon, h: (r.parametres && r.parametres.hs) || H_RPT, nom: nomSommet(x) })));
 }
 
 // Département étudié (relief, points hauts, plan) : celui de la carte ou n'importe quel autre
@@ -4036,7 +4038,7 @@ async function rendreSites() {
       <div class="parametres compact">
         <label>Objectif (%) <input id="plan-objectif" type="number" min="10" max="100" step="1" value="95"></label>
         <label>Sites au plus <input id="plan-max" type="number" min="1" max="40" step="1" value="15"></label>
-        <label title="Hauteur de l’antenne des relais proposés, au-dessus du sol (zone dessinée)">Antenne (m au-dessus du sol) <input id="plan-hs" type="number" min="1" max="60" step="0.5" value="6"></label>
+        <label title="Hauteur de l’antenne des relais proposés, au-dessus du sol (zone dessinée)">Antenne (m au-dessus du sol) <input id="plan-hs" type="number" min="1" max="60" step="0.5" value="${H_RPT}"></label>
         <label>Accès exigé <select id="plan-acces"><option value="voiture">🚗 En voiture</option><option value="4x4">🚙 En 4×4 ou voiture</option><option value="pied">🥾 À pied ou mieux</option><option value="tous">Tous les points hauts</option></select></label>
       </div>
       <label class="case"><input type="checkbox" id="plan-reseau" checked> En complément du réseau actuel</label>
@@ -4084,7 +4086,7 @@ async function rendreSites() {
     </div>
     <h3>Réglages des calculs</h3>
     <div class="parametres compact">
-      <label>Antenne des sites (m) <input id="relief-hs" type="number" min="1" max="60" step="1" value="${c ? c.parametres.hs : 6}"></label>
+      <label>Antenne des sites (m) <input id="relief-hs" type="number" min="1" max="60" step="1" value="${c ? c.parametres.hs : H_RPT}"></label>
       <label>Antenne à couvrir (m) <input id="relief-ht" type="number" min="0.5" max="20" step="0.5" value="${c ? c.parametres.ht : 2}"></label>
       <label>Accès aux sites <select id="filtre-acces">
         <option value="tous">Tous les points hauts</option>
@@ -4186,7 +4188,7 @@ function choisirPointRelier(latlng) {
   relierPoints(a, p);
 }
 async function relierPoints(a, b, opts = {}) {
-  const hs = $('#relief-hs') ? $('#relief-hs').value : 6;
+  const hs = $('#relief-hs') ? $('#relief-hs').value : H_RPT;
   const hA = opts.hA ?? 2, hB = opts.hB ?? 2;
   const acces = opts.acces || etat.filtreAcces || 'tous';
   $('#fiche').hidden = false;
@@ -4242,7 +4244,7 @@ async function relierPoints(a, b, opts = {}) {
       <div class="proposition etape-relier ${c.type}" data-etape="${k}" data-lat="${c.lat}" data-lon="${c.lon}">
         <div class="entete-prop"><span class="lettre">${k === 0 ? 'A' : k === r.chemin.length - 1 ? 'B' : k}</span><b>${esc(c.nom || nomSommet(c))}</b><span class="marge">${titre}</span></div>
         <div class="meta-longue">${c.alt} m${c.commune ? ' · ' + esc(c.commune) : ''} · antenne ${c.hauteur} m${c.type === 'nouveau' ? ` · Accès : ${texteAcces(c.acces)}` : ''}</div>
-        ${c.type === 'nouveau' ? blocCoords(c.lat, c.lon, { alt: c.alt, couv: { nom: c.nom || nomSommet(c), h: c.hauteur || 6 } }) : ''}
+        ${c.type === 'nouveau' ? blocCoords(c.lat, c.lon, { alt: c.alt, couv: { nom: c.nom || nomSommet(c), h: c.hauteur || H_RPT } }) : ''}
         ${alt && alt.options.length ? `<details class="alt-relier"><summary>Autres emplacements possibles (${alt.options.length})</summary>${alt.options.map((o, j) => `<div class="ligne-alt" data-lat="${o.lat}" data-lon="${o.lon}"><b class="repere-alt">${k}${String.fromCharCode(97 + j)}</b> ${esc(o.nom || nomSommet(o))} · ${o.alt} m${o.commune ? ' · ' + esc(o.commune) : ''} · marge mini ${fmt(o.margeMin, 1, ' dB')} ${o.acces ? ACCES[o.acces.type].icone : ''}</div>`).join('')}</details>` : ''}
       </div>`;
   };
@@ -4272,7 +4274,7 @@ async function relierPoints(a, b, opts = {}) {
 }
 
 async function couvrirPoint(latlng) {
-  const hs = $('#relief-hs') ? $('#relief-hs').value : 6, ht = $('#relief-ht') ? $('#relief-ht').value : 2;
+  const hs = $('#relief-hs') ? $('#relief-hs').value : H_RPT, ht = $('#relief-ht') ? $('#relief-ht').value : 2;
   if (etat.coucheCouvrir) etat.coucheCouvrir.remove();
   const g = L.layerGroup().addTo(carte);
   etat.coucheCouvrir = g;
@@ -4334,7 +4336,7 @@ function ajouterCible(latlng) {
   couvrirPoints(etat.ciblesMulti);
 }
 async function couvrirPoints(cibles) {
-  const hs = $('#relief-hs') ? $('#relief-hs').value : 6, ht = $('#relief-ht') ? $('#relief-ht').value : 2;
+  const hs = $('#relief-hs') ? $('#relief-hs').value : H_RPT, ht = $('#relief-ht') ? $('#relief-ht').value : 2;
   if (etat.coucheCouvrir) etat.coucheCouvrir.remove();
   const g = L.layerGroup().addTo(carte);
   etat.coucheCouvrir = g;
@@ -4372,7 +4374,7 @@ async function couvrirPoints(cibles) {
       <div class="points-couverts">${ligneLiaisons(p)}</div>
       <div class="meta-longue">Accès : ${texteAcces(p.acces)}</div>
       <div class="meta-longue">${p.raccord ? `Raccord au réseau : <b>${esc(p.raccord.nom)}</b> à ${fmt(p.raccord.distanceKm, 1, ' km')}, marge <span style="color:${couleurMarge(p.raccord.marge)}">${fmt(p.raccord.marge, 1, ' dB')}</span>` : '<span style="color:var(--critique)">Aucun relais existant joignable depuis ce site</span>'}</div>
-      ${blocCoords(p.lat, p.lon, { alt: p.alt, couv: { nom: nomSommet(p), h: 6 } })}
+      ${blocCoords(p.lat, p.lon, { alt: p.alt, couv: { nom: nomSommet(p), h: H_RPT } })}
     </div>`;
   const listeCibles = r.cibles.map((c, i) => `<div class="ligne-cible"><span class="cible-multi petit"><span>${i + 1}</span></span><span class="mono">${c.lat.toFixed(5)}, ${c.lon.toFixed(5)}</span>${c.alt != null ? ` · ${c.alt} m` : ''}${cibles.length > 2 ? `<button class="mini" data-retirer="${i}" title="Retirer ce point">✕</button>` : ''}</div>`).join('');
   $('#fiche-contenu').innerHTML = `<h2>Couvrir ${r.cibles.length} points avec un seul site</h2>
@@ -4558,7 +4560,7 @@ function placerLieu(l) {
     const a = ev.target.closest('button[data-a]');
     if (!a) return;
     carte.closePopup();
-    if (a.dataset.a === 'ici') couvertureIci(ll, Number($('#relief-hs') ? $('#relief-hs').value : 6) || 6);
+    if (a.dataset.a === 'ici') couvertureIci(ll, Number($('#relief-hs') ? $('#relief-hs').value : H_RPT) || H_RPT);
     else if (a.dataset.a === 'couvrir') couvrirPoint(ll);
     else ouvrirFiche(l.num);
   };

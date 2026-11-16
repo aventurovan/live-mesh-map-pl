@@ -694,7 +694,7 @@ app.get('/api/relief/couverture-multi', (req, res) => {
 // Couverture actuelle du réseau (relais et passerelles détectés) : ?reseau=meshcore pour les répéteurs MeshCore
 function couvertureReseauCachee(RR, o, reseauCle) {
   const versionFiches = Object.values(installations.toutes()).reduce((m, f) => Math.max(m, f.maj || 0), 0);
-  const cle = JSON.stringify(['reseau', RR.code, reseauCle, o.hn || 6, Math.floor(Date.now() / 600000), (RR.calibration() || {}).date, versionFiches]);
+  const cle = JSON.stringify(['reseau', RR.code, reseauCle, o.hn || 10, Math.floor(Date.now() / 600000), (RR.calibration() || {}).date, versionFiches]);
   let r = cacheCouverture.get(cle);
   if (!r) {
     r = RR.couvertureReseau(o);
@@ -710,7 +710,7 @@ app.get('/api/relief/couverture-reseau', (req, res) => {
   if (!RR.pret()) return res.status(503).json({ erreur: 'Le modèle de terrain est en cours de chargement' });
   const o = optsRelief(req.query);
   if (req.query.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
-  if (req.query.hn) o.hn = Math.min(Math.max(Number(req.query.hn) || 6, 0.5), 60);
+  if (req.query.hn) o.hn = Math.min(Math.max(Number(req.query.hn) || 10, 0.5), 60);
   // La calibration (pertes d'environnement) fait partie de la clé : un calcul fait avant elle serait trop optimiste
   let r;
   try { r = couvertureReseauCachee(RR, o, req.query.reseau || 'mt'); } catch (e) { return res.status(503).json({ erreur: e.message }); }
@@ -756,7 +756,7 @@ const evaluationsRoutiers = new Map();
 app.get('/api/relief/sites-routiers', async (req, res) => {
   const RR = R(req);
   if (!RR.pret()) return res.status(503).json({ erreur: 'Le modèle de terrain est en cours de chargement' });
-  const h = Math.min(Math.max(Number(req.query.h) || 6, 2), 30);
+  const h = Math.min(Math.max(Number(req.query.h) || 10, 2), 30);
   const cle = JSON.stringify([RR.code, h, (RR.classement() || {}).date, Math.floor(Date.now() / 3600000)]);
   let o = evaluationsRoutiers.get(cle);
   if (!o) {
@@ -800,11 +800,11 @@ app.post('/api/relief/simulation', async (req, res) => {
   const b = req.body || {};
   const o = optsRelief(req.query);
   if (req.query.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
-  if (b.hn) o.hn = Math.min(Math.max(Number(b.hn) || 6, 0.5), 60);
+  if (b.hn) o.hn = Math.min(Math.max(Number(b.hn) || 10, 0.5), 60);
   let villes = [];
   try { villes = await villesDepartement(RR.code); } catch (e) { journal('[Simulation] villes :', e.message); }
   try {
-    const r = RR.simuler({ retirer: Array.isArray(b.retirer) ? b.retirer.slice(0, 50) : [], ajouter: Array.isArray(b.ajouter) ? b.ajouter.slice(0, 10).map((a) => ({ lat: Number(a.lat), lon: Number(a.lon), h: a.h != null ? Math.min(Math.max(Number(a.h) || 6, 0.5), 60) : undefined, nom: a.nom ? String(a.nom).slice(0, 60) : undefined })) : [], villes }, o);
+    const r = RR.simuler({ retirer: Array.isArray(b.retirer) ? b.retirer.slice(0, 50) : [], ajouter: Array.isArray(b.ajouter) ? b.ajouter.slice(0, 10).map((a) => ({ lat: Number(a.lat), lon: Number(a.lon), h: a.h != null ? Math.min(Math.max(Number(a.h) || 10, 0.5), 60) : undefined, nom: a.nom ? String(a.nom).slice(0, 60) : undefined })) : [], villes }, o);
     const id = crypto.randomBytes(6).toString('hex');
     cacheCouverture.set(id, { image: r.image });
     if (cacheCouverture.size > 60) cacheCouverture.delete(cacheCouverture.keys().next().value);
@@ -2050,7 +2050,7 @@ app.get('/api/relief/walidacja', async (req, res) => {
     }
     if (!wiersz || wiersz.lat == null) return res.status(404).json({ erreur: 'Repeater bez pozycji albo nieznany (ani na mapie, ani w Mapperze)' });
     const nb = (v, d) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? d : Number(v));
-    const opts = { preset: 'MESHCORE_FR', hs: nb(req.query.hs, 6), ht: nb(req.query.ht, 2), ptx: nb(req.query.ptx, 22), ga: nb(req.query.ga, 5), gb: nb(req.query.gb, 2.15), pertes: nb(req.query.pertes, 0), rayonKm: nb(req.query.rayon, 40) };
+    const opts = { preset: 'MESHCORE_FR', hs: nb(req.query.hs, 10), ht: nb(req.query.ht, 2), ptx: nb(req.query.ptx, 22), ga: nb(req.query.ga, 5), gb: nb(req.query.gb, 2.15), pertes: nb(req.query.pertes, 0), rayonKm: nb(req.query.rayon, 40) };
     const P = relief.parametry(opts);
     const site = { lat: wiersz.lat, lon: wiersz.lon };
     const pref = String(wiersz.cle).slice(0, 16).toLowerCase();
