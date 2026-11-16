@@ -8489,7 +8489,7 @@ function fichaSf8(n) {
     <p class="note">Zasięg liczymy dla radia <b>SF6</b> (sieć Południe): jak daleko sięgałby repeater postawiony w tym miejscu.</p>
     <div class="actions-prop">
       <button id="sf8-couv" class="principal">Zasięg z ukształtowania terenu</button>
-      <button id="sf8-couv-rpt" title="Gdzie ten punkt usłyszy inny repeater na maszcie 10 m (do 100 km) + linie do repeaterów SF6 i SF8 w zasięgu">Zasięg do repeaterów</button>
+      <button id="sf8-couv-rpt" title="Gdzie ten punkt usłyszy inny repeater na maszcie 10 m (do 150 km) + linie do repeaterów SF6 i SF8 w zasięgu">Zasięg do repeaterów</button>
       <label class="champ-mini">antena <input id="sf8-h" type="number" min="1" max="80" step="1" value="${H_RPT}"> m</label>
     </div>`;
   const h = () => Number($('#sf8-h').value) || H_RPT;
@@ -8499,9 +8499,9 @@ function fichaSf8(n) {
 
 // Repeatery SF6 i SF8 w zasięgu radiowym (łącze RPT ↔ RPT, radio SF6): lista w karcie + przełączniki „Zasięg” / „Linie”,
 // kliknięcie pozycji pokazuje tylko jedno łącze
-const WR = { p: null, hs: 10, lista: [], g: null, linie: null, zasieg: true, pokazLinie: false, tylkoLos: false, wybor: null };
+const WR = { p: null, hs: 10, lista: [], g: null, obraz: null, linie: null, zasieg: true, pokazLinie: false, tylkoLos: false, wybor: null };
 async function dorysujWidoczneRpt(p, hs, g) {
-  Object.assign(WR, { p, hs, g, lista: [], wybor: null, zasieg: true, pokazLinie: false });
+  Object.assign(WR, { p, hs, g, obraz: null, lista: [], wybor: null, zasieg: true, pokazLinie: false });
   let r;
   try { r = await api(`/api/relief/widoczne-rpt?lat=${p.lat}&lon=${p.lon}&h=${hs}`); } catch (e) { panelWidoczne(e.message); return; }
   if (etat.coucheCouverture !== g) return;
@@ -8511,7 +8511,9 @@ async function dorysujWidoczneRpt(p, hs, g) {
 }
 function rysujWidoczne() {
   if (!WR.g) return;
-  WR.g.eachLayer((l) => { if (l instanceof L.ImageOverlay) l.setOpacity(WR.zasieg ? 0.75 : 0); });
+  // obraz zasięgu: zdejmujemy / dokładamy warstwę (przezroczystość nadpisuje CSS motywu)
+  if (!WR.obraz) WR.g.eachLayer((l) => { if (l instanceof L.ImageOverlay) WR.obraz = l; });
+  if (WR.obraz) { if (WR.zasieg && !WR.g.hasLayer(WR.obraz)) WR.g.addLayer(WR.obraz); else if (!WR.zasieg && WR.g.hasLayer(WR.obraz)) WR.g.removeLayer(WR.obraz); }
   if (WR.linie) { WR.linie.remove(); WR.linie = null; }
   const pokaz = WR.lista.map((c, i) => ({ c, i })).filter(({ c, i }) => (WR.wybor != null ? i === WR.wybor : WR.pokazLinie && (!WR.tylkoLos || c.los)));
   if (!pokaz.length) return;

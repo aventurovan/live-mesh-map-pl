@@ -1680,7 +1680,7 @@ async function mcOuvrirFiche(cle, ongletInitial) {
         ${etat.admin && n.role !== 'repeteur' && !(mc.etat && mc.etat.companion && mc.etat.companion.cle === n.cle) ? '<button id="mc-ecrire">✉️ Message direct</button>' : ''}
         ${etat.admin && mc.etat && mc.etat.companion && mc.etat.companion.connecte && mc.etat.companion.cle !== n.cle ? '<button id="mc-tester" title="Découverte du chemin aller et retour depuis le companion de la carte">Tester la liaison</button>' : ''}
         <button id="mc-qr" title="QR code à scanner dans l’appli MeshCore pour ajouter ce contact">🔳 QR code</button>
-        ${n.lat != null ? `<button id="mc-couv">Couverture selon le relief</button>${n.infrastructure ? '<button id="mc-couv-rpt" title="Gdzie ten repeater usłyszy inny repeater na maszcie 10 m (do 100 km)">Zasięg do repeaterów</button>' : ''}<label class="champ-mini">antenne <input id="mc-h" type="number" min="0.5" max="80" step="0.5" value="${n.infrastructure ? 10 : 2}"> m</label>` : ''}
+        ${n.lat != null ? `<button id="mc-couv">Couverture selon le relief</button>${n.infrastructure ? '<button id="mc-couv-rpt" title="Gdzie ten repeater usłyszy inny repeater na maszcie 10 m (do 150 km)">Zasięg do repeaterów</button>' : ''}<label class="champ-mini">antenne <input id="mc-h" type="number" min="0.5" max="80" step="0.5" value="${n.infrastructure ? 10 : 2}"> m</label>` : ''}
       </div>
       <div id="mc-test-zone">${d.chemin ? mcHtmlChemin(d.chemin, n) : ''}</div>
       ${!BEZ_COMPANIONA && etat.membre && mc.etat && mc.etat.companion && mc.etat.companion.cle !== n.cle ? '<div id="mc-chemin" class="bloc-chemin"><h4>🧭 Chemin depuis le companion</h4><div class="vide">…</div></div>' : ''}

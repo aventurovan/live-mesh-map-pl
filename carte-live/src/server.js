@@ -666,7 +666,7 @@ app.get('/api/relief/couverture', (req, res) => {
   if (!RR.pret()) return res.status(503).json({ erreur: `Relief de la zone ${RR.code || ''} en cours de chargement : réessayez dans quelques minutes` });
   const o = optsRelief(req.query);
   // PL: tryb=rpt → zasięg do innych repeaterów: odbiornik na maszcie 10 m z anteną 5 dBi, małe straty terenu, do 100 km
-  if (req.query.tryb === 'rpt' && RR.envRpt) { o.env = RR.envRpt(); o.ht = 10; o.gb = 5; o.rayonKm = 100; }
+  if (req.query.tryb === 'rpt' && RR.envRpt) { o.env = RR.envRpt(); o.ht = 10; o.gb = 5; o.rayonKm = 150; }
   const cle = JSON.stringify([RR.code, lat.toFixed(4), lon.toFixed(4), o, (RR.calibration() || {}).date]);
   let r = cacheCouverture.get(cle);
   if (!r) {

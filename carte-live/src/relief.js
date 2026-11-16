@@ -14,7 +14,8 @@ const K = 4 / 3;
 const FREQ = (Number(process.env.RADIO_FREQ_MHZ) || 869.525) * 1e6;
 // PL: łącza między przekaźnikami (anteny ≥ 5 m): straty terenu i promień
 const ENV_RPT_DOMYSLNE = Number(process.env.RELIEF_SRODOWISKO_RPT_DB ?? 6);
-const ZASIEG_RPT_M = (Number(process.env.RELIEF_ZASIEG_RPT_KM) || 100) * 1000;
+// 150 km: z wysokiego szczytu (ok. 1000 m) horyzont radiowy do masztu 10 m to ok. 140 km
+const ZASIEG_RPT_M = (Number(process.env.RELIEF_ZASIEG_RPT_KM) || 150) * 1000;
 let kalibracjaRpt = null;
 const SRODOWISKO_PL = process.env.RELIEF_SRODOWISKO_DB === '' ? NaN : Number(process.env.RELIEF_SRODOWISKO_DB ?? 33);
 const LAMBDA = 299792458 / FREQ;
