@@ -534,9 +534,10 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       const m = marges[i * nLon + j];
       const o = ((nLat - 1 - i) * nLon + j) * 4; // ligne 0 de l'image = nord
       let c = null;
-      if (m >= 10) c = [62, 230, 196, 150];
-      else if (m >= 0) c = [244, 211, 94, 135];
-      else if (m >= -8) c = [243, 154, 74, 38];
+      // PL: mocniejsze kolory, widoczne na jasnym i ciemnym podkładzie; najdalszy (graniczny) zasięg też wyraźny
+      if (m >= 10) c = [0, 196, 150, 200];
+      else if (m >= 0) c = [255, 196, 0, 185];
+      else if (m >= -8) c = [255, 88, 40, 160];
       if (m >= 0) { couvert++; if (masque[i * nLon + j]) couvertZone++; }
       if (c) { rgba[o] = c[0]; rgba[o + 1] = c[1]; rgba[o + 2] = c[2]; rgba[o + 3] = c[3]; }
     }
@@ -1084,9 +1085,10 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       const k = i * nLon + j, m = marges[k];
       const o = ((nLat - 1 - i) * nLon + j) * 4;
       let c = null;
-      if (m >= 10) c = [62, 230, 196, 150];
-      else if (m >= 0) c = [244, 211, 94, 135];
-      else if (m >= -8) c = [243, 154, 74, 38];
+      // PL: mocniejsze kolory, widoczne na jasnym i ciemnym podkładzie; najdalszy (graniczny) zasięg też wyraźny
+      if (m >= 10) c = [0, 196, 150, 200];
+      else if (m >= 0) c = [255, 196, 0, 185];
+      else if (m >= -8) c = [255, 88, 40, 160];
       if (m >= 0) { couvert++; if (masque[k]) { couvertZone++; if (nbCouvrants[k] === 1 && seulPar[k] >= 0) propre[seulPar[k]]++; } }
       if (c) { rgba[o] = c[0]; rgba[o + 1] = c[1]; rgba[o + 2] = c[2]; rgba[o + 3] = c[3]; }
     }
