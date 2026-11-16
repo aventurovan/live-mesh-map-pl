@@ -196,7 +196,7 @@ config.departement = { code: texte('DEPARTEMENT', '43'), nom: texte('ZONE_NOM', 
     } catch (err) { console.error(`[Config] ZONE_KONTUR=${nazwa}: ${err.message}`); }
   }
 }
-config.inscriptions = texte('INSCRIPTIONS', 'validation'); // fermees | validation | ouvertes
+config.inscriptions = texte('INSCRIPTIONS', 'fermees'); // PL: rejestracja wyłączona (konta zakłada admin) · fermees | validation | ouvertes
 config.fichierReglages = path.join(path.dirname(config.fichierBase), 'reglages.json');
 config.reglages = {};
 // Valeurs venues du .env (avant les réglages de la page d'administration, qui les remplacent) : pour savoir

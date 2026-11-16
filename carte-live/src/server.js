@@ -211,7 +211,12 @@ function pageVersionnee(fichier) {
       // brały nowy plik zaraz po każdej zmianie w repozytorium
       .replace(/((?:href|src)="\/(?!vendor\/)([\w.-]+\.(?:css|js)))"/g, (_, atr, plik) => {
         let v = VERSION;
-        try { v = require('crypto').createHash('sha1').update(fs.readFileSync(path.join(__dirname, '..', 'public', plik))).digest('hex').slice(0, 10); } catch { /* plik spoza public */ }
+        try {
+          const h = require('crypto').createHash('sha1').update(fs.readFileSync(path.join(__dirname, '..', 'public', plik)));
+          // langue.js pobiera i18n-*.json z tym samym ?v= : zmiana tłumaczeń też musi zmienić wersję
+          if (plik === 'langue.js') for (const f of fs.readdirSync(path.join(__dirname, '..', 'public')).filter((x) => /^i18n-.*\.json$/.test(x)).sort()) h.update(fs.readFileSync(path.join(__dirname, '..', 'public', f)));
+          v = h.digest('hex').slice(0, 10);
+        } catch { /* plik spoza public */ }
         return `${atr}?v=${v}"`;
       });
     pagesVersionnees.set(fichier, html);
