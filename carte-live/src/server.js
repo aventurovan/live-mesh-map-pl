@@ -2036,9 +2036,12 @@ const odlM = (a, b) => { const R = 6371000, r2 = Math.PI / 180, dl = (b.lat - a.
 app.get('/api/relief/walidacja', async (req, res) => {
   try {
     const cle = String(req.query.cle || '').toLowerCase().replace(/[^0-9a-f]/g, '');
-    if (cle.length < 8) return res.status(400).json({ erreur: 'Podaj klucz repeatera (cle)' });
-    // klucze w bazie bywają pisane wielkimi literami: porównanie bez względu na wielkość liter
-    const wiersz = reseauMc.q.noeud.get(cle) || reseauMc.q.noeud.get(cle.toUpperCase()) || (reseauMc.q.noeuds.all().find((n) => String(n.cle).toLowerCase().startsWith(cle)) || null);
+    const nazwa = String(req.query.nazwa || '').toLowerCase().trim();
+    if (cle.length < 8 && !nazwa) return res.status(400).json({ erreur: 'Podaj klucz (cle) albo nazwę (nazwa) repeatera' });
+    // klucze w bazie bywają pisane wielkimi literami: porównanie bez względu na wielkość liter; albo fragment nazwy
+    const wiersz = cle.length >= 8
+      ? (reseauMc.q.noeud.get(cle) || reseauMc.q.noeud.get(cle.toUpperCase()) || (reseauMc.q.noeuds.all().find((n) => String(n.cle).toLowerCase().startsWith(cle)) || null))
+      : (reseauMc.q.noeuds.all().find((n) => n.role === 'repeteur' && n.lat != null && String(n.nom || '').toLowerCase().includes(nazwa)) || null);
     if (!wiersz || wiersz.lat == null) return res.status(404).json({ erreur: 'Repeater bez pozycji albo nieznany' });
     if (!mapper.pts.length) await odswiezMapper();
     const nb = (v, d) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? d : Number(v));
