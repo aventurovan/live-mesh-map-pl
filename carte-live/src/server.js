@@ -3811,6 +3811,81 @@ const statystykiPl = config.meshcore.actif ? require('./statystyki-pl').creerSta
     return r && !r.vide ? r : null;
   },
 }) : null;
+// PL: „Namierz nadawcę”: pakiety nadawcy o danym prefiksie klucza (np. 29), pierwsze repeatery w ścieżkach
+// (kto usłyszał go bezpośrednio), szacowany rejon i znane węzły z tym prefiksem. ?prefiks=29&godz=6&typ=REQ
+app.get('/api/mc/namierz', (req, res) => {
+  try {
+    const pref = String(req.query.prefiks || '').toUpperCase().replace(/[^0-9A-F]/g, '');
+    if (pref.length < 2 || pref.length > 16) return res.status(400).json({ erreur: 'Podaj prefiks klucza nadawcy: co najmniej 2 znaki hex (np. 29)' });
+    const godz = Math.min(Math.max(Number(req.query.godz) || 6, 1), 168);
+    const typ = String(req.query.typ || '').toUpperCase().replace(/[^A-Z_]/g, '');
+    const od = Date.now() - godz * 3600000;
+    const db = stockage.db;
+    const p2 = pref.slice(0, 2);
+    let pak = db.prepare(`SELECT rowid, heure, type, route, de, de_prefixe, vers_prefixe, sauts FROM mc_paquets WHERE heure >= ? AND (de_prefixe = ? OR de LIKE ?) ${typ ? 'AND type = ?' : ''} ORDER BY heure`)
+      .all(...[od, p2, pref + '%', ...(typ ? [typ] : [])]);
+    if (pref.length > 2) pak = pak.filter((x) => !x.de || x.de.toUpperCase().startsWith(pref)); // dłuższy prefiks: tylko gdy znamy pełny klucz albo nie
+    const wezly = reseauMc.q.noeuds.all();
+    const mapa = new Map(wezly.map((n) => [n.cle, n]));
+    const rpt = wezly.filter((n) => n.lat != null && ['repeteur', 'salon'].includes(n.role));
+    const qRec = db.prepare('SELECT observateur, chemin, snr FROM mc_receptions WHERE paquet = ?');
+    const pierwsze = new Map(), bezposrednio = new Map(), typy = new Map(), odbiorcy = new Map();
+    for (const x of pak) {
+      typy.set(x.type, (typy.get(x.type) || 0) + 1);
+      if (x.vers_prefixe) odbiorcy.set(x.vers_prefixe, (odbiorcy.get(x.vers_prefixe) || 0) + 1);
+      const widziane = new Set();
+      for (const r of qRec.all(x.rowid)) {
+        let ch = []; try { ch = JSON.parse(r.chemin || '[]'); } catch { /* bez ścieżki */ }
+        if (Array.isArray(ch) && ch.length) {
+          const h = String(ch[0]).toUpperCase();
+          if (widziane.has('h' + h)) continue; widziane.add('h' + h);
+          const e = pierwsze.get(h) || { prefiks: h, nb: 0 }; e.nb++; pierwsze.set(h, e);
+        } else if (r.observateur) {
+          if (widziane.has('o' + r.observateur)) continue; widziane.add('o' + r.observateur);
+          const e = bezposrednio.get(r.observateur) || { cle: r.observateur, nb: 0, snr: [] }; e.nb++; if (r.snr != null) e.snr.push(r.snr); bezposrednio.set(r.observateur, e);
+        }
+      }
+    }
+    // pierwsze skoki → repeatery (jednoznaczne: pozycja; kilka kandydatów: lista nazw)
+    const punkty = [];
+    const pierwszeLista = [...pierwsze.values()].sort((a, b) => b.nb - a.nb).slice(0, 30).map((e) => {
+      const k = rpt.filter((n) => n.cle.toUpperCase().startsWith(e.prefiks));
+      const jeden = k.length === 1 ? k[0] : null;
+      if (jeden) punkty.push({ lat: jeden.lat, lon: jeden.lon, w: e.nb });
+      return { prefiks: e.prefiks, nb: e.nb, kandydaci: k.slice(0, 4).map((n) => ({ nazwa: n.nom || n.cle.slice(0, 8), cle: n.cle, lat: n.lat, lon: n.lon })) };
+    });
+    const bezLista = [...bezposrednio.values()].sort((a, b) => b.nb - a.nb).map((e) => {
+      const n = mapa.get(e.cle);
+      if (n && n.lat != null) punkty.push({ lat: n.lat, lon: n.lon, w: e.nb * 2 });
+      return { nazwa: (n && n.nom) || e.cle.slice(0, 8), cle: e.cle, nb: e.nb, snr: e.snr.length ? Math.round((e.snr.reduce((t, v) => t + v, 0) / e.snr.length) * 10) / 10 : null, lat: n ? n.lat : null, lon: n ? n.lon : null };
+    });
+    let rejon = null;
+    if (punkty.length) {
+      const W = punkty.reduce((t, x) => t + x.w, 0);
+      const c = { lat: punkty.reduce((t, x) => t + x.lat * x.w, 0) / W, lon: punkty.reduce((t, x) => t + x.lon * x.w, 0) / W };
+      const odl = (a, b) => { const r = Math.PI / 180, dl = (b.lat - a.lat) * r, dn = (b.lon - a.lon) * r; const q = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dn / 2) ** 2; return 2 * 6371 * Math.asin(Math.sqrt(q)); };
+      const promien = Math.max(3, Math.min(40, punkty.reduce((t, x) => t + odl(c, x) * x.w, 0) / W));
+      rejon = { lat: +c.lat.toFixed(5), lon: +c.lon.toFixed(5), promienKm: +promien.toFixed(1) };
+      for (const k of wezly) if (k.lat != null) k._d = odl(c, k);
+    }
+    const kandydaci = wezly.filter((n) => n.cle.toUpperCase().startsWith(pref))
+      .map((n) => ({ nazwa: n.nom || n.cle.slice(0, 8), cle: n.cle, rola: n.role, lat: n.lat, lon: n.lon, ostatnio: n.dernier_vu, odlKm: n._d != null ? Math.round(n._d * 10) / 10 : null }))
+      .sort((a, b) => (a.rola === 'repeteur') - (b.rola === 'repeteur') || (a.odlKm ?? 1e9) - (b.odlKm ?? 1e9)).slice(0, 25);
+    wezly.forEach((n) => delete n._d);
+    const czasy = pak.map((x) => x.heure);
+    const odstepy = czasy.slice(1).map((t, i) => t - czasy[i]).sort((a, b) => a - b);
+    res.json({
+      prefiks: pref, godz, typ: typ || null, pakiety: pak.length,
+      naGodzine: Math.round((pak.length / godz) * 10) / 10,
+      odstepMedianaS: odstepy.length ? Math.round(odstepy[Math.floor(odstepy.length / 2)] / 1000) : null,
+      pierwszy: czasy[0] || null, ostatni: czasy[czasy.length - 1] || null,
+      typy: [...typy.entries()].map(([t, nb]) => ({ typ: t, nb })).sort((a, b) => b.nb - a.nb),
+      odbiorcy: [...odbiorcy.entries()].map(([p, nb]) => ({ prefiks: p, nb, nazwy: wezly.filter((n) => n.cle.toUpperCase().startsWith(p)).slice(0, 3).map((n) => n.nom || n.cle.slice(0, 8)) })).sort((a, b) => b.nb - a.nb).slice(0, 15),
+      pierwszeSkoki: pierwszeLista, bezposrednio: bezLista, rejon, kandydaci,
+      flood: pak.filter((x) => /flood/i.test(x.route || '')).length,
+    });
+  } catch (e) { res.status(500).json({ erreur: e.message }); }
+});
 // PL: najdłuższe łącza i trasy (top 10) do warstwy na mapie: ?dni=1|7|30
 app.get('/api/mc/najdluzsze', (req, res) => { if (!statystykiPl) return res.json({ lacza: [], trasy: [] }); try { res.json(statystykiPl.najdluzsze(Number(req.query.dni) || 30)); } catch (e) { res.status(500).json({ erreur: e.message }); } });
 app.get('/api/export/statystyki-historia.json', exporter(() => (statystykiPl ? statystykiPl.historia() : { dni: [] }), 'application/json'));

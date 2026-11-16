@@ -1700,6 +1700,7 @@ const CATALOGUE_REGLAGES = [
   // Réglages de la carte (administrateur)
   ['Nom de la carte', 'Compte › Réglages', 'titre', 'admin', () => ouvrirDlg('reglages', '[name=titre]')],
   ['Département de la carte', 'Compte › Réglages', 'zone contour centrage relief', 'admin', () => ouvrirDlg('reglages', '[name=departement]')],
+  ['Namierz nadawcę', 'Narzędzia', 'namierz nadawca źródło request żądanie zalew pakietów prefiks lis', '', () => otworzNamierzanie()],
   ['Serveur MQTT (broker)', 'Compte › Réglages', 'mqtt url broker adresse serveur connexion', 'admin', () => ouvrirDlg('reglages', '[name=mqttUrl]')],
   ['Sujet racine MQTT', 'Compte › Réglages', 'mqtt topic racine msh', 'admin', () => ouvrirDlg('reglages', '[name=mqttRacine]')],
   ['Utilisateur et mot de passe MQTT', 'Compte › Réglages', 'mqtt identifiant login', 'admin', () => ouvrirDlg('reglages', '[name=mqttUtilisateur]')],
@@ -8578,4 +8579,87 @@ function panelWidoczne(blad) {
     if (WR.wybor != null) { const c = WR.lista[i]; carte.fitBounds(L.latLngBounds([[WR.p.lat, WR.p.lon], [c.lat, c.lon]]), { paddingTopLeft: [window.innerWidth > 900 ? 470 : 30, 80], paddingBottomRight: [window.innerWidth > 900 ? 430 : 30, 90], maxZoom: 12 }); }
   }));
 }
+
+// ---- PL: Namierz nadawcę (prefiks klucza → pierwsze repeatery w ścieżkach → rejon → kandydaci) ----
+const NAM = { prefiks: '', godz: 6, typ: 'REQ', warstwa: null, wynik: null };
+function otworzNamierzanie(prefiks) {
+  if (prefiks) NAM.prefiks = String(prefiks).toUpperCase();
+  const m = document.querySelector('.menu-outils'); if (m) m.open = false;
+  $('#fiche').hidden = false;
+  etat.selection = null;
+  panelNamierzania();
+  if (NAM.prefiks) szukajNadawcy();
+}
+function panelNamierzania(blad) {
+  const r = NAM.wynik;
+  const nazwaTypu = (t) => (typeof MC_TYPES !== 'undefined' && MC_TYPES[t] ? t : t);
+  let wynik = '';
+  if (blad) wynik = `<div class="vide">${esc(blad)}</div>`;
+  else if (r) {
+    const godz = (t) => (t ? new Date(t).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : '–');
+    wynik = r.pakiety ? `
+      <div class="grille">
+        <div class="mesure"><span>Pakiety</span><b>${fmt(r.pakiety, 0)}</b></div>
+        <div class="mesure"><span>Na godzinę</span><b>${fmt(r.naGodzine, 1)}</b></div>
+        <div class="mesure"><span>Co ile (mediana)</span><b>${r.odstepMedianaS != null ? r.odstepMedianaS + ' s' : '–'}</b></div>
+      </div>
+      <div class="note">od ${godz(r.pierwszy)} do ${godz(r.ostatni)} · flood: ${fmt(r.flood, 0)} z ${fmt(r.pakiety, 0)} · typy: ${r.typy.map((t) => `${esc(t.typ)} ${t.nb}`).join(', ')}</div>
+      ${r.rejon ? `<div class="alerte info-lecture">Szacowany rejon nadawcy: <b>${fmt(r.rejon.lat, 4)}, ${fmt(r.rejon.lon, 4)}</b> (± ${fmt(r.rejon.promienKm, 0)} km). Na mapie: pomarańczowe koła = repeatery, które słyszały go bezpośrednio (wielkość = liczba pakietów), przerywany okrąg = rejon.</div>` : '<div class="note">Żaden pierwszy repeater nie ma pozycji: rejonu nie da się oszacować.</div>'}
+      <h3>Pierwsze repeatery w ścieżkach</h3>
+      <div class="rek-lista">${r.pierwszeSkoki.map((p) => `<div class="rek-wiersz nam-wiersz"><span class="rek-nr mono">${esc(p.prefiks)}</span><span class="rek-opis"><b>${p.kandydaci.length ? p.kandydaci.map((k) => esc(k.nazwa)).join(' / ') : 'nieznany repeater'}</b><small>${p.kandydaci.length > 1 ? 'prefiks pasuje do kilku repeaterów' : p.kandydaci.length ? 'usłyszał nadawcę bezpośrednio' : 'brak repeatera z pozycją o tym prefiksie'}</small></span><span class="rek-km">${fmt(p.nb, 0)}×</span></div>`).join('') || '<div class="vide">Brak — pakiety szły bez ścieżki</div>'}</div>
+      ${r.bezposrednio.length ? `<h3>Obserwatorzy, którzy słyszeli go bez pośredników</h3><div class="rek-lista">${r.bezposrednio.map((o) => `<div class="rek-wiersz nam-wiersz"><span class="rek-nr">OBS</span><span class="rek-opis"><b>${esc(o.nazwa)}</b><small>${o.snr != null ? 'średni SNR ' + fmt(o.snr, 1) + ' dB' : ''}</small></span><span class="rek-km">${fmt(o.nb, 0)}×</span></div>`).join('')}</div>` : ''}
+      <h3>Znane węzły z kluczem ${esc(r.prefiks)}…</h3>
+      <div class="rek-lista">${r.kandydaci.map((k) => `<button type="button" class="rek-wiersz" data-nam-cle="${esc(k.cle)}"><span class="rek-nr">${k.rola === 'repeteur' ? 'RPT' : k.rola === 'companion' ? 'CMP' : k.rola === 'salon' ? 'ROOM' : '?'}</span><span class="rek-opis"><b>${esc(k.nazwa)}</b><small>${esc(k.cle.slice(0, 12))}… · ${k.ostatnio ? 'widziany ' + new Date(k.ostatnio).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'nigdy'}</small></span><span class="rek-km">${k.odlKm != null ? fmt(k.odlKm, 0) + ' km' : 'bez poz.'}</span></button>`).join('') || '<div class="vide">Mapa nie zna żadnego węzła z tym prefiksem (nadawca nie wysłał advertu albo nie słyszeli go obserwatorzy). Szukaj w rejonie na mapie.</div>'}</div>
+      ${r.odbiorcy.length ? `<h3>Do kogo wysyła</h3><div class="note">${r.odbiorcy.map((o) => `<span class="mono">${esc(o.prefiks)}</span> ${o.nb}×${o.nazwy.length ? ' (' + o.nazwy.map(esc).join(' / ') + ')' : ''}`).join(' · ')}</div>` : ''}
+    ` : '<div class="vide">Brak pakietów od tego nadawcy w wybranym okresie.</div>';
+  }
+  $('#fiche-contenu').innerHTML = `<div id="nam-panel">
+    <h2>Namierz nadawcę</h2>
+    <div class="ident">Podaj początek klucza nadawcy, np. <b>29</b> z „Żądanie 29 → C1” na liście pakietów.</div>
+    <form id="nam-form" class="rek-opcje">
+      <input id="nam-pref" class="mono" value="${esc(NAM.prefiks)}" placeholder="np. 29" maxlength="16" size="8" autocomplete="off" autocapitalize="characters">
+      <select id="nam-godz">${[1, 6, 24, 168].map((g) => `<option value="${g}" ${NAM.godz === g ? 'selected' : ''}>${g === 168 ? '7 dni' : g + ' h'}</option>`).join('')}</select>
+      <select id="nam-typ">${[['REQ', 'tylko żądania (REQ)'], ['', 'wszystkie pakiety']].map(([v, l]) => `<option value="${v}" ${NAM.typ === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button type="submit" class="principal">Szukaj</button>
+    </form>
+    ${wynik}
+  </div>`;
+  $('#nam-form').onsubmit = (e) => { e.preventDefault(); NAM.prefiks = $('#nam-pref').value.trim().toUpperCase(); NAM.godz = Number($('#nam-godz').value); NAM.typ = $('#nam-typ').value; szukajNadawcy(); };
+  $('#fiche-contenu').querySelectorAll('[data-nam-cle]').forEach((b) => (b.onclick = () => { if (typeof mcOuvrirFiche === 'function') mcOuvrirFiche(b.dataset.namCle); }));
+}
+async function szukajNadawcy() {
+  try { NAM.wynik = await api(`/api/mc/namierz?prefiks=${encodeURIComponent(NAM.prefiks)}&godz=${NAM.godz}&typ=${NAM.typ}`); } catch (e) { NAM.wynik = null; panelNamierzania(e.message); return; }
+  panelNamierzania();
+  rysujNamierzanie();
+}
+function rysujNamierzanie() {
+  if (NAM.warstwa) { NAM.warstwa.remove(); NAM.warstwa = null; }
+  const r = NAM.wynik; if (!r || !r.pakiety) return;
+  const g = L.layerGroup();
+  const max = Math.max(1, ...r.pierwszeSkoki.map((p) => p.nb), ...r.bezposrednio.map((o) => o.nb));
+  const pts = [];
+  for (const p of r.pierwszeSkoki) for (const k of p.kandydaci) {
+    if (k.lat == null) continue;
+    pts.push([k.lat, k.lon]);
+    L.circleMarker([k.lat, k.lon], { pane: 'traces', radius: 8 + 18 * Math.sqrt(p.nb / max), color: '#c2410c', weight: 2, fillColor: '#fb923c', fillOpacity: p.kandydaci.length > 1 ? 0.2 : 0.45, dashArray: p.kandydaci.length > 1 ? '4 4' : null })
+      .bindTooltip(`<b>${esc(k.nazwa)}</b> (${esc(p.prefiks)})<br>pierwszy repeater w ${p.nb} pakietach${p.kandydaci.length > 1 ? '<br><small>prefiks pasuje do kilku repeaterów</small>' : ''}`, { className: 'info' }).addTo(g);
+  }
+  for (const o of r.bezposrednio) {
+    if (o.lat == null) continue;
+    pts.push([o.lat, o.lon]);
+    L.circleMarker([o.lat, o.lon], { pane: 'traces', radius: 8 + 14 * Math.sqrt(o.nb / max), color: '#1d4ed8', weight: 2, fillColor: '#60a5fa', fillOpacity: 0.45 })
+      .bindTooltip(`<b>${esc(o.nazwa)}</b> (obserwator)<br>słyszał nadawcę bezpośrednio ${o.nb}×${o.snr != null ? ' · SNR ' + fmt(o.snr, 1) + ' dB' : ''}`, { className: 'info' }).addTo(g);
+  }
+  if (r.rejon) {
+    L.circle([r.rejon.lat, r.rejon.lon], { pane: 'traces', radius: r.rejon.promienKm * 1000, color: '#dc2626', weight: 2, dashArray: '8 6', fill: false, interactive: false }).addTo(g);
+    L.marker([r.rejon.lat, r.rejon.lon], { pane: 'traces', icon: L.divIcon({ className: 'rek-et nam-et', html: `🎯 ${esc(r.prefiks)}…`, iconSize: null }) }).addTo(g);
+    pts.push([r.rejon.lat, r.rejon.lon]);
+  }
+  for (const k of r.kandydaci) if (k.lat != null && k.rola !== 'repeteur') L.marker([k.lat, k.lon], { pane: 'traces', icon: L.divIcon({ className: 'rek-et nam-kand', html: esc(k.nazwa), iconSize: null }) }).on('click', () => mcOuvrirFiche(k.cle)).addTo(g);
+  NAM.warstwa = g.addTo(carte);
+  if (pts.length) carte.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [window.innerWidth > 900 ? 470 : 30, 80], paddingBottomRight: [window.innerWidth > 900 ? 430 : 30, 90], maxZoom: 12 });
+  const be = $('#btn-effacer'); if (be) { be.hidden = false; be.addEventListener('click', () => { if (NAM.warstwa) { NAM.warstwa.remove(); NAM.warstwa = null; } }, { once: true }); }
+}
+// addEventListener: ogólny onclick przycisków .bascule nadpisałby onclick
+(() => { const podlacz = () => { const b = $('#outil-namierz'); if (b) b.addEventListener('click', (e) => { e.stopPropagation(); setTimeout(() => otworzNamierzanie(), 0); }); }; if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', podlacz); else podlacz(); })();
 

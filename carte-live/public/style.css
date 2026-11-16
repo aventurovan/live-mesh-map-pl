@@ -1717,4 +1717,10 @@ fieldset.mqtt2 { border: 1px solid rgba(127,127,127,.3); border-radius: 12px; pa
 fieldset.mqtt2 legend { font-weight: 800; padding: 0 6px; }
 /* PL: bez companiona i Meshtastic: bez „Podłącz węzeł” (Bluetooth / USB / Wi-Fi) */
 #outil-connecter { display: none !important; }
+/* PL: namierzanie nadawcy */
+#nam-panel h3 { margin: 14px 0 6px; font-size: 11.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--doux); }
+#nam-form input { width: 7em; text-transform: uppercase; }
+.nam-wiersz { cursor: default; }
+.nam-et { background: #dc2626; }
+.nam-kand { background: #1d4ed8; }
 
