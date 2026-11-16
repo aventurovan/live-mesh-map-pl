@@ -1171,7 +1171,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     };
     const coutNoeud = (n) => (n.type === 'nouveau' ? 100 : n.type === 'existant' ? 3 : 0);
     const coutBond = (l) => 1 + Math.max(0, 8 - l.marge) * 0.8 + l.distance / 20000; // préfère les bonds confortables
-    const MAX_NOUVEAUX = 4;
+    const MAX_NOUVEAUX = 8; // PL: do 8 nowych przekaźników na trasie
     const dist = new Array(noeuds.length).fill(Infinity), prec = new Array(noeuds.length).fill(-1), nb = new Array(noeuds.length).fill(0);
     const vu = new Uint8Array(noeuds.length);
     dist[0] = 0;

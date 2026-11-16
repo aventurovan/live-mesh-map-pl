@@ -3956,30 +3956,27 @@ async function planBudget(o) {
   $('#fiche').hidden = false;
   etat.selection = null;
   const z = $('#fiche-contenu');
-  z.innerHTML = '<h2>💶 Plan à budget</h2><div class="alerte info-lecture"><span class="sablier"></span> Recherche des meilleurs emplacements…</div>';
+  z.innerHTML = '<h2>Gdzie zamontować RPT</h2><div class="alerte info-lecture"><span class="sablier"></span> Recherche des meilleurs emplacements…</div>';
   let r;
   try { r = await api(`/api/relief/budget?n=${encodeURIComponent(o.n)}&acces=${encodeURIComponent(o.acces)}&secteur=${encodeURIComponent(o.secteur)}&solaire=${encodeURIComponent(o.solaire)}&mat=${encodeURIComponent(o.mat)}`); } catch (e) { z.innerHTML = `<h2>💶 Plan à budget</h2><div class="vide">${esc(e.message)}</div>`; return; }
   if (etat.coucheCouverture) etat.coucheCouverture.remove();
   const g = L.layerGroup();
   r.sites.forEach((x) => L.marker([x.lat, x.lon], { icon: L.divIcon({ className: 'relais-a-installer', html: `<div class="epingle"><b>${x.rang}</b></div>`, iconSize: [34, 44], iconAnchor: [17, 42] }), pane: 'traces', zIndexOffset: 900 })
-    .bindTooltip(`<b>${x.rang} · ${esc(nomSommet(x))}</b><br>+${x.gainKm2} km² · +${x.habitantsGagnes.toLocaleString('fr-FR')} hab.<br>${x.alimentation} · ≈ ${x.cout} €`, { className: 'info' }).addTo(g));
+    .bindTooltip(`<b>${x.rang} · ${esc(nomSommet(x))}</b><br>+${x.gainKm2} km² · ${x.alt} m n.p.m.`, { className: 'info' }).addTo(g));
   g.addTo(carte);
   etat.coucheCouverture = g;
   $('#btn-effacer').hidden = false;
   if (r.sites.length) carte.fitBounds(L.latLngBounds(r.sites.map((x) => [x.lat, x.lon])).pad(0.3), { maxZoom: 11 });
   const pop = r.population, pct = (v) => (pop.totale ? fmt((v / pop.totale) * 100, 1, ' %') : '–');
-  z.innerHTML = `<h2>💶 Plan à budget : ${r.sites.length} relais</h2>
+  z.innerHTML = `<h2>Gdzie zamontować RPT: ${r.sites.length}</h2>
     <div class="grille">
-      <div class="mesure"><span>Surface couverte</span><b>${fmt(r.departPct, 1, ' %')} → ${fmt(r.finalPct, 1, ' %')}</b></div>
-      <div class="mesure"><span>Habitants (bourg couvert)</span><b>${pct(pop.depart)} → ${pct(pop.finale)}</b></div>
-      <div class="mesure"><span>Coût estimé</span><b>≈ ${r.coutTotal.toLocaleString('fr-FR')} €</b></div>
+      <div class="mesure"><span>Pokrycie strefy</span><b>${fmt(r.departPct, 1, ' %')} → ${fmt(r.finalPct, 1, ' %')}</b></div>
     </div>
     ${r.sites.length < Number(r.n) ? `<div class="alerte attention">Seulement ${r.sites.length} site(s) utile(s) avec ces critères : les suivants n’apporteraient presque rien${r.filtreAcces !== 'tous' ? ' (ou élargissez l’accès exigé)' : ''}.</div>` : ''}
     ${r.sites.map((x) => `<div class="proposition etape-relier nouveau">
-      <div class="entete-prop"><span class="lettre">${x.rang}</span><b>${esc(nomSommet(x))}</b><span class="marge">≈ ${x.cout} € · cumul ${x.coutCumule} €</span></div>
-      <div class="meta-longue">+${x.gainKm2} km² (cumul ${fmt(x.totalPct, 1, ' %')}) · <b>+${x.habitantsGagnes.toLocaleString('fr-FR')} habitants</b>${x.nbCommunesGagnees ? ` dans ${x.nbCommunesGagnees} commune(s) : ${esc(x.communesGagnees.join(', '))}${x.nbCommunesGagnees > x.communesGagnees.length ? '…' : ''}` : ''}</div>
-      <div class="meta-longue">${x.alt} m${x.commune ? ' · ' + esc(x.commune) : ''} · alimentation ${x.alimentation}</div>
-      <div class="meta-longue">Accès : ${texteAcces(x.acces)}</div>
+      <div class="entete-prop"><span class="lettre">${x.rang}</span><b>${esc(nomSommet(x))}</b></div>
+      <div class="meta-longue">+${x.gainKm2} km² (cumul ${fmt(x.totalPct, 1, ' %')})</div>
+      <div class="meta-longue">${x.alt} m${x.commune ? ' · ' + esc(x.commune) : ''}</div>
       <div class="meta-longue">Site : ${texteRealisme(x.realisme)}</div>
       ${blocCoords(x.lat, x.lon, { alt: x.alt, couv: { nom: `${x.rang} · ${nomSommet(x)}`, h: H_RPT } })}
     </div>`).join('') || '<div class="vide">Aucun site ne répond à ces critères.</div>'}
@@ -4051,18 +4048,18 @@ async function rendreSites() {
         <button id="zone-suppr" class="mini" title="Oublier la zone choisie">🗑</button></div>
     </div>
     <div class="bloc-plan" id="bloc-budget">
-      <h3>💶 Plan à budget</h3>
-      <p class="note">« J’ai de quoi poser N relais : où les mettre ? » Gain de surface et d’habitants à chaque relais, coût estimé.</p>
+      <h3>Gdzie zamontować RPT</h3>
+      <p class="note">Ile przekaźników możesz postawić? Mapa wskaże punkty wysokie, które dodadzą najwięcej zasięgu do obecnej sieci (antena ${H_RPT} m).</p>
       <div class="parametres compact">
-        <label>Relais à poser <input id="budget-n" type="number" min="1" max="15" step="1" value="3"></label>
-        <label>Accès exigé <select id="budget-acces"><option value="voiture">🚗 En voiture</option><option value="4x4">🚙 En 4×4 ou voiture</option><option value="pied">🥾 À pied ou mieux</option><option value="tous">Tous les points hauts</option></select></label>
-        <label>Relais secteur (€) <input id="budget-secteur" type="number" min="0" step="10" value="120"></label>
-        <label>Relais solaire (€) <input id="budget-solaire" type="number" min="0" step="10" value="220"></label>
-        <label>Mât + fixations (€) <input id="budget-mat" type="number" min="0" step="10" value="90"></label>
+        <label>Liczba przekaźników <input id="budget-n" type="number" min="1" max="8" step="1" value="3"></label>
+        <label hidden>Accès exigé <select id="budget-acces"><option value="voiture">🚗 En voiture</option><option value="4x4">🚙 En 4×4 ou voiture</option><option value="pied">🥾 À pied ou mieux</option><option value="tous">Tous les points hauts</option></select></label>
+        <label hidden>Relais secteur (€) <input id="budget-secteur" type="number" min="0" step="10" value="120"></label>
+        <label hidden>Relais solaire (€) <input id="budget-solaire" type="number" min="0" step="10" value="220"></label>
+        <label hidden>Mât + fixations (€) <input id="budget-mat" type="number" min="0" step="10" value="90"></label>
       </div>
-      <div class="actions-prop"><button id="budget-calculer" class="principal">Où poser mes relais ?</button></div>
+      <div class="actions-prop"><button id="budget-calculer" class="principal">Gdzie zamontować?</button></div>
     </div>
-    <div class="bloc-plan" id="bloc-routiers">
+    <div class="bloc-plan" id="bloc-routiers" hidden>
       <h3>🛣️ Sites routiers (Département, DIR)</h3>
       <p class="note">Webcams et stations routières : souvent un mât, l’électricité, parfois une liaison réseau. Classement selon la surface qu’un relais y couvrirait en plus du réseau actuel, de quoi préparer une demande au Département ou à la DIR Massif Central.</p>
       <div class="actions-prop"><button id="routiers-evaluer" class="principal">Évaluer ces sites pour des relais</button></div>

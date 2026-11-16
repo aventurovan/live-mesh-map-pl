@@ -794,7 +794,7 @@ app.get('/api/relief/budget', async (req, res) => {
   const filtre = (DROGI_DOJAZDOWE ? ['voiture', '4x4', 'pied'] : []).includes(req.query.acces) ? req.query.acces : null;
   const couts = {};
   for (const k of ['secteur', 'solaire', 'mat']) if (req.query[k] !== undefined && Number.isFinite(Number(req.query[k]))) couts[k] = Math.min(Math.max(Number(req.query[k]), 0), 10000);
-  const r = RR.planBudget({ n: Number(req.query.n) || 3, acces: filtre, avecReseau: req.query.reseau !== '0', realiste: req.query.realiste !== '0', communes, couts });
+  const r = RR.planBudget({ n: Math.min(Math.max(Number(req.query.n) || 3, 1), 8), acces: filtre, avecReseau: req.query.reseau !== '0', realiste: req.query.realiste !== '0', communes, couts });
   if (!r) return res.status(503).json({ erreur: 'Le classement des sites est en cours de calcul, réessayez dans une minute' });
   res.json(r);
 });
