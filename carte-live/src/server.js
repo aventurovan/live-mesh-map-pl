@@ -2012,7 +2012,7 @@ async function odswiezMapper() {
         if (j.last > mapper.last) mapper.last = j.last;
         if (!j.more) break;
       }
-      try { const r = await pobierz('action=repeaters'); if (r && r.ok && Array.isArray(r.repeaters)) mapper.rep = Object.fromEntries(r.repeaters.map((x) => [String(x.id), String(x.name || '').slice(0, 40)])); } catch { /* nazwy opcjonalne */ }
+      try { const r = await pobierz('action=repeaters'); if (r && r.ok && Array.isArray(r.repeaters)) { mapper.rep = Object.fromEntries(r.repeaters.map((x) => [String(x.id), String(x.name || '').slice(0, 40)])); mapper.repPoz = r.repeaters.filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon)).map((x) => ({ id: String(x.id).toLowerCase(), nom: String(x.name || '').slice(0, 40), lat: x.lat, lon: x.lon })); } } catch { /* nazwy opcjonalne */ }
       mapper.ts = Date.now(); mapperBlad = null;
       try { ecrireSur(fMapper, JSON.stringify(mapper)); } catch { /* tylko do odczytu */ }
       if (nowe) journal(`[Mapper] +${nowe} pomiarów (razem ${mapper.pts.length})`);
@@ -2039,11 +2039,16 @@ app.get('/api/relief/walidacja', async (req, res) => {
     const nazwa = String(req.query.nazwa || '').toLowerCase().trim();
     if (cle.length < 8 && !nazwa) return res.status(400).json({ erreur: 'Podaj klucz (cle) albo nazwę (nazwa) repeatera' });
     // klucze w bazie bywają pisane wielkimi literami: porównanie bez względu na wielkość liter; albo fragment nazwy
-    const wiersz = cle.length >= 8
+    let wiersz = cle.length >= 8
       ? (reseauMc.q.noeud.get(cle) || reseauMc.q.noeud.get(cle.toUpperCase()) || (reseauMc.q.noeuds.all().find((n) => String(n.cle).toLowerCase().startsWith(cle)) || null))
       : (reseauMc.q.noeuds.all().find((n) => n.role === 'repeteur' && n.lat != null && String(n.nom || '').toLowerCase().includes(nazwa)) || null);
-    if (!wiersz || wiersz.lat == null) return res.status(404).json({ erreur: 'Repeater bez pozycji albo nieznany' });
-    if (!mapper.pts.length) await odswiezMapper();
+    if (!mapper.pts.length || !mapper.repPoz) await odswiezMapper();
+    // Repeatera nie ma na mapie (np. nie słychać jego advertów): pozycja i klucz z listy repeaterów Mappera
+    if (!wiersz || wiersz.lat == null) {
+      const m = (mapper.repPoz || []).find((x) => (cle.length >= 8 && (x.id.startsWith(cle) || cle.startsWith(x.id))) || (nazwa && x.nom.toLowerCase().includes(nazwa)));
+      if (m) wiersz = { cle: m.id, nom: m.nom + ' (pozycja z Mappera)', lat: m.lat, lon: m.lon };
+    }
+    if (!wiersz || wiersz.lat == null) return res.status(404).json({ erreur: 'Repeater bez pozycji albo nieznany (ani na mapie, ani w Mapperze)' });
     const nb = (v, d) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? d : Number(v));
     const opts = { preset: 'MESHCORE_FR', hs: nb(req.query.hs, 6), ht: nb(req.query.ht, 2), ptx: nb(req.query.ptx, 22), ga: nb(req.query.ga, 5), gb: nb(req.query.gb, 2.15), pertes: nb(req.query.pertes, 0), rayonKm: nb(req.query.rayon, 40) };
     const P = relief.parametry(opts);
