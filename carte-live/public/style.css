@@ -1693,13 +1693,14 @@ body:not(.theme-clair) .ligne-reglage .ic { background: rgba(255, 255, 255, .08)
 .rek-opis small { color: var(--doux); font-size: 11.5px; }
 .rek-km { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rek-szczegol { margin: 8px 0 4px; padding: 10px 12px; border-radius: 12px; background: var(--karta-1, rgba(255,255,255,.06)); font-size: 13px; line-height: 1.5; }
-.rek-hopy { list-style: none; margin: 8px 0 0; padding: 0; max-height: 300px; overflow: auto; counter-reset: h; }
+.rek-hopy { list-style: none; margin: 8px 0 0; padding: 0; counter-reset: h; } /* bez własnego suwaka: przewija się cały panel */
 .rek-hopy li { counter-increment: h; display: grid; grid-template-columns: 22px 1fr auto; gap: 2px 8px; align-items: center; padding: 3px 0; border-top: 1px solid rgba(127,127,127,.15); }
 .rek-hopy li::before { content: counter(h); font-size: 11px; font-weight: 800; color: #7c3aed; }
 .rek-hopy li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rek-hopy li small { color: var(--doux); }
 .rek-hopy li i { grid-column: 2 / 4; height: 3px; border-radius: 2px; background: #7c3aed; opacity: .7; }
 .rek-opcje .pilule { display: inline-flex; align-items: center; gap: 6px; }
-.rek-sciezka { display: flex; gap: 8px; align-items: center; margin: 8px 0 2px; }
-.rek-sciezka code { flex: 1 1 auto; min-width: 0; font-size: 11.5px; padding: 6px 8px; border-radius: 8px; background: rgba(127,127,127,.12); white-space: nowrap; overflow-x: auto; }
+.rek-sciezka { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 8px 0 2px; }
+.rek-sciezka code { display: block; width: 100%; box-sizing: border-box; font-size: 11.5px; line-height: 1.6; padding: 6px 8px; border-radius: 8px; background: rgba(127,127,127,.12); white-space: normal; word-break: break-word; overflow: visible; }
+.rek-sciezka .pilule { white-space: nowrap; }
 
