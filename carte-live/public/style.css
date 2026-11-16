@@ -1674,3 +1674,7 @@ body:not(.theme-clair) .ligne-reglage .ic { background: rgba(255, 255, 255, .08)
 .ligne-reglage b { font-family: var(--naglowki); font-size: 13.5px; }
 .ligne-reglage .chevron { font-size: 20px; opacity: .7; }
 .a-propos { font-size: 11.5px; line-height: 1.5; }
+/* PL: etykiety warstwy rekordów */
+.rek-et { background: #d97706; color: #fff; font: 700 11px/1 'Nunito Sans', sans-serif; padding: 3px 6px; border-radius: 9px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.35); transform: translate(-50%, -50%); width: max-content; }
+.rek-et.rek-trasa { background: #7c3aed; }
+

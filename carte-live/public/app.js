@@ -56,7 +56,7 @@ const etat = {
   coucheLiens: null,
   alertes: [],
   stats: null,
-  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: true, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false, mapper: false },
+  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: true, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false, mapper: false, rekordy: false },
   filtresPorts: new Set(Object.keys(PORTS)),
   selection: null,
   trajet: null,
@@ -3118,7 +3118,7 @@ function dessinerSommets() {
 async function voirCouvertureSite(p, titre, hauteur, opts = {}) {
   const hs = hauteur ?? ($('#relief-hs') ? $('#relief-hs').value : H_RPT);
   let r;
-  try { r = await api(`/api/relief/couverture?lat=${p.lat}&lon=${p.lon}&hs=${hs}${opts.preset ? '&preset=' + opts.preset : ''}`); } catch (e) { if (opts.erreurs) return { erreur: e.message }; alert(e.message); return; }
+  try { r = await api(`/api/relief/couverture?lat=${p.lat}&lon=${p.lon}&hs=${hs}${opts.preset ? '&preset=' + opts.preset : ''}${opts.tryb ? '&tryb=' + opts.tryb : ''}`); } catch (e) { if (opts.erreurs) return { erreur: e.message }; alert(e.message); return; }
   if (etat.coucheCouverture) etat.coucheCouverture.remove();
   const e = r.emprise;
   const g = L.layerGroup();
@@ -6412,7 +6412,7 @@ function brancherInterface() {
     etat.couches[c] = !etat.couches[c];
     b.classList.toggle('actif', etat.couches[c]);
     if (c) ecrireLs('gaulix_couches', etat.couches); // choix gardé pour la prochaine visite
-    if (c === 'inactifs') { dessinerNoeuds(); rendreLegende(); } else if (c === 'sommets') dessinerSommets(); else if (c === 'animations') { if (typeof dessinerAxes === 'function') dessinerAxes(); } else if (c === 'federation') dessinerFederation(); else if (c === 'routiers') dessinerRoutiers(); else if (c === 'dfci') dessinerDfci(); else if (c === 'radar') dessinerRadar(); else if (c === 'feux') dessinerFeux(); else if (c === 'sf8') dessinerSf8(); else if (c === 'mapper') dessinerMapper(true); else if (c === 'releves') dessinerReleves(); else dessinerLiens();
+    if (c === 'inactifs') { dessinerNoeuds(); rendreLegende(); } else if (c === 'sommets') dessinerSommets(); else if (c === 'animations') { if (typeof dessinerAxes === 'function') dessinerAxes(); } else if (c === 'federation') dessinerFederation(); else if (c === 'routiers') dessinerRoutiers(); else if (c === 'dfci') dessinerDfci(); else if (c === 'radar') dessinerRadar(); else if (c === 'feux') dessinerFeux(); else if (c === 'sf8') dessinerSf8(); else if (c === 'mapper') dessinerMapper(true); else if (c === 'rekordy') dessinerRekordy(); else if (c === 'releves') dessinerReleves(); else dessinerLiens();
   }));
   $('#filtres').onclick = (e) => {
     const b = e.target.closest('button[data-port]');
@@ -7271,6 +7271,7 @@ async function demarrer() {
   if (etat.couches.feux) dessinerFeux();
   if (etat.couches.sf8) dessinerSf8();
   if (etat.couches.mapper) dessinerMapper(true);
+  if (etat.couches.rekordy) dessinerRekordy();
   // Liens vers le client et le flasheur officiels (Web Serial / Web Bluetooth : HTTPS et Chrome ou Edge obligatoires)
   {
     const o = etat.config.outils || {}, https = location.protocol === 'https:';
@@ -8363,3 +8364,39 @@ async function dessinerMapper(wczytaj) {
   if (MP.warstwa) MP.warstwa.remove();
   MP.warstwa = g.addTo(carte);
 }
+
+// ---- PL: warstwa rekordów: 10 najdłuższych łączy (złote) i 10 najdłuższych tras pakietów (fioletowe), 30 dni ----
+let coucheRekordy = null, minuteurRekordy = null;
+async function dessinerRekordy() {
+  clearTimeout(minuteurRekordy);
+  if (!etat.couches.rekordy) { if (coucheRekordy) { coucheRekordy.remove(); coucheRekordy = null; } return; }
+  let r;
+  try { r = await api('/api/mc/najdluzsze?dni=30'); } catch (e) { if (typeof toast === 'function') toast('Rekordy: ' + e.message); return; }
+  if (!etat.couches.rekordy) return;
+  const g = L.layerGroup();
+  const kiedy = (t) => (t ? new Date(t).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' }) : '');
+  // trasy pod spodem
+  (r.trasy || []).slice().reverse().forEach((t, iOd) => {
+    const i = r.trasy.length - iOd;
+    const pts = t.punkty.map((p) => [p.lat, p.lon]);
+    const opis = `<b>Trasa nr ${i}: ${fmt(t.km, 1)} km</b> · ${t.skoki} skoków<br>${t.punkty.map((p) => esc(p.nazwa)).join(' → ')}<br><small>${kiedy(t.czas)}${t.od ? ' · nadawca ' + esc(t.od.nazwa) : ''}</small>`;
+    L.polyline(pts, { color: '#ffffff', weight: 6, opacity: 0.55, pane: 'traces', interactive: false }).addTo(g);
+    L.polyline(pts, { color: '#7c3aed', weight: 3.5, opacity: 0.9, dashArray: '8 6', pane: 'traces' }).bindTooltip(opis, { className: 'info', sticky: true }).addTo(g);
+    const k = pts[pts.length - 1];
+    L.marker(k, { pane: 'traces', icon: L.divIcon({ className: 'rek-et rek-trasa', html: `T${i}`, iconSize: null }) }).bindTooltip(opis, { className: 'info' }).addTo(g);
+  });
+  (r.lacza || []).slice().reverse().forEach((l, iOd) => {
+    const i = r.lacza.length - iOd;
+    const pts = [[l.a.lat, l.a.lon], [l.b.lat, l.b.lon]];
+    const opis = `<b>Łącze nr ${i}: ${fmt(l.km, 1)} km</b><br>${esc(l.a.nazwa)} ↔ ${esc(l.b.nazwa)}<br><small>${l.snr != null ? 'SNR ' + fmt(l.snr, 1) + ' dB · ' : ''}ostatnio ${kiedy(l.czas)}</small>`;
+    L.polyline(pts, { color: '#ffffff', weight: 8, opacity: 0.6, pane: 'traces', interactive: false }).addTo(g);
+    L.polyline(pts, { color: '#d97706', weight: 4.5, opacity: 0.95, pane: 'traces' }).bindTooltip(opis, { className: 'info', sticky: true }).addTo(g);
+    const m = [(l.a.lat + l.b.lat) / 2, (l.a.lon + l.b.lon) / 2];
+    L.marker(m, { pane: 'traces', icon: L.divIcon({ className: 'rek-et', html: `${i} · ${fmt(l.km, 0)} km`, iconSize: null }) }).bindTooltip(opis, { className: 'info' }).addTo(g);
+  });
+  if (coucheRekordy) coucheRekordy.remove();
+  coucheRekordy = g.addTo(carte);
+  if (!(r.lacza || []).length && !(r.trasy || []).length && typeof toast === 'function') toast('Rekordy: brak łączy i tras z ostatnich 30 dni');
+  minuteurRekordy = setTimeout(dessinerRekordy, 10 * 60000);
+}
+

@@ -12,6 +12,10 @@ const R_TERRE = 6371000;
 const K = 4 / 3;
 // Fréquence de calcul : RADIO_FREQ_MHZ (ex. 906.875 aux États-Unis), 869,525 MHz par défaut (Europe)
 const FREQ = (Number(process.env.RADIO_FREQ_MHZ) || 869.525) * 1e6;
+// PL: łącza między przekaźnikami (anteny ≥ 5 m): straty terenu i promień
+const ENV_RPT_DOMYSLNE = Number(process.env.RELIEF_SRODOWISKO_RPT_DB ?? 6);
+const ZASIEG_RPT_M = (Number(process.env.RELIEF_ZASIEG_RPT_KM) || 100) * 1000;
+let kalibracjaRpt = null;
 const SRODOWISKO_PL = process.env.RELIEF_SRODOWISKO_DB === '' ? NaN : Number(process.env.RELIEF_SRODOWISKO_DB ?? 33);
 const LAMBDA = 299792458 / FREQ;
 const M_PAR_DEG = 111320;
@@ -412,6 +416,36 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     journal(`[Relief] calibration : ${ecarts.length} liaisons mesurées, écart médian modèle − mesure ${med == null ? '?' : med.toFixed(1)} dB → pertes d'environnement ${calibration.perteEnvironnementDb ?? 'par défaut'} dB`);
   }
 
+  // PL: kalibracja strat terenu dla łączy repeater ↔ repeater na zmierzonych łączach RF z SNR (anteny 10 m, 5 dBi)
+  function calibrerRpt() {
+    const liens = (fournisseurs.liensRpt ? fournisseurs.liensRpt() : []).filter((l) => celle(l.a.lat, l.a.lon) >= 0 && celle(l.b.lat, l.b.lon) >= 0);
+    const P = parametres({ env: 0, marge: 0, gb: 5, preset: 'MESHCORE_FR' });
+    const bruit = P.seuil - SNR_LIMITE[PARAMS_LORA[P.preset].sf];
+    const ecarts = [];
+    for (const l of liens) {
+      const D = distanceM(l.a, l.b);
+      if (D < 2000 || D > ZASIEG_RPT_M) continue;
+      const r = liaison(l.a, l.b, P, 10, 10);
+      if (!r) continue;
+      const snrPredit = P.ptx + P.gains - P.pertes - fspl(D) - r.diffraction - bruit;
+      const comparable = Math.min(snrPredit, 10); // SNR LoRa nasyca się ok. +10 dB
+      if (comparable >= 9 && l.snr >= 8) continue;
+      ecarts.push({ ecart: +(comparable - l.snr).toFixed(1), nom: l.nom, km: +(D / 1000).toFixed(1), snr: l.snr, predit: +snrPredit.toFixed(1), diffraction: r.diffraction });
+    }
+    ecarts.sort((x, y) => x.ecart - y.ecart);
+    const med = ecarts.length ? ecarts[Math.floor(ecarts.length / 2)].ecart : null;
+    kalibracjaRpt = {
+      lacza: ecarts.length,
+      odchylenieMedianaDb: med,
+      envDb: ecarts.length >= 5 ? Math.round(Math.min(20, Math.max(0, med))) : null,
+      domyslneDb: ENV_RPT_DOMYSLNE,
+      przyklady: ecarts.sort((x, y) => y.km - x.km).slice(0, 30),
+      data: Date.now(),
+    };
+    journal(`[Relief] kalibracja RPT↔RPT: ${ecarts.length} łączy, mediana model − pomiar ${med ?? '?'} dB → straty ${kalibracjaRpt.envDb ?? ENV_RPT_DOMYSLNE + ' (domyślne)'} dB`);
+    return kalibracjaRpt;
+  }
+
   function parametres(opts = {}) {
     const preset = PARAMS_LORA[opts.preset] ? opts.preset : fournisseurs.presetCourant() || config.reseauPreset || 'LONG_FAST';
     const p = PARAMS_LORA[preset] || PARAMS_LORA.LONG_FAST;
@@ -494,6 +528,16 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     if (noeuds[0] && noeuds[0].h != null) hs = noeuds[0].h;
     return gains === P.gains && pertes === P.pertes && ptx === P.ptx && hs === P.hs ? P : { ...P, gains, pertes, ptx, hs };
   }
+  // PL: łącza repeater ↔ repeater: obie anteny wysoko nad lasem i zabudową → małe straty terenu (domyślnie 6 dB,
+  // kalibrowane na zmierzonych łączach RF między repeaterami) i promień do 100 km dla wysokich punktów
+  function envRpt() { return kalibracjaRpt && kalibracjaRpt.envDb != null ? kalibracjaRpt.envDb : ENV_RPT_DOMYSLNE; }
+  function PRpt(P) { return { ...P, env: P.envRpt ?? envRpt(), gains: P.gains + (5 - 2.15), rayonMax: Math.max(P.rayonMax, ZASIEG_RPT_M) }; } // odbiorca też ma antenę 5 dBi
+  const obaRpt = (x, y) => (x.h ?? 0) >= 5 && (y.h ?? 0) >= 5;
+  function liaisonRpt(x, y, P, hx = x.h, hy = y.h) {
+    const Pp = PRpt(P);
+    if (distanceM(x, y) > Pp.rayonMax) return null;
+    return liaison(x, y, Pinstallation(Pp, x, y), hx, hy);
+  }
   function liaison(a, b, P, ha, hb) {
     const D = distanceM(a, b);
     if (D < 50) return { marge: 99, distance: D, obstacle: null };
@@ -533,9 +577,11 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
   }
 
   function couverturePng(site, opts) {
-    const P = { ...parametres(opts), precis: true };
+    // PL: tryb „do innych repeaterów” (promień > 50 km): więcej promieni, krok 250 m, przybliżona dyfrakcja (szybciej)
+    const daleko = (opts.rayonKm ?? 40) > 50;
+    const P = { ...parametres(opts), precis: !daleko };
     const marges = new Float32Array(nLat * nLon).fill(-Infinity);
-    balayer(site, P, 1440, 150, (k, m) => { if (k >= 0 && m > marges[k]) marges[k] = m; });
+    balayer(site, P, daleko ? 2880 : 1440, daleko ? 250 : 150, (k, m) => { if (k >= 0 && m > marges[k]) marges[k] = m; });
     const rgba = Buffer.alloc(nLat * nLon * 4);
     let couvert = 0, couvertZone = 0;
     for (let i = 0; i < nLat; i++) for (let j = 0; j < nLon; j++) {
@@ -568,6 +614,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     etat.classement = 'calcul';
     const debut = Date.now();
     try { calibrer(); } catch (e) { journal('[Relief] calibration impossible :', e.message); }
+    try { calibrerRpt(); } catch (e) { journal('[Relief] kalibracja RPT:', e.message); }
     const P = parametres(opts);
     try {
       // Sites candidats : points hauts dans le département ou à moins de 10 km
@@ -902,8 +949,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     const graphe = (sites) => {
       const adj = sites.map(() => []);
       for (let i = 0; i < sites.length; i++) for (let j = i + 1; j < sites.length; j++) {
-        if (distanceM(sites[i], sites[j]) > P.rayonMax) continue;
-        const l = liaison(sites[i], sites[j], Pinstallation(P, sites[i], sites[j]), sites[i].h, sites[j].h);
+        const l = liaisonRpt(sites[i], sites[j], P);
         if (l && l.marge >= 0) { adj[i].push(j); adj[j].push(i); }
       }
       return adj;
@@ -987,8 +1033,8 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
         // Liaison radio avec le reste du réseau depuis le nouvel endroit
         let liaisons = 0;
         for (let k = 0; k < reseau.length && liaisons < 3; k++) {
-          if (k === i || distanceM(site, reseau[k]) > P.rayonMax) continue;
-          const l = liaison(site, reseau[k], Pinstallation(P, site, reseau[k]), site.h, reseau[k].h);
+          if (k === i) continue;
+          const l = liaisonRpt(site, reseau[k], P);
           if (l && l.marge >= 0) liaisons++;
         }
         essais.push({ s, net, nouveau, perdu, liaisons });
@@ -996,8 +1042,8 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       }
       let actuellesLiaisons = 0;
       for (let k = 0; k < reseau.length && actuellesLiaisons < 3; k++) {
-        if (k === i || distanceM(n, reseau[k]) > P.rayonMax) continue;
-        const l = liaison(n, reseau[k], Pinstallation(P, n, reseau[k]), n.h, reseau[k].h);
+        if (k === i) continue;
+        const l = liaisonRpt(n, reseau[k], P);
         if (l && l.marge >= 0) actuellesLiaisons++;
       }
       const km2 = (x) => Math.round(x * aireCelleKm2);
@@ -1046,8 +1092,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       let liaisons = 0;
       for (const n of reseau) {
         if (liaisons >= 3) break;
-        if (distanceM(site, n) > P.rayonMax) continue;
-        const l = liaison(site, n, Pinstallation(P, site, n), h, n.h);
+        const l = liaisonRpt(site, n, P, h, n.h);
         if (l && l.marge >= 0) liaisons++;
       }
       sortie.push({ ...x, altMnt: Math.round(alt(x.lat, x.lon)), dansDepartement: dansDepartement(x.lat, x.lon), couvertureKm2: Math.round(total * aireCelleKm2), nouveauKm2: Math.round(nouveau * aireCelleKm2), apresPct: +(((nTous + nouveau) / nbZone) * 100).toFixed(1), liaisons });
@@ -1150,14 +1195,14 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     const base = { a: { ...a, alt: Math.round(alt(a.lat, a.lon)) }, b: { ...b, alt: Math.round(alt(b.lat, b.lon)) }, distanceKm: +(dAB / 1000).toFixed(1), direct, parametres: { preset: P.preset, hs: P.hs, ht: P.ht, margeSecurite: P.margeSecurite, env: P.env, rayonKm: P.rayonMax / 1000 }, filtreAcces: opts.acces || 'tous' };
     if (direct && direct.marge >= 0) return { ...base, possible: true, nouveaux: 0, chemin: [{ type: 'depart', ...base.a }, { type: 'arrivee', ...base.b }], bonds: [direct], alternatives: [] };
     // Nœuds du graphe : départ, arrivée, relais existants, points hauts dans un couloir autour de A-B
-    const marge = Math.max(15000, Math.min(P.rayonMax, dAB * 0.5));
+    const marge = Math.max(15000, Math.min(ZASIEG_RPT_M, dAB * 0.5));
     const dansCouloir = (p) => distanceM(a, p) + distanceM(p, b) <= dAB + 2 * marge;
     const existants = (opts.noeuds || fournisseurs.noeudsReseau()).filter((n) => !Number.isNaN(alt(n.lat, n.lon)) && dansCouloir(n));
     let candidats = sommets.filter((s) => accessible(s, min) && dansCouloir(s) && !existants.some((n) => distanceM(n, s) < 300));
     if (candidats.length > 260) candidats = candidats.sort((x, y) => (y.dominance || 0) - (x.dominance || 0)).slice(0, 260);
     const noeuds = [
       { type: 'depart', ...base.a, h: ha }, { type: 'arrivee', ...base.b, h: hb },
-      ...existants.map((n) => ({ type: 'existant', num: n.num, nom: n.nom, lat: n.lat, lon: n.lon, h: n.h ?? 4, gain: n.gain, pertes: n.pertes, ptx: n.ptx })),
+      ...existants.map((n) => ({ type: 'existant', num: n.num, nom: n.nom, lat: n.lat, lon: n.lon, h: n.h ?? 10, gain: n.gain, pertes: n.pertes, ptx: n.ptx })),
       ...candidats.map((s) => ({ type: 'nouveau', id: s.id, nom: s.nom, commune: s.commune, lat: s.lat, lon: s.lon, alt: s.alt, acces: s.acces || null, h: P.hs })),
     ];
     const cache = new Map();
@@ -1165,7 +1210,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       const k = i < j ? i + ':' + j : j + ':' + i;
       if (!cache.has(k)) {
         const x = noeuds[i], y = noeuds[j];
-        cache.set(k, distanceM(x, y) > P.rayonMax ? null : liaison(x, y, Pinstallation(P, x, y), x.h, y.h));
+        cache.set(k, obaRpt(x, y) ? liaisonRpt(x, y, P) : distanceM(x, y) > P.rayonMax ? null : liaison(x, y, Pinstallation(P, x, y), x.h, y.h));
       }
       return cache.get(k);
     };
@@ -1193,7 +1238,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
         if (c < dist[v]) { dist[v] = c; prec[v] = u; nb[v] = nvNouveaux; }
       }
     }
-    if (prec[1] < 0) return { ...base, possible: false, nouveaux: null, chemin: [], bonds: [], alternatives: [], evalues: candidats.length + existants.length, raison: `Nie znaleziono trasy z najwyżej ${MAX_NOUVEAUX} nowymi przekaźnikami${min ? ' dostępnymi' : ''} (do ${P.rayonMax / 1000} km na skok). Przy realnych stratach terenu (las, zabudowa) skok przez nizinę to zwykle 10–20 km; na takim dystansie potrzeba więcej przekaźników na wzniesieniach.` };
+    if (prec[1] < 0) return { ...base, possible: false, nouveaux: null, chemin: [], bonds: [], alternatives: [], evalues: candidats.length + existants.length, raison: `Nie znaleziono trasy z najwyżej ${MAX_NOUVEAUX} nowymi przekaźnikami${min ? ' dostępnymi' : ''} (skok do companiona do ${P.rayonMax / 1000} km, między przekaźnikami do ${ZASIEG_RPT_M / 1000} km przy stratach terenu ${envRpt()} dB). Między przekaźnikami brakuje widoczności: potrzeba więcej punktów na wzniesieniach albo wyższych masztów.` };
     const ordre = [];
     for (let v = 1; v >= 0; v = prec[v]) ordre.unshift(v);
     const chemin = ordre.map((i) => { const n = noeuds[i]; const { h, ...reste } = n; return { ...reste, hauteur: h, alt: n.alt ?? Math.round(alt(n.lat, n.lon)) }; });
@@ -1231,8 +1276,8 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       let raccord = null;
       for (const n of reseau) {
         const dn = distanceM(s, n);
-        if (dn > P.rayonMax || dn < 200) continue;
-        const ln = liaison(s, n, Pinstallation(P, n), P.hs, n.h ?? 4);
+        if (dn < 200) continue;
+        const ln = liaisonRpt({ lat: s.lat, lon: s.lon, h: P.hs }, n, P, P.hs, n.h ?? 10);
         if (ln && (!raccord || ln.marge > raccord.marge)) raccord = { nom: n.nom, num: n.num, lat: n.lat, lon: n.lon, marge: ln.marge, distanceKm: +(ln.distance / 1000).toFixed(1) };
       }
       const score = l.marge + (raccord ? Math.min(raccord.marge, 15) * 0.6 : -10) + (s.couverturePct || 0) * 0.2;
@@ -1286,8 +1331,8 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       let r = null;
       for (const n of reseau) {
         const dn = distanceM(s, n);
-        if (dn > P.rayonMax || dn < 200) continue;
-        const ln = liaison(s, n, Pinstallation(P, n), P.hs, n.h ?? 4);
+        if (dn < 200) continue;
+        const ln = liaisonRpt({ lat: s.lat, lon: s.lon, h: P.hs }, n, P, P.hs, n.h ?? 10);
         if (ln && (!r || ln.marge > r.marge)) r = { nom: n.nom, num: n.num, lat: n.lat, lon: n.lon, marge: ln.marge, distanceKm: +(ln.distance / 1000).toFixed(1) };
       }
       return r;
@@ -1359,6 +1404,9 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     },
     couverturePng,
     // PL: margines łącza site → punkt (dB) z podanymi parametrami (walidacja z pomiarami Mappera)
+    kalibrujRpt: () => calibrerRpt(),
+    kalibracjaRpt: () => kalibracjaRpt,
+    envRpt: () => envRpt(),
     margines: (a, b, opts = {}) => { const P = parametres(opts); return liaison(a, b, P, P.hs, P.ht); },
     parametry: (opts = {}) => parametres(opts),
     couverturePngMulti,

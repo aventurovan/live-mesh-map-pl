@@ -62,7 +62,76 @@ function creerStatystyki({ db, config, liczPokrycie, journal = () => {} }) {
     kanaly: db.prepare(`SELECT COALESCE(canal, '') canal, COUNT(*) nb FROM mc_paquets WHERE type = 'GRP_TXT' AND heure >= ? AND heure < ? GROUP BY canal ORDER BY nb DESC`),
     nadawcy: db.prepare('SELECT DISTINCT de FROM mc_paquets WHERE heure >= ? AND heure < ? AND de IS NOT NULL'),
     najstarszy: db.prepare('SELECT MIN(heure) t FROM mc_paquets'),
+    trasy: db.prepare('SELECT de, chemin, sauts, heure FROM mc_paquets WHERE heure >= ? AND heure < ? AND sauts >= 2 AND sauts < 64 AND chemin IS NOT NULL ORDER BY sauts DESC, heure DESC LIMIT 400'),
   };
+
+  // ---- Najdłuższe łącza i trasy (do wizualizacji na mapie) ----
+  const punkt = (n) => ({ nazwa: n.nom || n.cle.slice(0, 8), cle: n.cle, lat: +n.lat.toFixed(5), lon: +n.lon.toFixed(5) });
+  function topLaczaOkna(od, doT, ile = 10) {
+    const wezly = new Map(q.noeuds.all().map((n) => [n.cle, n]));
+    const lista = [];
+    for (const l of q.liens.all(od, doT)) {
+      const a = wezly.get(l.a), b = wezly.get(l.b);
+      if (!a || !b || a.lat == null || b.lat == null) continue;
+      if (l.source === 'chemin' && (l.nb || 0) < 3) continue;
+      const km = odlKm(a, b);
+      if (km > (config.lienDistanceMaxKm || 120) || km < 1) continue;
+      lista.push({ km: Math.round(km * 10) / 10, snr: l.snr != null ? Math.round(l.snr * 10) / 10 : null, zrodlo: l.source, a: punkt(a), b: punkt(b), czas: l.dernier_vu });
+    }
+    return lista.sort((x, y) => y.km - x.km).slice(0, ile);
+  }
+  // Trasa pakietu: nadawca → kolejne repeatery z prefiksów ścieżki (jednoznaczny albo najbliższy poprzedniemu punktowi)
+  function topTrasyOkna(od, doT, ile = 10) {
+    const wezly = q.noeuds.all();
+    const mapa = new Map(wezly.map((n) => [n.cle, n]));
+    const rpt = wezly.filter((n) => n.lat != null && ['repeteur', 'salon'].includes(n.role));
+    const maxSkok = config.lienDistanceMaxKm || 120;
+    const wyniki = [];
+    for (const r of q.trasy.all(od, doT)) {
+      let hopy; try { hopy = JSON.parse(r.chemin); } catch { continue; }
+      if (!Array.isArray(hopy) || hopy.length < 2) continue;
+      const pkt = [];
+      const nad = mapa.get(r.de);
+      if (nad && nad.lat != null) pkt.push(punkt(nad));
+      let zle = false;
+      for (const h of hopy) {
+        const pref = String(h).toUpperCase();
+        let c = rpt.filter((n) => n.cle.toUpperCase().startsWith(pref));
+        if (!c.length) continue;
+        const ost = pkt[pkt.length - 1];
+        if (c.length > 1) { if (!ost) continue; c = [c.reduce((m, n) => (odlKm(ost, n) < odlKm(ost, m) ? n : m))]; }
+        const p = punkt(c[0]);
+        if (ost && ost.cle === p.cle) continue;
+        if (ost && odlKm(ost, p) > maxSkok) { zle = true; break; }
+        pkt.push(p);
+      }
+      if (zle || pkt.length < 3) continue;
+      let km = 0; for (let i = 1; i < pkt.length; i++) km += odlKm(pkt[i - 1], pkt[i]);
+      wyniki.push({ km: Math.round(km * 10) / 10, skoki: r.sauts, od: nad ? { nazwa: nad.nom || nad.cle.slice(0, 8), cle: nad.cle } : null, punkty: pkt, czas: r.heure, klucz: (r.de || '') + '|' + r.chemin });
+    }
+    const uniq = new Map();
+    for (const w of wyniki) { const k = w.punkty.map((p) => p.cle.slice(0, 8)).join('>'); if (!uniq.has(k) || uniq.get(k).km < w.km) uniq.set(k, w); }
+    return [...uniq.values()].sort((x, y) => y.km - x.km).slice(0, ile).map(({ klucz, ...w }) => w);
+  }
+  let cacheTop = { t: 0, dni: 0, v: null };
+  function najdluzsze(dni = 30) {
+    dni = Math.min(Math.max(Math.round(dni) || 30, 1), 365);
+    if (cacheTop.v && cacheTop.dni === dni && Date.now() - cacheTop.t < 5 * 60000) return cacheTop.v;
+    const teraz = Date.now(), od = teraz - dni * DZIEN;
+    const okno = Math.min(dni, 7);
+    let lacza = topLaczaOkna(teraz - okno * DZIEN, teraz + 1, 20), trasy = topTrasyOkna(teraz - okno * DZIEN, teraz + 1, 20);
+    if (dni > 7) {
+      const granica = dzienPL(od);
+      for (const [d, v] of Object.entries(magazyn.dni)) { if (d < granica) continue; lacza = lacza.concat(v.topLacza || []); trasy = trasy.concat(v.topTrasy || []); }
+    }
+    const uL = new Map();
+    for (const l of lacza) { const k = [l.a.cle, l.b.cle].sort().join('|'); if (!uL.has(k) || uL.get(k).czas < l.czas) uL.set(k, l); }
+    const uT = new Map();
+    for (const t of trasy) { const k = t.punkty.map((p) => p.cle.slice(0, 8)).join('>'); if (!uT.has(k) || uT.get(k).czas < t.czas) uT.set(k, t); }
+    const v = { dni, lacza: [...uL.values()].sort((x, y) => y.km - x.km).slice(0, 10), trasy: [...uT.values()].sort((x, y) => y.km - x.km).slice(0, 10) };
+    cacheTop = { t: Date.now(), dni, v };
+    return v;
+  }
 
   // ---- Rekordy w oknie [od, do) prosto z bazy (pakiety i łącza z ostatnich dni) ----
   function rekordyOkna(od, doT) {
@@ -104,6 +173,8 @@ function creerStatystyki({ db, config, liczPokrycie, journal = () => {} }) {
       nowe: [...wezly.values()].filter((n) => n.premier_vu >= start && n.premier_vu < nastepny).length,
       kanaly: kanaly.reduce((t, k) => t + k.nb, 0),
       rekordy: rekordyOkna(start, nastepny),
+      topLacza: topLaczaOkna(start, nastepny, 10),
+      topTrasy: topTrasyOkna(start, nastepny, 10),
       pokrycie: null,
     };
   }
@@ -118,6 +189,9 @@ function creerStatystyki({ db, config, liczPokrycie, journal = () => {} }) {
       const s = poczatekDnia(dzis - k * DZIEN + 3600000);
       if (s + DZIEN <= t0) continue; // przed startem mapy
       const d = dzienPL(s);
+      if (magazyn.dni[d] && !magazyn.dni[d].topLacza) { // dni zapisane przed dodaniem warstwy rekordów
+        try { const k = poczatekDnia(s + DZIEN + 2 * 3600000); magazyn.dni[d].topLacza = topLaczaOkna(s, k, 10); magazyn.dni[d].topTrasy = topTrasyOkna(s, k, 10); zmiana = true; } catch { /* pomiń */ }
+      }
       if (magazyn.dni[d]) continue;
       try { magazyn.dni[d] = podsumujDzien(s); zmiana = true; journal(`[Statystyki] podsumowanie ${d}: ${magazyn.dni[d].pakiety} pakietów`); } catch (e) { journal('[Statystyki]', d, e.message); }
     }
@@ -213,7 +287,7 @@ function creerStatystyki({ db, config, liczPokrycie, journal = () => {} }) {
   // pokrycie: pierwsze po 5 min (teren może się jeszcze wczytywać), potem co 6 h
   setInterval(() => { if (!pokrycie || Date.now() - pokrycie.czas > 6 * 3600000) odswiezPokrycie(); }, 10 * 60000);
 
-  return { biezace, historia, podsumujDzien, uzupelnij, odswiezPokrycie };
+  return { biezace, historia, najdluzsze, podsumujDzien, uzupelnij, odswiezPokrycie };
 }
 
 module.exports = { creerStatystyki, poczatekDnia, dzienPL };

@@ -665,6 +665,8 @@ app.get('/api/relief/couverture', (req, res) => {
   if (!dansEmprise({ lat, lon }, RR.emprise())) return res.status(400).json({ erreur: estMembre(req) ? 'Point hors du relief disponible' : 'Point hors de la zone couverte par le modèle de relief (département et ses abords)' });
   if (!RR.pret()) return res.status(503).json({ erreur: `Relief de la zone ${RR.code || ''} en cours de chargement : réessayez dans quelques minutes` });
   const o = optsRelief(req.query);
+  // PL: tryb=rpt → zasięg do innych repeaterów: odbiornik na maszcie 10 m z anteną 5 dBi, małe straty terenu, do 100 km
+  if (req.query.tryb === 'rpt' && RR.envRpt) { o.env = RR.envRpt(); o.ht = 10; o.gb = 5; o.rayonKm = 100; }
   const cle = JSON.stringify([RR.code, lat.toFixed(4), lon.toFixed(4), o, (RR.calibration() || {}).date]);
   let r = cacheCouverture.get(cle);
   if (!r) {
@@ -2038,6 +2040,11 @@ app.get('/api/mapper', async (req, res) => {
 // /api/relief/walidacja?cle=<klucz>&hs=6 : dla pomiarów w promieniu (domyślnie 40 km) porównuje przewidywany margines
 // z tym, czy repeater faktycznie odpowiedział. Podaje trafność i przesunięcie strat środowiskowych, które najlepiej pasuje.
 const odlM = (a, b) => { const R = 6371000, r2 = Math.PI / 180, dl = (b.lat - a.lat) * r2, dn = (b.lon - a.lon) * r2; const x = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r2) * Math.cos(b.lat * r2) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
+// PL: kalibracja łączy repeater ↔ repeater (przelicza na żądanie)
+app.get('/api/relief/kalibracja-rpt', (req, res) => {
+  if (!relief.pret()) return res.status(503).json({ erreur: 'Model terenu jeszcze się wczytuje' });
+  try { res.json(relief.kalibrujRpt()); } catch (e) { res.status(500).json({ erreur: e.message }); }
+});
 app.get('/api/relief/walidacja', async (req, res) => {
   try {
     const cle = String(req.query.cle || '').toLowerCase().replace(/[^0-9a-f]/g, '');
@@ -3657,6 +3664,13 @@ const fournisseursRelief = {
       .map((n) => ({ num: n.num, nom: n.nom_long || n.nom_court || n.id, lat: n.lat, lon: n.lon, role: n.role, passerelle: !!n.est_passerelle, ...installations.radio(n.num) }))
       .concat(federation ? federation.noeudsCalcul() : []); // relais des bulles voisines (près des limites du département)
   },
+  // PL: zmierzone łącza RF między repeaterami MeshCore (oba z pozycją), do kalibracji łączy RPT ↔ RPT
+  liensRpt: () => {
+    const w = new Map(reseauMc.q.noeuds.all().filter((n) => n.lat != null && ['repeteur', 'salon'].includes(n.role)).map((n) => [n.cle, n]));
+    return stockage.db.prepare(`SELECT a, b, snr, nb FROM mc_liens WHERE source IN ('rf', 'trace') AND snr IS NOT NULL AND dernier_vu >= ?`).all(Date.now() - 30 * 86400000)
+      .filter((l) => w.has(l.a) && w.has(l.b))
+      .map((l) => { const a = w.get(l.a), b = w.get(l.b); return { a: { lat: a.lat, lon: a.lon }, b: { lat: b.lat, lon: b.lon }, snr: l.snr, nom: `${a.nom || a.cle.slice(0, 8)} ↔ ${b.nom || b.cle.slice(0, 8)}` }; });
+  },
   // Liaisons radio directes avec SNR mesuré (pour calibrer le modèle)
   liensMesures: () => [...liensMesuresNoeuds(), ...(() => { try { return mesures().liensCalibration(); } catch { return []; } })()],
   liensNoeuds: () => {
@@ -3746,6 +3760,8 @@ const statystykiPl = config.meshcore.actif ? require('./statystyki-pl').creerSta
     return r && !r.vide ? r : null;
   },
 }) : null;
+// PL: najdłuższe łącza i trasy (top 10) do warstwy na mapie: ?dni=1|7|30
+app.get('/api/mc/najdluzsze', (req, res) => { if (!statystykiPl) return res.json({ lacza: [], trasy: [] }); try { res.json(statystykiPl.najdluzsze(Number(req.query.dni) || 30)); } catch (e) { res.status(500).json({ erreur: e.message }); } });
 app.get('/api/export/statystyki-historia.json', exporter(() => (statystykiPl ? statystykiPl.historia() : { dni: [] }), 'application/json'));
 let statystykiCache = { t: 0, v: null };
 app.get('/api/export/statystyki.json', exporter(() => {
