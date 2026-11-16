@@ -2037,14 +2037,15 @@ app.get('/api/relief/walidacja', async (req, res) => {
   try {
     const cle = String(req.query.cle || '').toLowerCase().replace(/[^0-9a-f]/g, '');
     if (cle.length < 8) return res.status(400).json({ erreur: 'Podaj klucz repeatera (cle)' });
-    const wiersz = reseauMc.q.noeud.get(cle) || (reseauMc.q.noeuds.all().find((n) => n.cle.startsWith(cle)) || null);
+    // klucze w bazie bywają pisane wielkimi literami: porównanie bez względu na wielkość liter
+    const wiersz = reseauMc.q.noeud.get(cle) || reseauMc.q.noeud.get(cle.toUpperCase()) || (reseauMc.q.noeuds.all().find((n) => String(n.cle).toLowerCase().startsWith(cle)) || null);
     if (!wiersz || wiersz.lat == null) return res.status(404).json({ erreur: 'Repeater bez pozycji albo nieznany' });
     if (!mapper.pts.length) await odswiezMapper();
     const nb = (v, d) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? d : Number(v));
     const opts = { preset: 'MESHCORE_FR', hs: nb(req.query.hs, 6), ht: nb(req.query.ht, 2), ptx: nb(req.query.ptx, 22), ga: nb(req.query.ga, 5), gb: nb(req.query.gb, 2.15), pertes: nb(req.query.pertes, 0), rayonKm: nb(req.query.rayon, 40) };
     const P = relief.parametry(opts);
     const site = { lat: wiersz.lat, lon: wiersz.lon };
-    const pref = wiersz.cle.slice(0, 16);
+    const pref = String(wiersz.cle).slice(0, 16).toLowerCase();
     const R = P.rayonMax;
     // pingi: grupowane po czasie i miejscu; trafienie = ten repeater odpowiedział w tym pingu
     const pingi = new Map();
