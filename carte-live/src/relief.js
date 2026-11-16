@@ -1053,7 +1053,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
   // Couverture actuelle du réseau : relais et passerelles détectés (entendus depuis 24 h) et positionnés dans la zone
   function couvertureReseau(opts = {}) {
     if (etat.mnt !== 'pret') throw new Error('Le modèle de terrain est en cours de chargement');
-    const noeuds = (opts.noeuds || fournisseurs.noeudsReseau()).filter((n) => celle(n.lat, n.lon) >= 0).slice(0, 60);
+    const noeuds = (opts.noeuds || fournisseurs.noeudsReseau()).filter((n) => celle(n.lat, n.lon) >= 0).slice(0, 250); // PL: wcześniej tylko 60 ostatnio słyszanych
     if (!noeuds.length) return { noeuds: [], vide: true };
     // Hauteur, gain, câble et puissance : fiche d'installation du relais, sinon la hauteur supposée
     const r = couverturePngMulti(noeuds.map((n) => ({ lat: n.lat, lon: n.lon, h: n.h ?? opts.hn ?? 6, gain: n.gain, pertes: n.pertes, ptx: n.ptx })), opts);
@@ -1066,7 +1066,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     const P = parametres(opts);
     const N = nLat * nLon;
     const marges = new Float32Array(N).fill(-Infinity);
-    const nbCouvrants = new Uint8Array(N), seulPar = new Int8Array(N).fill(-1);
+    const nbCouvrants = new Uint8Array(N), seulPar = new Int16Array(N).fill(-1); // Int16: ponad 127 sitów
     const parSite = sites.map((site, idx) => {
       const m = new Float32Array(N).fill(-Infinity);
       const Ps = Pinstallation(site.h != null ? parametres({ ...opts, hs: site.h }) : P, { ...site, h: site.h });
