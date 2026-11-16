@@ -22,7 +22,8 @@ services:
     volumes:
       # Baza, konta, ustawienia i pamięć terenu: rób kopię
       - donnees:/data
-    mem_limit: 512m
+    # PL: strefa 4 województw = ok. 3,5× większa siatka terenu niż kwadrat 1°
+    mem_limit: 1g
     # Companion MeshCore podłączony przez USB do tej maszyny: usuń „#” z OBU linii poniżej (to samo wcięcie
     # co mem_limit) i dopasuj port (ls /dev/ttyACM* /dev/ttyUSB* /dev/serial/by-id/), potem na mapie:
     # Narzędzia › Podłącz moduł › USB serwera
