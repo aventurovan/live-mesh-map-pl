@@ -44,7 +44,7 @@ const mc = {
   vue: (() => { try { return localStorage.getItem('gaulix_mc_vue') || 'noeuds'; } catch { return 'noeuds'; } })(),
   filtresTypes: new Set(Object.keys(MC_TYPES)),
   roles: (() => { try { return { ...Object.fromEntries(Object.keys(MC_ROLES).map((k) => [k, true])), ...JSON.parse(localStorage.getItem('gaulix_mc_roles') || '{}') }; } catch { return Object.fromEntries(Object.keys(MC_ROLES).map((k) => [k, true])); } })(),
-  couches: { rf: true, chemin: false, trace: true, voisinage: true }, // PL: „Ścieżki” domyślnie wyłączone
+  couches: { rf: true, chemin: false, trace: true, voisinage: false }, // PL: „Ścieżki” i „Sąsiedzi” domyślnie wyłączone
   selection: null,
   nav: { etat: 'aucun', ws: null, port: null, lecteur: null, ecrivain: null, ble: null, type: null, erreur: null, role: 'principal' },
 };
