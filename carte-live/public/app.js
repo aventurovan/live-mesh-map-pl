@@ -6966,9 +6966,9 @@ function installerTiroir() {
   window.addEventListener('resize', () => { const o = document.querySelector('.outils'); if (o) document.documentElement.style.setProperty('--h-outils', o.offsetHeight + 'px'); majReduit(); });
   window.ustawTiroir = appliquer;
   // PL: krzyżyk zamykający szufladę otwartą na cały ekran
-  if (!p.querySelector('.zamknij-tiroir')) {
-    p.insertAdjacentHTML('afterbegin', '<button type="button" class="zamknij-tiroir" aria-label="Zamknij panel" title="Zamknij panel">✕</button>');
-    p.querySelector('.zamknij-tiroir').addEventListener('click', (ev) => { ev.stopPropagation(); appliquer('reduit'); });
+  if (!document.querySelector('.zamknij-tiroir')) {
+    document.body.insertAdjacentHTML('beforeend', '<button type="button" class="zamknij-tiroir" aria-label="Zamknij panel" title="Zamknij panel">✕</button>');
+    document.querySelector('.zamknij-tiroir').addEventListener('click', (ev) => { ev.stopPropagation(); appliquer('reduit'); });
   }
   const poignee = p.querySelector('.poignee-tiroir');
   let depart = null;
