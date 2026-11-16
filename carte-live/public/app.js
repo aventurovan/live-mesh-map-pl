@@ -8497,22 +8497,70 @@ function fichaSf8(n) {
   $('#sf8-couv-rpt').onclick = () => voirCouvertureSite({ lat: n.lat, lon: n.lon }, nazwa + ' → repeatery', h(), { cadrer: true, preset: 'MESHCORE_FR', tryb: 'rpt' });
 }
 
-// Linie do repeaterów SF6 i SF8 w zasięgu radiowym (łącze RPT ↔ RPT, radio SF6): ciągła = pełna widoczność, przerywana = przez ugięcie
+// Repeatery SF6 i SF8 w zasięgu radiowym (łącze RPT ↔ RPT, radio SF6): lista w karcie + przełączniki „Zasięg” / „Linie”,
+// kliknięcie pozycji pokazuje tylko jedno łącze
+const WR = { p: null, hs: 10, lista: [], g: null, linie: null, zasieg: true, pokazLinie: false, tylkoLos: false, wybor: null };
 async function dorysujWidoczneRpt(p, hs, g) {
+  Object.assign(WR, { p, hs, g, lista: [], wybor: null, zasieg: true, pokazLinie: false });
   let r;
-  try { r = await api(`/api/relief/widoczne-rpt?lat=${p.lat}&lon=${p.lon}&h=${hs}`); } catch (e) { if (typeof toast === 'function') toast('Repeatery w zasięgu: ' + e.message); return; }
+  try { r = await api(`/api/relief/widoczne-rpt?lat=${p.lat}&lon=${p.lon}&h=${hs}`); } catch (e) { panelWidoczne(e.message); return; }
   if (etat.coucheCouverture !== g) return;
-  const lista = r.lista || [];
-  for (const c of lista) {
-    const kol = c.siec === 'SF8' ? '#0b4f8a' : '#15803d';
-    L.polyline([[p.lat, p.lon], [c.lat, c.lon]], { color: '#ffffff', weight: 4, opacity: 0.5, pane: 'traces', interactive: false }).addTo(g);
-    L.polyline([[p.lat, p.lon], [c.lat, c.lon]], { color: kol, weight: 2.5, opacity: 0.9, dashArray: c.los ? null : '6 5', pane: 'traces' })
-      .bindTooltip(`<b>${esc(c.nazwa)}</b> <small>${c.siec}</small><br>${fmt(c.km, 1)} km · zapas ${fmt(c.marge, 1)} dB<br><small>${c.los ? 'pełna widoczność (LOS)' : 'przez ugięcie za przeszkodą'} · radio SF6, maszty ${hs} / 10 m</small>`, { className: 'info', sticky: true }).addTo(g);
+  WR.lista = r.lista || [];
+  rysujWidoczne();
+  panelWidoczne();
+}
+function rysujWidoczne() {
+  if (!WR.g) return;
+  WR.g.eachLayer((l) => { if (l instanceof L.ImageOverlay) l.setOpacity(WR.zasieg ? 0.75 : 0); });
+  if (WR.linie) { WR.linie.remove(); WR.linie = null; }
+  const pokaz = WR.lista.map((c, i) => ({ c, i })).filter(({ c, i }) => (WR.wybor != null ? i === WR.wybor : WR.pokazLinie && (!WR.tylkoLos || c.los)));
+  if (!pokaz.length) return;
+  const g = L.layerGroup();
+  for (const { c, i } of pokaz) {
+    const kol = c.siec === 'SF8' ? '#2f7fd1' : '#16a34a';
+    const jeden = WR.wybor != null;
+    L.polyline([[WR.p.lat, WR.p.lon], [c.lat, c.lon]], { color: kol, weight: jeden ? 4 : 1.6, opacity: jeden ? 1 : 0.75, dashArray: c.los ? null : '5 5', pane: 'traces' })
+      .bindTooltip(`<b>${esc(c.nazwa)}</b> <small>${c.siec}</small><br>${fmt(c.km, 1)} km · zapas ${fmt(c.marge, 1)} dB · ${c.los ? 'pełna widoczność' : 'przez ugięcie'}`, { className: 'info', sticky: true })
+      .on('click', () => { WR.wybor = WR.wybor === i ? null : i; rysujWidoczne(); panelWidoczne(); })
+      .addTo(g);
+    if (jeden) L.marker([c.lat, c.lon], { pane: 'traces', icon: L.divIcon({ className: 'rek-et wr-et' + (c.siec === 'SF8' ? ' sf8' : ''), html: `${esc(c.nazwa)} · ${fmt(c.km, 1)} km`, iconSize: null }) }).addTo(g);
   }
-  const sf6 = lista.filter((c) => c.siec === 'SF6').length, sf8n = lista.length - sf6, los = lista.filter((c) => c.los).length;
-  const info = $('#couverture-info');
-  const tekst = `W zasięgu radiowym: <b>${sf6}</b> repeaterów SF6 i <b>${sf8n}</b> SF8 (${los} w pełnej widoczności). Zielone linie: SF6, granatowe: SF8; przerywane: łącze przez ugięcie.`;
-  if (info) info.innerHTML += '<br>' + tekst;
-  if (typeof toast === 'function') toast(`Repeatery w zasięgu: ${sf6} SF6 · ${sf8n} SF8`);
+  WR.linie = g.addTo(WR.g);
+}
+function panelWidoczne(blad) {
+  const box = $('#fiche-contenu');
+  if (!box || $('#fiche').hidden) return;
+  let z = $('#wr-panel');
+  if (!z) { z = document.createElement('div'); z.id = 'wr-panel'; box.appendChild(z); }
+  if (blad) { z.innerHTML = `<h3>Repeatery w zasięgu</h3><div class="vide">${esc(blad)}</div>`; return; }
+  const l = WR.lista;
+  const sf6 = l.filter((c) => c.siec === 'SF6').length, los = l.filter((c) => c.los).length;
+  const widoczne = l.map((c, i) => ({ c, i })).filter(({ c }) => !WR.tylkoLos || c.los);
+  z.innerHTML = `<h3>Repeatery w zasięgu radiowym</h3>
+    <div class="ident">${sf6} SF6 · ${l.length - sf6} SF8 · ${los} w pełnej widoczności · radio SF6, maszty ${WR.hs} / 10 m</div>
+    <div class="rek-opcje">
+      <button type="button" class="pilule ${WR.zasieg ? 'on' : ''}" data-wr="zasieg">Zasięg</button>
+      <button type="button" class="pilule ${WR.pokazLinie ? 'on' : ''}" data-wr="linie">Linie do RPT</button>
+      <button type="button" class="pilule ${WR.tylkoLos ? 'on' : ''}" data-wr="los" title="Tylko repeatery w pełnej widoczności (bez ugięcia)">Tylko LOS</button>
+      ${WR.wybor != null ? '<button type="button" class="pilule" data-wr="wszystkie">Pokaż wszystkie</button>' : ''}
+    </div>
+    <div class="rek-lista">${widoczne.map(({ c, i }) => `<button type="button" class="rek-wiersz wr-wiersz${WR.wybor === i ? ' on' : ''}" data-wri="${i}">
+      <span class="wr-siec ${c.siec === 'SF8' ? 'sf8' : ''}">${c.siec}</span>
+      <span class="rek-opis"><b>${esc(c.nazwa)}</b><small>${c.los ? 'pełna widoczność' : 'przez ugięcie'} · zapas ${fmt(c.marge, 0)} dB</small></span>
+      <span class="rek-km">${fmt(c.km, 1)} km</span></button>`).join('') || '<div class="vide">Brak repeaterów w zasięgu</div>'}</div>`;
+  z.querySelectorAll('[data-wr]').forEach((b) => (b.onclick = () => {
+    const k = b.dataset.wr;
+    if (k === 'zasieg') WR.zasieg = !WR.zasieg;
+    else if (k === 'linie') { WR.pokazLinie = !WR.pokazLinie; WR.wybor = null; }
+    else if (k === 'los') WR.tylkoLos = !WR.tylkoLos;
+    else WR.wybor = null;
+    rysujWidoczne(); panelWidoczne();
+  }));
+  z.querySelectorAll('[data-wri]').forEach((b) => (b.onclick = () => {
+    const i = Number(b.dataset.wri);
+    WR.wybor = WR.wybor === i ? null : i;
+    rysujWidoczne(); panelWidoczne();
+    if (WR.wybor != null) { const c = WR.lista[i]; carte.fitBounds(L.latLngBounds([[WR.p.lat, WR.p.lon], [c.lat, c.lon]]), { paddingTopLeft: [window.innerWidth > 900 ? 470 : 30, 80], paddingBottomRight: [window.innerWidth > 900 ? 430 : 30, 90], maxZoom: 12 }); }
+  }));
 }
 
