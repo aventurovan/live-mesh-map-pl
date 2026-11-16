@@ -3016,6 +3016,8 @@ function fermerRejeu() {
 }
 
 // ---- Relief : points hauts, meilleurs sites, couverture d'un point -------------------------------
+// PL: nazwy presetów zamiast kodów
+const nazwaPresetu = (p) => ({ MESHCORE_FR: 'Południe SF6', NARROW_SLOW: 'MeshCore Polska SF8' })[p] || p;
 const nomSommet = (s) => s.nom || (s.commune ? `Point haut · ${s.commune}` : `Point haut ${s.alt} m`);
 const couleurMarge = (m) => (m >= 10 ? 'var(--ok)' : m >= 0 ? 'var(--attention)' : 'var(--critique)');
 const hexMarge = (m) => (m >= 10 ? '#3ee6c4' : m >= 0 ? '#f4d35e' : '#ff5c6c');
@@ -3835,7 +3837,7 @@ async function planDepartement() {
     </div>`).join('') || '<div class="vide">Aucun site ne répond à ces critères.</div>'}
     ${r.realiste && r.realismeEtat && !r.realismeEtat.pret ? '<div class="alerte attention">Données OpenStreetMap des sites (supports, zones protégées, habitations) pas encore chargées : le plan n’a pas pu en tenir compte. Réessayez dans quelques minutes.</div>' : ''}
     <div class="actions-prop"><button id="plan-gpx">Télécharger les sites (GPX)</button>${r.sites.length >= 2 && r.sites.length <= 10 ? '<button id="plan-couv">Couverture détaillée (marges)</button>' : ''}</div>
-    <p class="note">Bleu : déjà couvert par le réseau · turquoise : apporté par les nouveaux sites · rouge : reste non couvert. Chaque site est choisi pour couvrir le plus de surface encore non desservie. ${r.candidats} points hauts candidats.${r.parametres ? ` Antennes ${r.parametres.hs} m, ${esc(r.parametres.preset)}, marge ${r.parametres.margeSecurite} dB + ${r.parametres.env} dB de pertes d’environnement.` : ''}</p>`;
+    <p class="note">Bleu : déjà couvert par le réseau · turquoise : apporté par les nouveaux sites · rouge : reste non couvert. Chaque site est choisi pour couvrir le plus de surface encore non desservie. ${r.candidats} points hauts candidats.${r.parametres ? ` Antennes ${r.parametres.hs} m, ${esc(nazwaPresetu(r.parametres.preset))}, marge ${r.parametres.margeSecurite} dB + ${r.parametres.env} dB de pertes d’environnement.` : ''}</p>`;
   $('#plan-gpx').onclick = () => telechargerGpx('plan-couverture.gpx', r.sites.map((x) => ({ lat: x.lat, lon: x.lon, alt: x.alt, nom: `${x.rang} - ${nomSommet(x)}`, desc: `+${x.gainKm2} km², cumul ${x.totalPct} %${x.acces ? ', accès ' + ACCES[x.acces.type].nom : ''}` })));
   const pc = $('#plan-couv'); if (pc) pc.onclick = () => couvertureMulti(r.sites.map((x) => ({ lat: x.lat, lon: x.lon, h: (r.parametres && r.parametres.hs) || 6, nom: nomSommet(x) })));
 }
@@ -4104,7 +4106,7 @@ async function rendreSites() {
       ${c.plan.map((p) => ligneSite(parId.get(p.id) || p, `+${p.gainKm2} km²`, `cumul ${fmt(p.totalPct, 1, ' %')}`, p.rang, true)).join('')}
       <h3>Plus fortes couvertures individuelles</h3>
       ${c.meilleursIndividuels.slice(0, 10).map((p, i) => ligneSite(parId.get(p.id) || p, fmt(p.pct, 1, ' %'), `${p.km2} km²`, i + 1, false)).join('')}
-      <p class="note">Modèle : relief IGN RGE ALTI au pas de 250 m, terre 4/3, diffraction lame de couteau, ${esc(c.parametres.preset)}, ${c.parametres.ptx} dBm, antennes 2,15 dBi, marge ${c.parametres.margeSecurite} dB + pertes d'environnement ${c.parametres.env} dB${c.calibration && c.calibration.perteEnvironnementDb != null ? ` (calibrées sur ${c.calibration.liaisons} liaisons mesurées)` : ' (valeur par défaut)'}, rayon ${c.parametres.rayonKm} km. ${c.candidats} sites évalués en ${c.dureeSecondes} s · ${ilYa(c.date)}.</p>`;
+      <p class="note">Modèle : relief Copernicus GLO-30 au pas de 250 m, terre 4/3, diffraction lame de couteau, ${esc(nazwaPresetu(c.parametres.preset))}, ${c.parametres.ptx} dBm, marge ${c.parametres.margeSecurite} dB + pertes d'environnement ${c.parametres.env} dB${c.calibration && c.calibration.perteEnvironnementDb != null ? ` (calibrées sur ${c.calibration.liaisons} liaisons mesurées)` : ' (valeur par défaut)'}, rayon ${c.parametres.rayonKm} km. ${c.candidats} sites évalués en ${c.dureeSecondes} s · ${ilYa(c.date)}.</p>`;
   }
   if (c) h += `<div class="actions-prop"><button id="gpx-sites">Télécharger les sites recommandés (GPX)</button><button id="gpx-sommets">Tous les points hauts (GPX)</button></div>`;
   h += `<div id="couverture-info" class="note"></div>`;
@@ -4167,7 +4169,7 @@ function nomLieu(latlng) {
   let meilleur = null, dmin = 400;
   for (const n of etat.noeuds.values()) if (n.lat != null) { const d = carte.distance(latlng, [n.lat, n.lon]); if (d < dmin) { dmin = d; meilleur = { nom: n.nomLong || n.nomCourt || n.id, lat: n.lat, lon: n.lon, noeud: true }; } }
   for (const s of etat.sommets || []) { const d = carte.distance(latlng, [s.lat, s.lon]); if (d < dmin) { dmin = d; meilleur = { nom: nomSommet(s), lat: s.lat, lon: s.lon }; } }
-  return meilleur || { nom: `Point ${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)}`, lat: latlng.lat, lon: latlng.lng };
+  return meilleur || { nom: `Punkt ${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)}`, lat: latlng.lat, lon: latlng.lng };
 }
 function choisirPointRelier(latlng) {
   const p = nomLieu(latlng);
@@ -4245,7 +4247,7 @@ async function relierPoints(a, b, opts = {}) {
       </div>`;
   };
   $('#fiche-contenu').innerHTML = `<h2>Relier ${esc(a.nom)} → ${esc(b.nom)}</h2>
-    <div class="ident">${fmt(r.distanceKm, 1, ' km')} à vol d’oiseau · ${esc(r.parametres.preset)} · antennes : relais ${r.parametres.hs} m, extrémités ${hA} / ${hB} m${r.filtreAcces !== 'tous' ? ` · sites ${esc(ACCES[r.filtreAcces] ? ACCES[r.filtreAcces].nom : r.filtreAcces)}` : ''}</div>
+    <div class="ident">${fmt(r.distanceKm, 1, ' km')} à vol d’oiseau · ${esc(nazwaPresetu(r.parametres.preset))} · antennes : relais ${r.parametres.hs} m, extrémités ${hA} / ${hB} m${r.filtreAcces !== 'tous' ? ` · sites ${esc(ACCES[r.filtreAcces] ? ACCES[r.filtreAcces].nom : r.filtreAcces)}` : ''}</div>
     ${!r.possible ? `<div class="alerte attention">✖ ${esc(r.raison)}</div><p class="note">Essayez des antennes plus hautes aux extrémités, ou choisissez un accès moins exigeant ci-dessous.</p>`
       : r.nouveaux === 0 && r.chemin.length === 2 ? `<div class="alerte info-lecture">✔ <b>Liaison directe possible</b> sans relais (marge ${r.direct.marge >= 0 ? '+' : ''}${fmt(r.direct.marge, 1, ' dB')}).</div>`
       : `<div class="alerte ${r.nouveaux ? 'attention' : 'info-lecture'}">${r.nouveaux ? `⚠ Il faut <b>${r.nouveaux} nouveau${r.nouveaux > 1 ? 'x' : ''} relais</b>` : '✔ Possible avec les relais existants'}${r.chemin.some((c) => c.type === 'existant') ? `, en passant par ${r.chemin.filter((c) => c.type === 'existant').map((c) => esc(c.nom)).join(', ')}` : ''}.</div>
@@ -4308,7 +4310,7 @@ async function couvrirPoint(latlng) {
   $('#fiche-contenu').innerHTML = `
     <h2>Couvrir ce point</h2>
     ${blocCoords(c.lat, c.lon, { alt: c.alt })}
-    <div class="meta-longue">antenne à ${r.parametres.ht} m · sites à ${r.parametres.hs} m · ${esc(r.parametres.preset)}</div>
+    <div class="meta-longue">antenne à ${r.parametres.ht} m · sites à ${r.parametres.hs} m · ${esc(nazwaPresetu(r.parametres.preset))}</div>
     <div class="actions-prop"><button id="ajout-cible" class="principal">＋ Ajouter un autre point à couvrir</button></div>
     <p class="note">Ajoutez 1 à 4 autres points : la carte cherche alors <b>un seul site relais</b> qui les couvre tous.</p>
     ${r.propositions.length ? r.propositions.map(carteProp).join('') + '<div class="actions-prop"><button id="gpx-couvrir">Télécharger les 5 points (GPX)</button></div>' : '<div class="vide">Aucun point haut à portée.</div>'}
@@ -4376,7 +4378,7 @@ async function couvrirPoints(cibles) {
   $('#fiche-contenu').innerHTML = `<h2>Couvrir ${r.cibles.length} points avec un seul site</h2>
     <div class="liste-cibles">${listeCibles}</div>
     <div class="actions-prop">${cibles.length < 5 ? '<button id="ajout-cible-multi">＋ Ajouter un point</button>' : ''}<button id="gpx-multi">Télécharger (GPX)</button></div>
-    <div class="meta-longue">antenne ${r.parametres.ht} m aux points · site à ${r.parametres.hs} m · ${esc(r.parametres.preset)}${r.filtreAcces !== 'tous' ? ` · sites ${esc(ACCES[r.filtreAcces] ? ACCES[r.filtreAcces].nom : r.filtreAcces)}` : ''}</div>
+    <div class="meta-longue">antenne ${r.parametres.ht} m aux points · site à ${r.parametres.hs} m · ${esc(nazwaPresetu(r.parametres.preset))}${r.filtreAcces !== 'tous' ? ` · sites ${esc(ACCES[r.filtreAcces] ? ACCES[r.filtreAcces].nom : r.filtreAcces)}` : ''}</div>
     ${r.complet ? `<div class="alerte info-lecture">✔ <b>${esc(nomSommet(r.propositions[0]))}</b> couvre les ${r.cibles.length} points à lui seul.</div>${r.propositions.map((p, i) => carteSite(p, String.fromCharCode(65 + i), i === 0 ? 'Meilleur site' : null)).join('')}`
       : r.paire ? `<div class="alerte attention">Aucun site unique ne couvre les ${r.cibles.length} points. Meilleure solution : <b>2 sites</b> qui se partagent les points${r.paire.liaison ? ` (liaison entre eux : marge ${fmt(r.paire.liaison.marge, 1, ' dB')})` : ''}.</div>${r.paire.sites.map((p, i) => carteSite(p, String(i + 1), `Site ${i + 1} sur 2`)).join('')}${r.propositions.length ? `<details class="alt-relier"><summary>Meilleurs sites uniques (couverture partielle)</summary>${r.propositions.map((p, i) => carteSite(p, String.fromCharCode(65 + i))).join('')}</details>` : ''}`
       : r.propositions.length ? `<div class="alerte attention">Aucun site, ni seul ni à deux, ne couvre tous les points. Meilleure couverture partielle :</div>${r.propositions.map((p, i) => carteSite(p, String.fromCharCode(65 + i))).join('')}`

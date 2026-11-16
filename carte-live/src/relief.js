@@ -1193,7 +1193,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
         if (c < dist[v]) { dist[v] = c; prec[v] = u; nb[v] = nvNouveaux; }
       }
     }
-    if (prec[1] < 0) return { ...base, possible: false, nouveaux: null, chemin: [], bonds: [], alternatives: [], evalues: candidats.length + existants.length, raison: `Aucun chemin trouvé avec au plus ${MAX_NOUVEAUX} nouveaux relais${min ? ' accessibles' : ''} (rayon ${P.rayonMax / 1000} km par bond).` };
+    if (prec[1] < 0) return { ...base, possible: false, nouveaux: null, chemin: [], bonds: [], alternatives: [], evalues: candidats.length + existants.length, raison: `Nie znaleziono trasy z najwyżej ${MAX_NOUVEAUX} nowymi przekaźnikami${min ? ' dostępnymi' : ''} (do ${P.rayonMax / 1000} km na skok). Przy realnych stratach terenu (las, zabudowa) skok przez nizinę to zwykle 10–20 km; na takim dystansie potrzeba więcej przekaźników na wzniesieniach.` };
     const ordre = [];
     for (let v = 1; v >= 0; v = prec[v]) ordre.unshift(v);
     const chemin = ordre.map((i) => { const n = noeuds[i]; const { h, ...reste } = n; return { ...reste, hauteur: h, alt: n.alt ?? Math.round(alt(n.lat, n.lon)) }; });

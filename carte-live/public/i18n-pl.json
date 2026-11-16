@@ -1507,6 +1507,7 @@
 "Modules radio": "Węzły radiowe",
 "Modèle": "Model",
 "Modèle : relief IGN RGE ALTI au pas de 250 m, terre 4/3, diffraction lame de couteau, {}, {} dBm, antennes 2,15 dBi, marge {} dB + pertes d'environnement {} dB{}, rayon {} km. {} sites évalués en {} s · {}.": "Model: teren w rozdzielczości 250 m, Ziemia 4/3, dyfrakcja na krawędzi, {0}, {1} dBm, anteny 2,15 dBi, zapas {2} dB + straty otoczenia {3} dB{4}, promień {5} km. Ocenione miejsca: {6} w {7} s · {8}.",
+"Modèle : relief Copernicus GLO-30 au pas de 250 m, terre 4/3, diffraction lame de couteau, {}, {} dBm, marge {} dB + pertes d'environnement {} dB{}, rayon {} km. {} sites évalués en {} s · {}.": "Model: teren w rozdzielczości 250 m, Ziemia 4/3, dyfrakcja na krawędzi, {0}, {1} dBm, zapas {2} dB + straty otoczenia {3} dB{4}, promień {5} km. Ocenione miejsca: {6} w {7} s · {8}.",
 "Modèle de relief indisponible.": "Model terenu niedostępny.",
 "Modèle inconnu": "Nieznany szablon",
 "Modèle intégré ou inconnu : il ne peut pas être supprimé": "Szablon wbudowany lub nieznany: nie można go usunąć",
