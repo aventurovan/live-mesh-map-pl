@@ -182,6 +182,7 @@ function initCarte() {
   carte = L.map('carte', { zoomControl: false, preferCanvas: MOBILE, worldCopyJump: true }).setView(etat.config.centre, etat.config.zoom);
   L.control.zoom({ position: 'bottomleft' }).addTo(carte);
   installerMaPosition();
+  installerWarstwyMobilne();
   const t = etat.config.tuiles;
   const wmts = (couche, format = 'image/png', style = 'normal') => `https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${couche}&STYLE=${style}&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=${format}`;
   const ign = '&copy; <a href="https://www.ign.fr/" target="_blank" rel="noopener">IGN</a> Géoplateforme';
@@ -8662,4 +8663,52 @@ function rysujNamierzanie() {
 }
 // addEventListener: ogólny onclick przycisków .bascule nadpisałby onclick
 (() => { const podlacz = () => { const b = $('#outil-namierz'); if (b) b.addEventListener('click', (e) => { e.stopPropagation(); setTimeout(() => otworzNamierzanie(), 0); }); }; if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', podlacz); else podlacz(); })();
+
+// ---- PL: telefon: przycisk warstw po prawej stronie mapy (pod ◎) z włączaniem/wyłączaniem wszystkich warstw ----
+function installerWarstwyMobilne() {
+  const Ctrl = L.Control.extend({
+    onAdd() {
+      const b = L.DomUtil.create('button', 'btn-position btn-warstwy');
+      b.type = 'button'; b.title = 'Warstwy'; b.setAttribute('aria-label', 'Warstwy');
+      b.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5z"/><path d="m2 13 10 5 10-5"/><path d="m2 17.5 10 5 10-5" opacity=".55"/></svg>';
+      L.DomEvent.disableClickPropagation(b);
+      b.onclick = () => przelaczPanelWarstw(b);
+      return b;
+    },
+  });
+  new Ctrl({ position: 'topright' }).addTo(carte);
+}
+function przelaczPanelWarstw(btn) {
+  let p = $('#panel-warstw');
+  if (p) { p.remove(); btn.classList.remove('actif'); return; }
+  p = document.createElement('div');
+  p.id = 'panel-warstw';
+  document.body.appendChild(p);
+  btn.classList.add('actif');
+  rysujPanelWarstw();
+  const zamknij = (e) => { if (!p.isConnected) { document.removeEventListener('pointerdown', zamknij, true); return; } if (!p.contains(e.target) && !btn.contains(e.target)) { p.remove(); btn.classList.remove('actif'); document.removeEventListener('pointerdown', zamknij, true); } };
+  setTimeout(() => document.addEventListener('pointerdown', zamknij, true), 0);
+}
+function rysujPanelWarstw() {
+  const p = $('#panel-warstw'); if (!p) return;
+  const wiersz = (klucz, nazwa, on) => `<button type="button" class="pw-wiersz${on ? ' on' : ''}" data-pw="${esc(klucz)}"><span>${esc(nazwa)}</span><i class="pw-przel"></i></button>`;
+  const ROLE = { repeteur: 'Repeatery', salon: 'Room servery', companion: 'Companiony', capteur: 'Czujniki', inconnu: 'Nieznane' };
+  const LACZA = { rf: 'Zmierzone', trace: 'Ślady (trace)', chemin: 'Ścieżki', voisinage: 'Sąsiedzi' };
+  const mapa = [...document.querySelectorAll('.menu-couches:not(.menu-outils) .bascule[data-couche]')]
+    .filter((b) => !b.hidden && !['feux', 'federation'].includes(b.dataset.couche)) // także te ukryte poziomem wyświetlania
+    .map((b) => wiersz('c:' + b.dataset.couche, b.textContent.trim(), b.classList.contains('actif')));
+  const mcOk = typeof mc !== 'undefined' && mc.roles;
+  p.innerHTML = `<div class="pw-naglowek"><b>Warstwy</b><button type="button" class="pw-x" aria-label="Zamknij">✕</button></div>
+    ${mcOk ? `<div class="pw-sekcja">Węzły</div>${Object.keys(ROLE).filter((k) => k in mc.roles).map((k) => wiersz('r:' + k, ROLE[k], mc.roles[k])).join('')}
+    <div class="pw-sekcja">Łącza</div>${Object.keys(LACZA).map((k) => wiersz('l:' + k, LACZA[k], mc.couches[k])).join('')}` : ''}
+    <div class="pw-sekcja">Na mapie</div>${mapa.join('')}`;
+  p.querySelector('.pw-x').onclick = () => { p.remove(); const b = $('.btn-warstwy'); if (b) b.classList.remove('actif'); };
+  p.querySelectorAll('[data-pw]').forEach((b) => (b.onclick = () => {
+    const [typ, k] = b.dataset.pw.split(':');
+    if (typ === 'c') { const o = document.querySelector(`.menu-couches:not(.menu-outils) .bascule[data-couche="${k}"]`); if (o) o.click(); }
+    else if (typ === 'r') { mc.roles[k] = !mc.roles[k]; try { localStorage.setItem('gaulix_mc_roles', JSON.stringify(mc.roles)); } catch { /* idem */ } mcDessinerNoeuds(); rendreLegende(); }
+    else if (typ === 'l') { mc.couches[k] = !mc.couches[k]; mcDessinerLiens(); rendreLegende(); }
+    rysujPanelWarstw();
+  }));
+}
 
