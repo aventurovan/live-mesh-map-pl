@@ -1794,3 +1794,13 @@ body:not(.theme-clair) .mt-ik { background: rgba(255,255,255,.08); }
 .mt-strz { color: var(--doux); font-weight: 700; }
 @media (max-width: 380px) { .mt-siatka { grid-template-columns: 1fr; } }
 
+/* PL: pasek pakietów na żywo także na telefonie — nad szufladą, przycisk + i atrybucja wyżej */
+@media (max-width: 900px) {
+  .pasek-pakietow { left: 8px !important; right: 8px; bottom: calc(var(--h-tiroir-reel, 96px) + 8px); height: 36px; gap: 8px; padding: 0 4px; border-radius: 11px; font-size: 12px; z-index: 998; }
+  .pasek-pakietow .pp-na-zywo { padding: 5px 7px; font-size: 10px; }
+  .pasek-pakietow .pp-lista { gap: 12px; }
+  .leaflet-bottom.leaflet-right { bottom: calc(var(--h-tiroir-reel, 96px) + 50px) !important; }
+  .fab-plus { bottom: calc(var(--h-tiroir-reel, 96px) + 58px) !important; }
+  body.tiroir-plein .pasek-pakietow { display: none; }
+}
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 520px) { .pasek-pakietow { display: none; } }

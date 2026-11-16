@@ -32,7 +32,11 @@
         else if (b.classList.contains('actif')) { e.stopImmediatePropagation(); e.preventDefault(); const r = document.getElementById('replier'); if (r) r.click(); }
       }, true);
     }
-    // Pasek pakietów na żywo
+  }
+
+  // Pasek pakietów na żywo — na komputerze na dole mapy, na telefonie nad szufladą
+  function dodajPasek() {
+    if (document.querySelector('.pasek-pakietow')) return;
     const pasek = document.createElement('div');
     pasek.className = 'pasek-pakietow';
     pasek.innerHTML = '<button type="button" class="pp-na-zywo" title="Otwórz analizator pakietów">NA ŻYWO</button><div class="pp-lista" aria-live="off"><span class="pp-pusty">Czekam na pakiety…</span></div>';
@@ -71,5 +75,6 @@
     while (lista.children.length > 14) lista.lastElementChild.remove();
   };
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ulozUklad); else ulozUklad();
+  const start = () => { ulozUklad(); dodajPasek(); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
