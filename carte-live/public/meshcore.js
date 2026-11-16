@@ -1604,6 +1604,15 @@ async function mcOuvrirQr(q) {
 }
 
 // ---- Fiche d'un nœud MeshCore ------------------------------------------------------------------
+// PL: link z zewnątrz (np. strona statystyk): ?mc=<klucz lub jego początek> → wyśrodkuj i otwórz kartę węzła
+function mcOtworzZAdresu() {
+  const p = (new URLSearchParams(location.search).get('mc') || '').toUpperCase().replace(/[^0-9A-F]/g, '');
+  if (p.length < 4) return;
+  const n = mc.noeuds.get(p) || [...mc.noeuds.values()].find((x) => String(x.cle).toUpperCase().startsWith(p));
+  if (!n) return;
+  if (n.lat != null) carte.setView([n.lat, n.lon], Math.max(carte.getZoom(), 12));
+  setTimeout(() => mcOuvrirFiche(n.cle), 300);
+}
 async function mcOuvrirFiche(cle, ongletInitial) {
   mc.selection = cle;
   etat.selection = null;
@@ -1906,7 +1915,7 @@ function demarrerMeshcore() {
   let minuterieVue = null;
   carte.on('moveend', () => { clearTimeout(minuterieVue); minuterieVue = setTimeout(() => { mc.emprise = null; mcDessinerNoeuds(); mcDessinerLiens(); if (!etat.zone) mcMajAlertes(); }, 250); });
   $('#fermer-fiche').addEventListener('click', () => { mc.selection = null; });
-  Promise.all([mcChargerNoeuds(), mcChargerLiens(), mcChargerEtat()]).then(() => { appliquerVueReseau(); }).catch(() => appliquerVueReseau());
+  Promise.all([mcChargerNoeuds(), mcChargerLiens(), mcChargerEtat()]).then(() => { appliquerVueReseau(); mcOtworzZAdresu(); }).catch(() => appliquerVueReseau());
   setInterval(() => mcChargerLiens().catch(() => {}), 120000);
   setInterval(mcDessinerChaleur, 20000);
   setInterval(() => { mcChargerNoeuds().catch(() => {}); }, 60000);
