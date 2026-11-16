@@ -3585,7 +3585,7 @@
 "▶ Reprendre la passerelle": "▶ Wznów most",
 "▶ Simuler depuis ce nœud": "▶ Symuluj od tego węzła",
 "◆ relais · ● nœud · halo = actif, pâle = inactif": "◆ przekaźnik · ● węzeł · poświata = aktywny, blady = nieaktywny",
-"◆ répéteur · ■ room server · ◯ companion · ▲ capteur · anneau = observateur": "◆ repeater · ■ room server · ◯ companion · ▲ czujnik · pierścień = obserwator",
+"◆ répéteur · ■ room server · ◯ companion · ▲ capteur · anneau = observateur": "● repeater · ■ room server · ◯ companion · ▲ czujnik · pierścień = obserwator",
 "○ connexion…": "○ łączenie…",
 "○ en attente": "○ oczekuje",
 "○ non connectée": "○ niepołączony",
@@ -5158,5 +5158,7 @@
 "Calcul du profil…": "Obliczanie profilu terenu…",
 "✕ Effacer la carte": "✕ Wyczyść mapę",
 "Effacer la couverture affichée": "Usuń z mapy zasięg, profil terenu i pomiary",
-"Suivant ›": "Dalej ›"
+"Suivant ›": "Dalej ›",
+"Chercher une fonction": "Szukaj funkcji",
+"Tableau de bord du réseau": "Pulpit sieci"
 }

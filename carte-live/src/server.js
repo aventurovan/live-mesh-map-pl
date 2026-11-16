@@ -251,8 +251,12 @@ app.get('/api/aide/:page', (req, res) => {
   const f = fs.readdirSync(DOSSIER_AIDE).find((x) => x.normalize('NFC') === nom + '.md');
   if (!f) return res.status(404).json({ erreur: 'Page d’aide introuvable' });
   // Version anglaise (wiki/en/<même nom>.md) quand elle existe
-  const en = req.query.langue === 'en' ? path.join(DOSSIER_AIDE, 'en', f) : null;
-  if (en && fs.existsSync(en)) return res.set('Cache-Control', 'max-age=300').json({ page: nom, langue: 'en', texte: fs.readFileSync(en, 'utf8') });
+  // PL: najpierw wiki/pl/, potem wiki/en/, na końcu francuski oryginał
+  const kolejnosc = req.query.langue === 'pl' ? ['pl', 'en'] : req.query.langue === 'en' ? ['en'] : [];
+  for (const j of kolejnosc) {
+    const plik = path.join(DOSSIER_AIDE, j, f);
+    if (fs.existsSync(plik)) return res.set('Cache-Control', 'max-age=300').json({ page: nom, langue: j, texte: fs.readFileSync(plik, 'utf8') });
+  }
   res.set('Cache-Control', 'max-age=300').json({ page: nom, langue: 'fr', texte: fs.readFileSync(path.join(DOSSIER_AIDE, f), 'utf8') });
 });
 

@@ -1615,3 +1615,40 @@ body.uklad-nowy .fab-plus { bottom: 74px; }
 body.uklad-nowy header.barre { max-width: none; pointer-events: auto; }
 body.uklad-nowy .outils summary, body.uklad-nowy .outils > button { white-space: nowrap; }
 body.uklad-nowy .legende { width: auto; max-width: 300px; }
+
+/* PL: kafelki ekranu startowego z ikonami SVG i spójna stopka */
+.tuile-accueil { grid-template-columns: 40px 1fr; column-gap: 10px; padding: 12px; min-height: 68px; transition: transform .12s, box-shadow .12s; }
+.tuile-accueil:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(31, 42, 38, .10); filter: none; }
+.tuile-accueil .ic { grid-row: span 2; width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, .7); color: var(--accent); font-size: 0; }
+body:not(.theme-clair) .tuile-accueil .ic { background: rgba(255, 255, 255, .08); }
+.tuile-accueil b { font-size: 13.5px; font-weight: 800; }
+.tuile-accueil small { color: var(--tres-doux); font-size: 11.5px; line-height: 1.3; }
+.pied-accueil { display: flex; flex-direction: column; align-items: stretch; gap: 0; margin: 14px 0 6px; border: 1px solid var(--bord); border-radius: 14px; overflow: hidden; background: var(--surface); }
+.pa-wiersz { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; margin: 0; border: 0; border-top: 1px solid var(--bord); background: none; color: var(--texte); font-size: 12.5px; font-weight: 600; text-align: left; width: 100%; }
+.pa-wiersz:first-child { border-top: 0; }
+.pa-wiersz select { min-width: 120px; border-radius: 8px; padding: 4px 8px; }
+.pa-szukaj { cursor: pointer; justify-content: flex-start; }
+.pa-szukaj .ik { color: var(--accent); flex: none; }
+.pa-szukaj span { flex: 1; }
+.pa-szukaj:hover { background: var(--surface-2); }
+.pa-szukaj kbd { font-family: var(--mono); font-size: 10.5px; color: var(--tres-doux); border: 1px solid var(--bord); border-radius: 6px; padding: 1px 6px; }
+.pli-tableau { margin-top: 10px; border: 1px solid var(--bord); border-radius: 14px; background: var(--surface); }
+.pli-tableau > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; font-weight: 800; font-size: 13px; color: var(--texte); }
+.pli-tableau > summary::-webkit-details-marker { display: none; }
+.pli-tableau > summary::after { content: "›"; font-size: 18px; color: var(--tres-doux); transition: transform .15s; }
+.pli-tableau[open] > summary::after { transform: rotate(90deg); }
+.pli-tableau[open] > summary { border-bottom: 1px solid var(--bord); }
+.pli-tableau > :not(summary) { padding: 8px; }
+/* legenda: stała szerokość, bez rozjeżdżania w prawo */
+body.uklad-nowy .legende { width: 300px; max-width: calc(100vw - 24px); right: 12px; box-sizing: border-box; overflow: hidden; }
+/* legenda: szerokość dopasowana, zawartość zawija się zamiast wychodzić poza ramkę */
+body.uklad-nowy .legende { width: 340px; overflow: visible; }
+.legende .leg-ligne { flex-wrap: wrap; row-gap: 4px; }
+.legende .leg-ligne > * { flex-shrink: 0; }
+.legende .leg-ligne .leg-nom { flex: 1 1 auto; min-width: 60px; }
+.legende .pilule { min-width: 0; }
+/* kafelki: ikona nad tytułem, jak karty na stronie */
+.tuiles-accueil { gap: 10px; }
+.tuile-accueil { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 12px 13px; min-height: 0; }
+.tuile-accueil .ic { width: 38px; height: 38px; margin-bottom: 2px; }
+.tuile-accueil b { line-height: 1.2; }

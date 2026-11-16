@@ -172,19 +172,30 @@ function choisirPointPuis(texte, action) {
   document.body.classList.add('choix-point');
   carte.once('click', (e) => { document.body.classList.remove('choix-point'); action(e.latlng); });
 }
+// PL: ikony kafelków (obrys, kolor z motywu) zamiast emotek
+const IKONY_KAFELKOW = {
+  siec: '<path d="M4.9 19.1a10 10 0 0 1 0-14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M19.1 4.9a10 10 0 0 1 0 14.2"/><circle cx="12" cy="12" r="2"/>',
+  wiadomosci: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/>',
+  zglos: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+  zasieg: '<path d="m3 20 6-14 4 8 3-5 5 11z"/>',
+  wezly: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>',
+  ustawienia: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
+  szukaj: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+};
+const ikonaSvg = (k, r = 22) => `<svg class="ik" viewBox="0 0 24 24" width="${r}" height="${r}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IKONY_KAFELKOW[k] || ''}</svg>`;
 function tuilesAccueil() {
   const t = [
-    { ic: '👀', nom: 'Voir le réseau', aide: 'Qui est en ligne, alertes, relais', go: () => { const d = $('#pli-tableau'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } } },
-    { ic: '✉️', nom: 'Lire et écrire', aide: 'Messages des canaux', go: () => (etat.membre ? allerGroupe('messages') : $('#btn-admin').click()) },
-    { ic: '🚩', nom: 'Signaler', aide: 'Route inondée, arbre, accident…', go: () => (etat.membre ? choisirPointPuis('Touchez la carte à l’endroit à signaler.', (ll) => formSignalement(ll.lat, ll.lng)) : $('#btn-admin').click()) },
-    { ic: '📡', nom: 'Étudier la couverture', aide: 'Où ça passe, où poser un relais', go: () => allerGroupe('couverture') },
+    { ic: 'siec', nom: 'Voir le réseau', aide: 'Qui est en ligne, alertes, relais', go: () => { const d = $('#pli-tableau'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } } },
+    { ic: 'wiadomosci', nom: 'Lire et écrire', aide: 'Messages des canaux', go: () => (etat.membre ? allerGroupe('messages') : $('#btn-admin').click()) },
+    { ic: 'zglos', nom: 'Signaler', aide: 'Route inondée, arbre, accident…', go: () => (etat.membre ? choisirPointPuis('Touchez la carte à l’endroit à signaler.', (ll) => formSignalement(ll.lat, ll.lng)) : $('#btn-admin').click()) },
+    { ic: 'zasieg', nom: 'Étudier la couverture', aide: 'Où ça passe, où poser un relais', go: () => allerGroupe('couverture') },
   ];
   // Signalements masqués par l'administrateur : la tuile mène à la vigilance météo
   // Poza Francją (PL) ostrzeżenia Météo-France nic nie dają: kafelek znika
   if (typeof masquee === 'function' && masquee('signalements') && etat.config && etat.config.horsFrance) t.splice(2, 1);
-  else if (typeof masquee === 'function' && masquee('signalements')) t[2] = { ic: '🌦️', nom: 'Alertes météo', aide: 'Vigilance Météo-France en cours', go: () => ficheAlertesOff() };
-  if (etat.gestion) t.push({ ic: '🛠', nom: 'Gérer mes nœuds', aide: 'Programmer, équipes, positions', go: () => allerGroupe('gerer') });
-  t.push({ ic: '⚙️', nom: etat.membre ? 'Régler la carte' : 'Se connecter, affichage', aide: etat.admin ? 'Tous les réglages au même endroit' : 'Compte, affichage, aide', go: () => allerGroupe('reglages') });
+  else if (typeof masquee === 'function' && masquee('signalements')) t[2] = { ic: 'zglos', nom: 'Alertes météo', aide: 'Vigilance Météo-France en cours', go: () => ficheAlertesOff() };
+  if (etat.gestion) t.push({ ic: 'wezly', nom: 'Gérer mes nœuds', aide: 'Programmer, équipes, positions', go: () => allerGroupe('gerer') });
+  t.push({ ic: 'ustawienia', nom: etat.membre ? 'Régler la carte' : 'Se connecter, affichage', aide: etat.admin ? 'Tous les réglages au même endroit' : 'Compte, affichage, aide', go: () => allerGroupe('reglages') });
   return t;
 }
 function rendreAccueil() {
@@ -194,9 +205,9 @@ function rendreAccueil() {
   const index = typeof indexReglages === 'function' ? indexReglages() : [];
   const favoris = ergo.favoris.map((n) => index.find((e) => e.t === n)).filter(Boolean);
   z.innerHTML = `<h2 class="titre-accueil">Que voulez-vous faire ?</h2>
-    <div class="tuiles-accueil">${tuiles.map((x, i) => `<button type="button" class="tuile-accueil" data-i="${i}"><span class="ic" aria-hidden="true">${x.ic}</span><b>${esc(x.nom)}</b><small>${esc(x.aide)}</small></button>`).join('')}</div>
+    <div class="tuiles-accueil">${tuiles.map((x, i) => `<button type="button" class="tuile-accueil" data-i="${i}"><span class="ic" aria-hidden="true">${ikonaSvg(x.ic)}</span><b>${esc(x.nom)}</b><small>${esc(x.aide)}</small></button>`).join('')}</div>
     ${favoris.length ? `<div class="raccourcis"><span class="note">⭐ Mes raccourcis</span>${favoris.map((e) => `<button type="button" class="mini" data-fav="${esc(e.t)}">${esc(e.t)}</button>`).join('')}</div>` : ''}
-    <div class="pied-accueil"><button type="button" class="mini" id="acc-chercher">🔎 Chercher une fonction</button><label class="note">Affichage <select id="acc-niveau" aria-label="Niveau d’affichage">${Object.entries(NIVEAUX).map(([k, v]) => `<option value="${k}" ${k === ergo.niveau ? 'selected' : ''}>${v}</option>`).join('')}</select></label><label class="note" translate="no">🌐 Język · Langue · Language <select id="acc-langue" aria-label="Langue · Language"><option value="pl" ${window.LANGUE === 'pl' ? 'selected' : ''}>Polski</option><option value="en" ${window.LANGUE === 'en' ? 'selected' : ''}>English</option><option value="fr" ${window.LANGUE === 'fr' ? 'selected' : ''}>Français</option></select></label></div>`;
+    <div class="pied-accueil"><button type="button" class="pa-wiersz pa-szukaj" id="acc-chercher">${ikonaSvg('szukaj', 16)}<span>Chercher une fonction</span><kbd>Ctrl K</kbd></button><label class="pa-wiersz"><span>Affichage</span> <select id="acc-niveau" aria-label="Niveau d’affichage">${Object.entries(NIVEAUX).map(([k, v]) => `<option value="${k}" ${k === ergo.niveau ? 'selected' : ''}>${v}</option>`).join('')}</select></label><label class="pa-wiersz" translate="no"><span>Język · Langue · Language</span> <select id="acc-langue" aria-label="Langue · Language"><option value="pl" ${window.LANGUE === 'pl' ? 'selected' : ''}>Polski</option><option value="en" ${window.LANGUE === 'en' ? 'selected' : ''}>English</option><option value="fr" ${window.LANGUE === 'fr' ? 'selected' : ''}>Français</option></select></label></div>`;
   z.querySelectorAll('[data-i]').forEach((b) => (b.onclick = () => tuiles[Number(b.dataset.i)].go()));
   z.querySelectorAll('[data-fav]').forEach((b) => (b.onclick = () => { const e = index.find((x) => x.t === b.dataset.fav); if (e) e.go(); }));
   $('#acc-chercher').onclick = () => ouvrirRechercheReglages();
@@ -209,7 +220,7 @@ function installerPliTableau() {
   if (!t || $('#pli-tableau')) return;
   const d = document.createElement('details');
   d.id = 'pli-tableau'; d.className = 'pli-tableau';
-  d.innerHTML = '<summary>📊 Tableau de bord du réseau</summary>';
+  d.innerHTML = '<summary>Tableau de bord du réseau</summary>';
   t.parentNode.insertBefore(d, t);
   d.appendChild(t);
   const memo = lireLs('gaulix_pli_tableau', null);
@@ -294,7 +305,7 @@ async function ficheDiagnostic() {
 }
 
 // ---- Aide intégrée (pages du wiki) ---------------------------------------------------------------------------
-const AIDE_PAR_ONGLET = { reseau: 'La-carte', noeuds: 'La-carte', trafic: 'Contrôle-du-trafic', analyse: 'La-carte', sites: 'Couverture-et-sites', gestion: 'Programmation-à-distance', messages: 'Messages', meshcore: 'MeshCore', reglages: 'Home' };
+const AIDE_PAR_ONGLET = { reseau: 'La-carte', noeuds: 'La-carte', trafic: 'La-carte', analyse: 'La-carte', sites: 'Couverture-et-sites', gestion: 'MeshCore', messages: 'Messages', meshcore: 'MeshCore', reglages: 'Home' };
 function markdownSimple(md) {
   const enLigne = (t) => esc(t)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -327,7 +338,7 @@ async function ouvrirAide(page) {
   const z = $('#fiche-contenu');
   z.innerHTML = '<div class="vide">Chargement de l’aide…</div>';
   let r;
-  try { r = await api('/api/aide/' + encodeURIComponent(page) + (window.LANGUE !== 'fr' ? '?langue=en' : '')); } catch (e) { z.innerHTML = `<div class="vide">Aide indisponible sur ce serveur (${esc(e.message)}).</div>`; return; }
+  try { r = await api('/api/aide/' + encodeURIComponent(page) + (window.LANGUE !== 'fr' ? '?langue=' + (window.LANGUE === 'pl' ? 'pl' : 'en') : '')); } catch (e) { z.innerHTML = `<div class="vide">Aide indisponible sur ce serveur (${esc(e.message)}).</div>`; return; }
   z.innerHTML = `<div class="aide"><div class="actions-prop"><button type="button" class="mini" data-aide="Home">📚 Sommaire</button><button type="button" class="mini" id="aide-chercher">🔎 Chercher une fonction</button></div><div ${r.langue === window.LANGUE ? '' : 'translate="no"'}>${markdownSimple(r.texte)}</div></div>`;
   z.scrollTop = 0;
   z.querySelectorAll('[data-aide]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); ouvrirAide(a.dataset.aide); }));
