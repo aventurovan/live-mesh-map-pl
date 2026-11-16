@@ -7,13 +7,14 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (v, d = 0, u = '') => (v == null || Number.isNaN(v) ? '–' : Number(v).toFixed(d).replace('.', ',') + u);
 // Réseau affiché : Meshtastic (par défaut) ou MeshCore (?reseau=mc)
-const MC = new URLSearchParams(location.search).get('reseau') === 'mc';
+const MC = true; // PL: topologia tylko MeshCore (wcześniej ?reseau=mc)
 const ROLES = MC ? {
   repeteur: ['Répéteur', 'var(--r-router)'], salon: ['Room server', 'var(--r-base)'], companion: ['Companion', 'var(--r-client)'], capteur: ['Capteur', 'var(--r-muet)'],
 } : {
   ROUTER: ['Routeur', 'var(--r-router)'], ROUTER_LATE: ['Routeur tardif', 'var(--r-late)'], CLIENT_BASE: ['Client de base', 'var(--r-base)'],
   CLIENT: ['Client', 'var(--r-client)'], CLIENT_MUTE: ['Client muet', 'var(--r-muet)'], REPEATER: ['Répéteur', 'var(--r-late)'],
 };
+const tr = (x) => (window.tr ? window.tr(x) : x);
 const PASSERELLE = MC ? 'observateur' : 'passerelle MQTT';
 const couleurRole = (r) => (ROLES[r] || [null, 'var(--r-autre)'])[1];
 const libRole = (r) => (ROLES[r] || [r || 'inconnu'])[0];
@@ -455,7 +456,7 @@ function rendreSimulation() {
     <div class="form">
       <label style="grid-column:1/-1">Émetteur <select id="s-emetteur">${tri.map((n) => `<option value="${n.num}" ${n.num === em ? 'selected' : ''}>${esc(n.nomLong || n.id)}</option>`).join('')}</select></label>
       <label>Paquet <select id="s-paquet">${Object.entries(PAQUETS).map(([k, [lib]]) => `<option value="${k}" ${anc && PAQUETS[k][1] === anc.octets ? 'selected' : ''}>${lib}</option>`).join('')}</select></label>
-      <label>Preset <select id="s-preset">${Object.keys(SimMaillage.PRESETS).filter((k) => MC === k.startsWith('MESHCORE')).map((k) => `<option ${k === ((anc && anc.preset) || d.preset) ? 'selected' : ''}>${k}</option>`).join('')}</select></label>
+      <label>Preset <select id="s-preset">${Object.keys(SimMaillage.PRESETS).filter((k) => MC === k.startsWith('MESHCORE')).map((k) => `<option value="${k}" ${k === ((anc && anc.preset) || d.preset) ? 'selected' : ''}>${({ MESHCORE_FR: 'Południe SF6 (62,5 kHz · CR8)', MESHCORE_EU_NARROW: 'MeshCore Polska SF8 (62,5 kHz · CR8)', MESHCORE_SF10: 'SF10 (62,5 kHz · CR5)' })[k] || k}</option>`).join('')}</select></label>
       ${MC ? `<label>Sauts max (flood.max) <select id="s-sauts">${[2, 3, 4, 5, 6, 8, 12, 16, 32, 64].map((k) => `<option ${k === ((anc && anc.hopLimit) || 64) ? 'selected' : ''}>${k}</option>`).join('')}</select></label>
       <label>tx_delay_factor <select id="s-txdelay">${[0.25, 0.5, 0.75, 1, 1.5, 2].map((k) => `<option value="${k}" ${k === ((anc && anc.txDelayFactor) || 0.5) ? 'selected' : ''}>${String(k).replace('.', ',')}${k === 0.5 ? ' (défaut)' : ''}</option>`).join('')}</select></label>`
       : `<label>Limite de sauts <select id="s-sauts">${[1, 2, 3, 4, 5, 6, 7].map((k) => `<option ${k === ((anc && anc.hopLimit) || d.hopLimit || 3) ? 'selected' : ''}>${k}</option>`).join('')}</select></label>
@@ -547,7 +548,7 @@ function animer() {
     }
     for (let k = actives.length - 1; k >= 0; k--) if (actives[k].fin <= t) { actives[k].el.remove(); actives.splice(k, 1); }
     positionner();
-    $('#horloge').innerHTML = `t = <b>${fmt(t / 1000, 1, ' s')}</b> · atteints <b>${recu.size - 1}</b>/${res.total} · émissions ${compteurs.emissions} · pertes ${compteurs.pertes} · annulées ${compteurs.annules}`;
+    $('#horloge').innerHTML = `t = <b>${fmt(t / 1000, 1, ' s')}</b> · ${tr('atteints')} <b>${recu.size - 1}</b>/${res.total} · ${tr('émissions')} ${compteurs.emissions} · ${tr('pertes')} ${compteurs.pertes} · ${tr('annulées')} ${compteurs.annules}`;
     if (i < ev.length || actives.length) etat.anim.raf = requestAnimationFrame(pas);
     else {
       $('#horloge').innerHTML += ' · <b>terminé</b>';
@@ -750,7 +751,7 @@ window.addEventListener('resize', () => { if (etat.noeuds.length) dessiner(); })
   autre.href = MC ? 'topologie.html' : 'topologie.html?reseau=mc';
   autre.textContent = MC ? '⇄ Meshtastic' : '⇄ MeshCore';
   autre.title = 'Topologie de l’autre réseau';
-  $('header h1').after(autre);
+  if (!MC) $('header h1').after(autre); // PL: tylko MeshCore, bez przejścia do Meshtastic
   document.title = MC ? 'Topologie MeshCore' : 'Topologie Meshtastic';
   $('header h1').firstChild.textContent = MC ? 'Topologie MeshCore ' : 'Topologie Meshtastic ';
   if (!MC) return;
