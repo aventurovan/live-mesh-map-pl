@@ -3674,13 +3674,13 @@ function fichePartager() {
     ${lien(base + '/metrics', 'Métriques Prometheus', 'à ajouter comme cible dans Prometheus, puis tableaux Grafana')}
     <h3>Home Assistant</h3>
     <label class="bloc-code">Dans configuration.yaml<textarea readonly rows="11">${esc(ha)}</textarea></label>
-    ${etat.admin ? `<h3>Bulles voisines (fédération)</h3>
+    ${false ? `<h3>Bulles voisines (fédération)</h3>
     <p class="note">Déclarez les cartes live des départements voisins : leurs relais s’affichent (couche « Bulles voisines ») et comptent dans les calculs de couverture près des limites. Votre propre carte publie ses relais à l’adresse <span class="mono">${esc(base)}/api/federation</span> : donnez votre adresse aux autres bulles.</p>
     <div id="liste-federation"><div class="vide">Chargement…</div></div>
     <form id="f-federation" class="parametres compact"><label>Adresse de la carte voisine <input name="url" placeholder="https://carte-42.exemple.fr" required></label><label>Nom (facultatif) <input name="nom" placeholder="Loire"></label><button type="submit" class="principal">Ajouter</button></form>
     <p class="erreur" id="federation-retour"></p>` : ''}
     <p class="note">Ces exports suivent les mêmes règles de confidentialité que la carte publique. Pour les protéger, définissez <span class="mono">EXPORT_JETON</span> dans le fichier .env : il faut alors ajouter <span class="mono">?jeton=…</span> aux adresses (ou l’en-tête « Authorization: Bearer … »).</p>`;
-  if (etat.admin) {
+  if (etat.admin && $('#f-federation')) {
     rendreFederationAdmin();
     $('#f-federation').onsubmit = async (e) => {
       e.preventDefault();
