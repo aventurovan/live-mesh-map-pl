@@ -3148,7 +3148,7 @@ async function ficheSommet(s) {
   const r = await voirCouvertureSite(s);
   $('#fiche-contenu').innerHTML = `
     <h2>${esc(nomSommet(s))}</h2>
-    <div class="ident">${s.commune ? esc(s.commune) + ' · ' : ''}${s.source === 'osm' ? 'Sommet OpenStreetMap' : 'Détecté dans le relief IGN'}${s.rangPlan ? ` · <b style="color:#f4c542">site recommandé n° ${s.rangPlan}</b>` : ''}</div>
+    <div class="ident">${s.commune ? esc(s.commune) + ' · ' : ''}<span>${s.source === 'osm' ? 'Sommet OpenStreetMap' : 'Détecté dans le relief IGN'}</span>${s.rangPlan ? ` · <b style="color:#f4c542">site recommandé n° ${s.rangPlan}</b>` : ''}</div>
     ${blocCoords(s.lat, s.lon, { alt: s.alt })}
     <div class="acces-ligne">Accès : ${texteAcces(s.acces)}</div>
     <div class="grille">
