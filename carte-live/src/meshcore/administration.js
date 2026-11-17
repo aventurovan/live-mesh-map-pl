@@ -567,21 +567,23 @@ function creerAdministrationMc(config, companion, reseauMc, journal, surFin = ()
   try { modeles = lireJson(fModeles); } catch {
     // Premier lancement : standard du réseau MeshCore Południe SF6 (pas de régions pour l'instant)
     modeles = [{
-      id: 'base-repeteur-poludnie', nom: 'Repeater podstawowy (Południe SF6)', description: 'Standard sieci MeshCore Południe: radio 869.618 / 62.5 / SF6 / CR8, moc 22 dBm, prefiks 2 bajty, advert lokalny co 60 min, flood co 12 h, flood.max 32, wykrywanie pętli moderate.',
-      valeurs: { radio: '869.618,62.5,6,8', tx: '22', 'path.hash.mode': '1', 'advert.interval': '60', 'flood.advert.interval': '12', 'flood.max': '32', 'loop.detect': 'moderate' },
+      id: 'base-repeteur-poludnie', nom: 'Repeater podstawowy (Południe SF6)', description: 'Standard sieci MeshCore Południe: radio 869.618 / 62.5 / SF6 / CR8, moc 22 dBm, prefiks 2 bajty, advert lokalny co 60 min, flood co 12 h, flood.max 32, wykrywanie pętli minimal.',
+      valeurs: { radio: '869.618,62.5,6,8', tx: '22', 'path.hash.mode': '1', 'advert.interval': '60', 'flood.advert.interval': '12', 'flood.max': '32', 'loop.detect': 'minimal' },
       regions: [],
       horloge: true, redemarrer: true, auteur: 'carte', heure: Date.now(),
     }];
   }
-  // Południe SF6: szablon podstawowy zapisany przed 16.11.2026 nie miał loop.detect – uzupełniamy raz
+  // Południe SF6: szablon podstawowy ma loop.detect minimal (17.11.2026 cofnięte z moderate) – poprawiamy raz
   {
     const b = modeles.find((x) => x.id === 'base-repeteur-poludnie');
-    if (b && b.valeurs && !b.valeurs['loop.detect']) {
-      b.valeurs['loop.detect'] = 'moderate';
-      if (b.description && !b.description.includes('pętli')) b.description = b.description.replace(/\.?$/, ', wykrywanie pętli moderate.');
+    if (b && b.valeurs && !b.loopMinimal && b.valeurs['loop.detect'] !== 'minimal') {
+      b.valeurs['loop.detect'] = 'minimal';
+      b.loopMinimal = true;
+      if (b.description) b.description = b.description.includes('pętli') ? b.description.replace(/wykrywanie pętli \w+/, 'wykrywanie pętli minimal') : b.description.replace(/\.?$/, ', wykrywanie pętli minimal.');
       try { ecrire(fModeles, modeles); } catch {}
     }
   }
+
   function enregistrerModele(m, auteur) {
     const nom = String(m.nom || '').trim().slice(0, 40);
     if (!nom) throw new Error('nom du modèle manquant');
@@ -596,7 +598,7 @@ function creerAdministrationMc(config, companion, reseauMc, journal, surFin = ()
     const regions = validerRegions((m.regions || []).map((a) => ({ op: String(a.op || '').toLowerCase(), nom: a.nom, parent: a.parent })));
     if (!Object.keys(valeurs).length && !regions.length) throw new Error('aucun réglage dans ce modèle');
     const id = m.id && modeles.some((x) => x.id === m.id) ? m.id : crypto.randomBytes(4).toString('hex');
-    const nouveau = { id, nom, description: String(m.description || '').slice(0, 200), valeurs, regions, horloge: m.horloge !== false, redemarrer: !!m.redemarrer, auteur, heure: Date.now() };
+    const nouveau = { id, nom, description: String(m.description || '').slice(0, 200), valeurs, regions, horloge: m.horloge !== false, redemarrer: !!m.redemarrer, auteur, heure: Date.now(), loopMinimal: true };
     modeles = [...modeles.filter((x) => x.id !== id), nouveau];
     ecrire(fModeles, modeles);
     return nouveau;
