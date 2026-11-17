@@ -264,7 +264,7 @@ function rendreHubReglages() {
     ['♻️', 'Restaurer une sauvegarde complète', 'Reprendre tout depuis le fichier .tar.gz d’un autre serveur (remplace la base, les réglages et les comptes)', () => choisirEtRestaurer()],
     ['📜', 'Journal du serveur', 'Ce que fait la carte, erreurs', () => ouvrirDlg('journal')],
     ['⬆️', 'Mise à jour de la carte', 'Version installée, nouvelle version, mise à jour en un clic', () => ficheMaj()],
-    ...(etat.config && etat.config.horsFrance ? [] : [['🇫🇷', 'Toute la France', 'Télécharger et installer le relief de tous les départements', () => ficheFrance()]]),
+    
   ];
   // Réglages propres à un réseau : seulement quand ce réseau est affiché (Meshtastic, MeshCore ou les deux)
   const vue = etat.vueReseau || 'les-deux', voitMc = vue !== 'meshtastic', lesDeux = vue === 'les-deux';
