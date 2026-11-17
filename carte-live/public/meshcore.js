@@ -282,7 +282,7 @@ function mcBrancherLegende(z) {
     mcDessinerNoeuds(); rendreLegende();
   }));
   const sf = z.querySelector('#mc-fenetre');
-  if (sf) sf.onchange = () => { try { localStorage.setItem('gaulix_mc_fenetre', sf.value); } catch { /* ignoré */ } mcChargerLiens().catch(() => {}); };
+  if (sf) sf.onchange = () => { try { localStorage.setItem('mcs_mc_fenetre', sf.value); } catch { /* ignoré */ } mcChargerLiens().catch(() => {}); };
   z.querySelectorAll('[data-mc-couche]').forEach((b) => (b.onclick = () => { mc.couches[b.dataset.mcCouche] = !mc.couches[b.dataset.mcCouche]; mcDessinerLiens(); rendreLegende(); }));
 }
 
@@ -1840,7 +1840,7 @@ async function mcChargerNoeuds(complet) {
   mcMajAlertes();
 }
 // Durée d'affichage des liens MeshCore, distincte de celle de Meshtastic (le flux national accumule vite) : 1 h par défaut
-function mcFenetreHeures() { try { return Number(localStorage.getItem('gaulix_mc_fenetre')) || 1; } catch { return 1; } }
+function mcFenetreHeures() { try { return Number(localStorage.getItem('mcs_mc_fenetre')) || 24; } catch { return 24; } }
 async function mcChargerLiens(complet) {
   const h = mcFenetreHeures();
   if (complet || !mc.heureLiens || mc.fenetreLiens !== h || Date.now() - mc.completLiens > 600000) {
