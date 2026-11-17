@@ -56,7 +56,7 @@ const etat = {
   coucheLiens: null,
   alertes: [],
   stats: null,
-  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: true, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false, mapper: false, rekordy: false, slady: false },
+  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: false, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false, mapper: false, rekordy: false, slady: false },
   filtresPorts: new Set(Object.keys(PORTS)),
   selection: null,
   trajet: null,

@@ -1827,3 +1827,5 @@ body:not(.theme-clair) .mt-ik { background: rgba(255,255,255,.08); }
   .fiche { overscroll-behavior: contain; }
   body:has(#fiche:not([hidden])) #wyczysc-mob { display: none !important; }
 }
+/* PL: warstwa federacji ukryta wszędzie */
+[data-couche="federation"] { display: none !important; }
