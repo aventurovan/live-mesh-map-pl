@@ -45,7 +45,7 @@ const mc = {
   filtresTypes: new Set(Object.keys(MC_TYPES)),
   roles: (() => { try { return { ...Object.fromEntries(Object.keys(MC_ROLES).map((k) => [k, true])), ...JSON.parse(localStorage.getItem('gaulix_mc_roles') || '{}') }; } catch { return Object.fromEntries(Object.keys(MC_ROLES).map((k) => [k, true])); } })(),
   // PL: „Ścieżki” i „Sąsiedzi” domyślnie wyłączone; na telefonie także „Zmierzone”
-  couches: { rf: !window.matchMedia('(max-width: 900px)').matches, chemin: false, trace: true, voisinage: false },
+  couches: { rf: false, chemin: false, trace: true, voisinage: false },
   selection: null,
   nav: { etat: 'aucun', ws: null, port: null, lecteur: null, ecrivain: null, ble: null, type: null, erreur: null, role: 'principal' },
 };
