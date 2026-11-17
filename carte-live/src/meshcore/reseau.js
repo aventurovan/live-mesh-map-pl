@@ -480,15 +480,15 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
     for (const n of surveilles(administres)) {
       const nom = n.nom || n.cle.slice(0, 8);
       const ageH = (maintenant - (n.dernier_vu || 0)) / 3600000;
-      if (ageH > muetH) ajouter('mc-muet:' + n.cle, { noeud: n.cle, type: 'muet', niveau: 'critique', nom, message: `Répéteur MeshCore ${nom} non entendu depuis ${ageH > 48 ? Math.round(ageH / 24) + ' jours' : Math.round(ageH) + ' h'}` });
+      if (ageH > muetH) ajouter('mc-muet:' + n.cle, { noeud: n.cle, type: 'muet', niveau: 'critique', nom, message: `Repeater MeshCore ${nom} niesłyszany od ${ageH > 48 ? Math.round(ageH / 24) + ' dni' : Math.round(ageH) + ' h'}` });
       const t = derniers.get(n.cle);
       if (t && maintenant - t.heure < 24 * 3600000) {
-        if (t.batterie_mv && t.batterie_mv / 1000 < s.tensionVolts) ajouter('mc-batt:' + n.cle, { noeud: n.cle, type: 'batterie', niveau: t.batterie_mv / 1000 < s.tensionVolts - 0.2 ? 'critique' : 'attention', nom, message: `Batterie faible sur ${nom} : ${(t.batterie_mv / 1000).toFixed(2)} V` });
-        if (t.emission_pct != null && t.emission_pct >= s.emissionPourcent) ajouter('mc-tx:' + n.cle, { noeud: n.cle, type: 'emission', niveau: 'attention', nom, message: `${nom} émet ${t.emission_pct} % du temps depuis son démarrage (limite 10 %)` });
-        if (t.bruit != null && t.bruit > -95) ajouter('mc-bruit:' + n.cle, { noeud: n.cle, type: 'bruit', niveau: 'attention', nom, message: `Bruit de fond élevé autour de ${nom} : ${t.bruit} dBm (brouillage ?)` });
+        if (t.batterie_mv && t.batterie_mv / 1000 < s.tensionVolts) ajouter('mc-batt:' + n.cle, { noeud: n.cle, type: 'batterie', niveau: t.batterie_mv / 1000 < s.tensionVolts - 0.2 ? 'critique' : 'attention', nom, message: `Słaba bateria w ${nom}: ${(t.batterie_mv / 1000).toFixed(2)} V` });
+        if (t.emission_pct != null && t.emission_pct >= s.emissionPourcent) ajouter('mc-tx:' + n.cle, { noeud: n.cle, type: 'emission', niveau: 'attention', nom, message: `${nom} nadaje ${t.emission_pct} % czasu od uruchomienia (limit 10 %)` });
+        if (t.bruit != null && t.bruit > -95) ajouter('mc-bruit:' + n.cle, { noeud: n.cle, type: 'bruit', niveau: 'attention', nom, message: `Wysoki szum tła wokół ${nom}: ${t.bruit} dBm (zakłócenia?)` });
       }
     }
-    if (companion && companion.cible && !companion.connecte) ajouter('mc-companion', { noeud: companion.cle, type: 'companion', niveau: 'attention', nom: companion.nom || 'companion', message: `Companion MeshCore de la carte non relié${companion.erreur ? ' (' + companion.erreur + ')' : ''}` });
+    if (companion && companion.cible && !companion.connecte) ajouter('mc-companion', { noeud: companion.cle, type: 'companion', niveau: 'attention', nom: companion.nom || 'companion', message: `Companion MeshCore mapy niepodłączony${companion.erreur ? ' (' + companion.erreur + ')' : ''}` });
     alertesActives.clear();
     for (const [k, v] of nouvelles) alertesActives.set(k, v);
     const ordre = { critique: 0, attention: 1 };

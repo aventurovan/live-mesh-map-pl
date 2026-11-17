@@ -3089,7 +3089,7 @@ function iconeSommet(s) {
   return L.divIcon({ className: 'sommet' + (fort ? ' fort' : '') + (s.source === 'mnt' ? ' mnt' : ''), html: '▲', iconSize: [12, 12], iconAnchor: [6, 8] });
 }
 function infoSommet(s) {
-  return `<b>${esc(nomSommet(s))}</b><br>${s.alt} m${s.dominance != null ? ` · domine de ${s.dominance} m` : ''}` +
+  return `<b>${esc(nomSommet(s))}</b><br>${s.alt} m${s.dominance != null ? ` · góruje o ${s.dominance} m` : ''}` +
     (s.couverturePct != null ? `<br>Couverture seule : ${fmt(s.couverturePct, 1, ' %')} du département (${s.couvertureKm2} km²)` : '') +
     (s.rangPlan ? `<br><b style="color:#f4c542">Site recommandé n° ${s.rangPlan}</b>` : s.rang && s.rang <= 15 ? `<br>Classement individuel : ${s.rang}ᵉ` : '') +
     (s.acces ? `<br>Accès : ${ACCES[s.acces.type].icone} ${ACCES[s.acces.type].nom}` : '') +

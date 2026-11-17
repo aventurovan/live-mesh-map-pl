@@ -328,7 +328,7 @@ function creerReseau(stockage, config) {
       if (surveille && ageMin > s.muetMinutes) {
         ajouter('muet:' + n.num, {
           num: n.num, type: 'muet', niveau: 'critique', nom,
-          message: `${nom} n'a pas été entendu depuis ${formaterDuree(ageMin)}`,
+          message: `${nom} niesłyszany od ${formaterDuree(ageMin)}`,
         });
       }
       const gf = gps.get(n.num);
@@ -341,7 +341,7 @@ function creerReseau(stockage, config) {
       if (n.est_passerelle && n.etat_passerelle === 'offline') {
         ajouter('mqtt:' + n.num, {
           num: n.num, type: 'passerelle', niveau: 'attention', nom,
-          message: `Passerelle ${nom} déconnectée du broker MQTT`,
+          message: `Bramka ${nom} rozłączona z brokerem MQTT`,
         });
       }
       if (telemRecente) {
@@ -350,7 +350,7 @@ function creerReseau(stockage, config) {
           const critique = n.tension > 0 && n.tension < s.tensionVolts - 0.2;
           ajouter('batterie:' + n.num, {
             num: n.num, type: 'batterie', niveau: critique ? 'critique' : 'attention', nom,
-            message: `Batterie faible sur ${nom} : ${n.tension ? n.tension.toFixed(2) + ' V' : ''}${n.batterie != null ? ' (' + n.batterie + ' %)' : ''}`,
+            message: `Słaba bateria w ${nom}: ${n.tension ? n.tension.toFixed(2) + ' V' : ''}${n.batterie != null ? ' (' + n.batterie + ' %)' : ''}`,
           });
         }
         if (surveille && surBatterie) {
@@ -358,7 +358,7 @@ function creerReseau(stockage, config) {
           if (t && t.nb >= 6 && t.max < s.chargeSolaireVolts) {
             ajouter('solaire:' + n.num, {
               num: n.num, type: 'solaire', niveau: 'attention', nom,
-              message: `Charge solaire insuffisante sur ${nom} : maximum ${t.max.toFixed(2)} V sur 24 h`,
+              message: `Za słabe ładowanie solarne w ${nom}: maksymalnie ${t.max.toFixed(2)} V w ciągu 24 h`,
             });
           }
         }
@@ -367,13 +367,13 @@ function creerReseau(stockage, config) {
           const critique = n.canal >= s.canalCritiquePourcent;
           ajouter('canal:' + n.num, {
             num: n.num, type: 'canal', niveau: critique ? 'critique' : 'attention', nom,
-            message: `Canal ${critique ? 'saturé' : 'chargé'} autour de ${nom} : ${n.canal.toFixed(1)} % d'occupation`,
+            message: `Kanał ${critique ? 'przeciążony' : 'obciążony'} wokół ${nom}: ${n.canal.toFixed(1)} % zajętości`,
           });
         }
         if (recente2h && n.emission != null && n.emission >= s.emissionPourcent) {
           ajouter('emission:' + n.num, {
             num: n.num, type: 'emission', niveau: 'attention', nom,
-            message: `${nom} émet ${n.emission.toFixed(1)} % du temps (limite réglementaire 10 % en 869,4–869,65 MHz)`,
+            message: `${nom} nadaje ${n.emission.toFixed(1)} % czasu (limit prawny 10 % w 869,4–869,65 MHz)`,
           });
         }
       }
@@ -477,7 +477,7 @@ function creerReseau(stockage, config) {
 function formaterDuree(minutes) {
   if (minutes < 60) return Math.round(minutes) + ' min';
   if (minutes < 48 * 60) return Math.round(minutes / 60) + ' h';
-  return Math.round(minutes / 1440) + ' jours';
+  return Math.round(minutes / 1440) + ' dni';
 }
 
 module.exports = { creerReseau, distanceKm };
