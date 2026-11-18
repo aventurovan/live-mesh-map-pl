@@ -339,7 +339,35 @@ app.get('/api/installations', (req, res) => {
 // Couverture mesurée : mesures réelles (position de l'émetteur, passerelle qui reçoit, SNR), par cellule de 500 m
 let couvMesuree = null;
 const mesures = () => couvMesuree || (couvMesuree = creerCouvertureMesuree(stockage));
-app.get('/api/couverture-mesuree', (req, res) => {
+// PL: zmierzony zasięg z pomiarów Mappera SF6 — kratki 500 m: odpowiedź repeatera (SNR) albo same pingi bez odpowiedzi
+async function zasiegZMappera(dni) {
+  if (!mapper.pts.length && MAPPER_API) { try { await odswiezMapper(); } catch { /* bez danych */ } }
+  const od = dni > 0 ? Date.now() / 1000 - dni * 86400 : 0;
+  const PAS = 0.0045, kom = new Map();
+  let n = 0;
+  for (const p of mapper.pts) {
+    if (od && !(p[4] >= od)) continue;
+    n++;
+    const pasLon = PAS / Math.cos((p[0] * Math.PI) / 180);
+    const i = Math.floor(p[0] / PAS), j = Math.floor(p[1] / pasLon), k = i + ':' + j;
+    let c = kom.get(k);
+    if (!c) kom.set(k, (c = { lat: (i + 0.5) * PAS, lon: (j + 0.5) * pasLon, dLat: PAS, dLon: pasLon, n: 0, direct: 0, snrMax: null, rep: new Map(), dernier: 0 }));
+    c.n++; if (p[4] * 1000 > c.dernier) c.dernier = p[4] * 1000;
+    if (p[2] != null && p[3] != null) {
+      c.direct++;
+      if (c.snrMax == null || p[3] > c.snrMax) c.snrMax = p[3];
+      const e = c.rep.get(p[2]); c.rep.set(p[2], { snr: e ? Math.max(e.snr, p[3]) : p[3], n: (e ? e.n : 0) + 1 });
+    }
+  }
+  const nazwa = (id) => (mapper.rep && mapper.rep[id]) || String(id).slice(0, 8).toUpperCase();
+  const cellules = [...kom.values()].map((c) => ({
+    lat: +c.lat.toFixed(5), lon: +c.lon.toFixed(5), dLat: c.dLat, dLon: +c.dLon.toFixed(6), n: c.n, direct: c.direct, snrMax: c.snrMax, dernier: c.dernier, emetteurs: [],
+    passerelles: [...c.rep.entries()].sort((a, b) => b[1].snr - a[1].snr).slice(0, 5).map(([id, x]) => ({ nom: nazwa(id), snr: x.snr, n: x.n })),
+  }));
+  return { zrodlo: 'mapper', jours: dni, mesures: n, cellules, directes: cellules.filter((c) => c.direct).length, viaRelais: cellules.filter((c) => !c.direct).length, emetteurs: 0, aktualizacja: mapper.ts, blad: mapperBlad };
+}
+app.get('/api/couverture-mesuree', async (req, res) => {
+  if (req.query.zrodlo === 'mapper') { try { return res.json(await zasiegZMappera(Math.max(Number(req.query.jours) || 0, 0))); } catch (e) { return res.status(500).json({ erreur: e.message }); } }
   const jours = Math.min(Math.max(Number(req.query.jours) || 7, 1), config.retentionJours);
   const noeud = req.query.noeud ? Number(req.query.noeud) >>> 0 : null;
   res.json(mesures().calculer({ jours, noeud }));

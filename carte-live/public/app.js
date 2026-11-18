@@ -3299,6 +3299,7 @@ async function couvertureReseau() {
 }
 // ---- Couverture mesurée (positions réelles des émetteurs + réceptions des passerelles) ------------------
 async function couvertureMesuree(jours, noeud) {
+  if (noeud == null && !etat.mesMeshtastic) return zasiegMapper(jours); // PL: zasięg zmierzony = pomiary Mappera SF6
   jours = jours || Number(localStorage.getItem('gaulix_mes_jours')) || 7;
   $('#fiche').hidden = false;
   etat.selection = null;
@@ -3346,6 +3347,44 @@ async function couvertureMesuree(jours, noeud) {
       </ol></details>`;
   $('#mes-jours').onchange = () => { try { localStorage.setItem('gaulix_mes_jours', $('#mes-jours').value); } catch { /* ignoré */ } couvertureMesuree(Number($('#mes-jours').value), noeud); };
   const mt = $('#mes-tous'); if (mt) mt.onclick = () => couvertureMesuree(jours, null);
+}
+// PL: „Zmierzony zasięg” z pomiarów Mappera SF6 (pingi do repeaterów): kratki 500 m, kolor = najlepszy SNR odpowiedzi
+async function zasiegMapper(dni) {
+  if (dni == null) { try { dni = Number(localStorage.getItem('mcs_mes_dni')); } catch { dni = 0; } if (!Number.isFinite(dni)) dni = 0; }
+  $('#fiche').hidden = false;
+  etat.selection = null;
+  $('#fiche-contenu').innerHTML = '<h2>Zmierzony zasięg</h2><div class="alerte info-lecture"><span class="sablier"></span> Wczytuję pomiary Mappera SF6…</div>';
+  let r;
+  try { r = await api('/api/couverture-mesuree?zrodlo=mapper&jours=' + dni); } catch (e) { $('#fiche-contenu').innerHTML = `<h2>Zmierzony zasięg</h2><div class="vide">${esc(e.message)}</div>`; return; }
+  if (etat.coucheCouverture) etat.coucheCouverture.remove();
+  const cel = r.cellules, odp = cel.filter((c) => c.direct).length, bez = cel.length - odp;
+  const pow = Math.round(cel.filter((c) => c.direct).reduce((t, c) => t + c.dLat * 111.32 * c.dLon * 111.32 * Math.cos((c.lat * Math.PI) / 180), 0));
+  const rend = L.canvas({ padding: 0.3, pane: 'couverture' });
+  const g = L.layerGroup();
+  const dz = (t) => (t ? new Date(t).toLocaleDateString('pl-PL') : '–');
+  for (const c of [...cel].sort((a, b) => (a.snrMax ?? -1e9) - (b.snrMax ?? -1e9))) {
+    const b = [[c.lat - c.dLat / 2, c.lon - c.dLon / 2], [c.lat + c.dLat / 2, c.lon + c.dLon / 2]];
+    const coul = c.direct ? couleurSnr(c.snrMax) : '#8fa3b8';
+    L.rectangle(b, { renderer: rend, color: coul, weight: 0.6, fillColor: coul, fillOpacity: c.direct ? 0.55 : 0.3 })
+      .bindTooltip(`<b>${c.direct ? 'Najlepszy SNR ' + fmt(c.snrMax, 1, ' dB') : 'Brak odpowiedzi repeatera'}</b><br><small>pingów: ${c.n} · z odpowiedzią: ${c.direct} · ostatni ${dz(c.dernier)}</small>${c.passerelles.length ? '<br>' + c.passerelles.map((p) => `${esc(p.nom)} · ${fmt(p.snr, 1, ' dB')}`).join('<br>') : ''}<br><small>Mapper SF6</small>`, { className: 'info', sticky: true }).addTo(g);
+  }
+  g.addTo(carte);
+  etat.coucheCouverture = g;
+  $('#btn-effacer').hidden = false;
+  if (cel.length) carte.fitBounds(L.latLngBounds(cel.map((c) => [c.lat, c.lon])).pad(0.1), { maxZoom: 12 });
+  const okresy = [[0, 'cały okres'], [7, '7 dni'], [30, '30 dni'], [90, '90 dni'], [365, 'rok']];
+  $('#fiche-contenu').innerHTML = `<h2>Zmierzony zasięg</h2>
+    <div class="ident">pomiary Mappera SF6: ${r.mesures} · ${okresy.find((o) => o[0] === dni) ? okresy.find((o) => o[0] === dni)[1] : dni + ' dni'}${r.aktualizacja ? ' · aktualizacja ' + new Date(r.aktualizacja).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : ''}</div>
+    <div class="grille">
+      <div class="mesure"><span>Kratki z odpowiedzią</span><b>${odp}</b></div>
+      <div class="mesure"><span>Bez odpowiedzi</span><b>${bez}</b></div>
+      <div class="mesure"><span>Pokryty obszar</span><b>≈ ${pow} km²</b></div>
+    </div>
+    <div class="parametres compact"><label>Okres <select id="mes-dni">${okresy.map(([v, t]) => `<option value="${v}" ${v === dni ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
+    <p class="note">Każdy kwadrat 500 m to miejsce, w którym ktoś z Mapperem SF6 wysłał ping. Kolor = najlepszy SNR odpowiedzi repeatera (zielony świetny → czerwony na granicy); szary = pingi bez żadnej odpowiedzi. Najedź na kwadrat, żeby zobaczyć, które repeatery odpowiedziały.</p>
+    <p class="note"><a href="https://meshcoresouth.pl/mapper/" target="_blank" rel="noopener">Otwórz Mapper SF6</a>, żeby dołożyć pomiary.</p>
+    ${r.blad ? `<p class="note">Ostatnie pobieranie nie udało się: ${esc(r.blad)}</p>` : ''}`;
+  $('#mes-dni').onchange = () => { const v = Number($('#mes-dni').value); try { localStorage.setItem('mcs_mes_dni', String(v)); } catch { /* ignoré */ } zasiegMapper(v); };
 }
 // ---- Simulation « et si… » : retirer ou ajouter des relais --------------------------------------------
 etat.simu = { retirer: new Set(), ajouter: [] };
