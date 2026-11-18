@@ -940,7 +940,7 @@ function rendreReseau() {
   $('#resume-alertes').textContent = resumeAlertes(a);
   const tagR = (x) => deux ? `<span class="tag-reseau ${x.reseau}">${x.reseau === 'mc' ? 'MC' : 'MT'}</span>` : '';
   $('#alertes').innerHTML = a.length
-    ? a.map((x) => `<div class="alerte ${x.niveau}" ${x.type === 'feu' ? `data-feu-voir="${x.lat},${x.lon}"` : x.reseau === 'mc' ? `data-mc-alerte="${esc(x.noeud || '')}"` : `data-num="${x.num}"`}>${tagR(x)}${esc(x.message)}<small>${x.niveau === 'critique' ? 'Critique' : 'Attention'} · depuis ${ilYa(x.depuis).replace('il y a ', '')}</small></div>`).join('')
+    ? a.map((x) => `<div class="alerte ${x.niveau}" ${x.type === 'feu' ? `data-feu-voir="${x.lat},${x.lon}"` : x.reseau === 'mc' ? `data-mc-alerte="${esc(x.noeud || '')}"` : `data-num="${x.num}"`}>${tagR(x)}${esc(x.message)}<small><span>${x.niveau === 'critique' ? 'Krytyczny' : 'Uwaga'}</span> · od <span>${ilYa(x.depuis).replace('il y a ', '').replace(/ j$/, ' dni')}</span></small></div>`).join('')
     : '<div class="vide">Aucune alerte, le réseau est en bonne santé.</div>';
   const za = $('#alertes');
   if (!za.dataset.brancheMc) { za.dataset.brancheMc = '1'; za.addEventListener('click', (e) => { const el = e.target.closest('[data-mc-alerte]'); if (el && el.dataset.mcAlerte && typeof mcOuvrirFiche === 'function') mcOuvrirFiche(el.dataset.mcAlerte); }); }

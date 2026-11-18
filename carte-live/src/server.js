@@ -150,7 +150,7 @@ const jsonPetit = express.json({ limit: '10kb' }), jsonGros = express.json({ lim
 const jsonPhoto = express.json({ limit: '5mb' });
 app.use((req, res, next) => (req.path === '/api/sauvegardes/restaurer' ? jsonGros : req.path === '/api/releves' ? jsonPhoto : jsonPetit)(req, res, next));
 // Journal d'audit : toute action (hors lecture) d'un utilisateur connecté, avec son résultat
-const SANS_AUDIT = new Set(['/api/connexion', '/api/deconnexion', '/api/installation', '/api/inscription', '/api/releves']);
+const SANS_AUDIT = new Set(['/api/connexion', '/api/deconnexion', '/api/installation', '/api/inscription', '/api/releves', '/api/i18n/braki']);
 app.use((req, res, next) => {
   if (req.method === 'GET' || !req.path.startsWith('/api/') || SANS_AUDIT.has(req.path)) return next();
   const u = utilisateur(req);
@@ -1997,6 +1997,22 @@ async function odswiezSf8() {
   return sf8Pobierane;
 }
 if (SF8_URL) { setTimeout(() => odswiezSf8(), 20000).unref(); setInterval(() => odswiezSf8(), 30 * 60000).unref(); }
+// PL: nieprzetłumaczone teksty zgłaszane przez przeglądarki (langue.js) — do uzupełnienia słownika
+const fBraki = path.join(path.dirname(config.fichierBase), 'i18n-braki.json');
+let brakiI18n = (() => { try { return lireJson(fBraki) || {}; } catch { return {}; } })();
+let brakiZapis = null;
+app.post('/api/i18n/braki', (req, res) => {
+  const t = req.body && Array.isArray(req.body.t) ? req.body.t : [];
+  let nowe = 0;
+  for (const x of t.slice(0, 200)) {
+    if (typeof x !== 'string' || x.length < 3 || x.length > 300) continue;
+    if (!brakiI18n[x]) { if (Object.keys(brakiI18n).length >= 3000) break; brakiI18n[x] = 0; nowe++; }
+    brakiI18n[x]++;
+  }
+  if (nowe) { clearTimeout(brakiZapis); brakiZapis = setTimeout(() => { try { ecrireSur(fBraki, JSON.stringify(brakiI18n)); } catch { /* bez zapisu */ } }, 10000); }
+  res.json({ ok: true });
+});
+app.get('/api/i18n/braki', (req, res) => { res.set('Cache-Control', 'no-store'); res.json(Object.entries(brakiI18n).sort((a, b) => b[1] - a[1]).map(([t, n]) => ({ t, n }))); });
 // PL: repeatery SF7 (MeshCore Polska) — jak SF8; źródło SF7_URL (pusty = wyłączone), kopia w /data/sf7.json
 const SF7_URL = process.env.SF7_URL != null ? process.env.SF7_URL : 'https://meshcoresouth.pl/mapper/api.php?action=sf7';
 const fSf7 = path.join(path.dirname(config.fichierBase), 'sf7.json');

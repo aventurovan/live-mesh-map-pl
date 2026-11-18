@@ -1209,7 +1209,7 @@ function mcMajAlertes() {
     }
     if (change) localStorage.setItem('gaulix_capteurs_notifies', JSON.stringify(vues));
   } catch { /* stockage indisponible */ }
-  z.innerHTML = a.length ? a.map((x) => `<div class="alerte ${x.niveau}" data-mc-alerte="${x.noeud || ''}">${esc(x.message)}<small>${x.niveau === 'critique' ? 'Critique' : 'Attention'} · depuis ${ilYa(x.depuis).replace('il y a ', '')}</small></div>`).join('') : '<div class="vide">Aucune alerte MeshCore.</div>';
+  z.innerHTML = a.length ? a.map((x) => `<div class="alerte ${x.niveau}" data-mc-alerte="${x.noeud || ''}">${esc(x.message)}<small><span>${x.niveau === 'critique' ? 'Krytyczny' : 'Uwaga'}</span> · od <span>${ilYa(x.depuis).replace('il y a ', '').replace(/ j$/, ' dni')}</span></small></div>`).join('') : '<div class="vide">Aucune alerte MeshCore.</div>';
   // Répéteurs et room servers de la zone
   const vueCarte = !etat.zone && typeof carte !== 'undefined' && carte ? carte.getBounds() : null;
   const titreInfra = $('#titre-infra-mc'); if (titreInfra) titreInfra.textContent = vueCarte ? 'Répéteurs (vue)' : 'Répéteurs';

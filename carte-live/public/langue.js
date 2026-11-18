@@ -67,11 +67,25 @@
       // Début connu suivi d'un nom ou d'une valeur
       for (const p of prefixes) if (s.length > p.length + 1 && s.startsWith(p) && /^[\s:]*[A-Z0-9!«“"'(À-Ý]/.test(s.slice(p.length))) { r = exact.get(p) + s.slice(p.length); break; }
     }
-    if (r == null) r = t;
+    if (r == null) { r = t; if (!interne) zglosBrak(s); }
     if (memo.size > 20000) memo.clear();
     memo.set(s, r);
     return r;
   }
+  // PL: zbieranie nieprzetłumaczonych francuskich tekstów → serwer (/api/i18n/braki), żeby je uzupełnić w słowniku
+  const braki = new Set(); let wyslij = null;
+  const FR = /[éèêàçùûôîœ’]|\b(le|la|les|des|du|une|aucun|aucune|pour|avec|sur|dans|depuis|pas|est|sont)\b/i;
+  function zglosBrak(s) {
+    if (s.length < 3 || s.length > 300 || /[ąęśłżźćńó]/i.test(s) || !FR.test(s) || braki.has(s)) return;
+    braki.add(s);
+    clearTimeout(wyslij);
+    wyslij = setTimeout(() => {
+      const l = []; let dl = 0;
+      for (const x of [...braki].reverse()) { if (dl + x.length > 8000) break; l.push(x); dl += x.length + 4; }
+      try { fetch('/api/i18n/braki', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ l: choix, t: l }), keepalive: true }); } catch { /* bez zgłoszenia */ }
+    }, 5000);
+  }
+  window.brakiTlumaczen = () => [...braki];
   window.tr = (t) => (pret ? traduire(String(t)) : t);
   const poses = new WeakMap(); // nœuds texte déjà traduits par nous : valeur posée
   const IGNORER = 'script,style,textarea,code,pre,[translate="no"],.notranslate,.leaflet-tile-pane';
