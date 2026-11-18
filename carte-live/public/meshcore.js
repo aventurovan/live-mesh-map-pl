@@ -55,7 +55,9 @@ const mcCourt = (cle) => { const n = cle && mc.noeuds.get(cle); return n && n.no
 function mcDansZone(n) {
   if (!etat.zone || !n) return true;
   const z = etat.config.zone;
-  if (n.lat != null && n.lon != null) return n.lat >= z[0] && n.lat <= z[2] && n.lon >= z[1] && n.lon <= z[3];
+  // PL: margines 0,6° wokół strefy (ok. 65 km) — widać też sąsiadów słyszanych przez naszych obserwatorów (np. Zielona Góra)
+  const M = 0.6;
+  if (n.lat != null && n.lon != null) return n.lat >= z[0] - M && n.lat <= z[2] + M && n.lon >= z[1] - M && n.lon <= z[3] + M;
   return n.observateur || /^43/.test(n.nom || '');
 }
 const mcAffiche = () => mc.actif && etat.vueReseau !== 'meshtastic';
