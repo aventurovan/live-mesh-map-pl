@@ -12,6 +12,8 @@ Real-time map, monitoring and **remote administration** of a [Meshtastic](https:
 3. [[Connect a node|Connecter un module]]: Bluetooth, USB or IP address, and the [[agent|Agent]].
 4. Discover [[the map|La carte]].
 
+📸 **[[Screenshots|Aperçu-en-images]]**: the main screens in 18 pictures.
+
 ## Using the map
 - [[The map|La carte]]: nodes, links, layers, message route, replay.
 - [[Messages]]: sending, acks, unread, sounds, alerts.
@@ -22,10 +24,15 @@ Real-time map, monitoring and **remote administration** of a [Meshtastic](https:
 ## Administration
 - [[Remote programming|Programmation à distance]]: Meshtastic settings over LoRa, targeted read, templates, favorites, firmware 2.8.
 - [[Reports|Signalements]]: flooded road, fallen tree… placed on the map and sent over LoRa (Meshtastic waypoint compatible with Bipper / GerMaCrise, MeshCore message).
+- [[Growing the network|Faire-grandir-le-réseau]]: spot nodes set to another preset and invite them, public “Join the network” page with channel QR, rules and relays.
 - [[Teams|Équipes]]: encrypted channel per team, added or removed remotely on responders' nodes, new key, command-line equivalent.
 - [[MeshCore]]: companion, repeaters, traces, regions, MQTT republishing.
 - [[Accounts and security|Comptes et sécurité]]: roles, area managers, two-factor authentication, log.
 - [[PostgreSQL archive|Archive PostgreSQL]]: full history, retention, maximum size.
+- [[Home automation and monitoring|Domotique-et-supervision]]: Home Assistant, Node-RED (including sending a LoRa message), Prometheus / Grafana to watch the relays, Wi-Fi nodes found by mDNS.
+- [[Amateur radio, APRS, ATAK|Radioamateurs-APRS-ATAK]]: LoRa APRS stations, licensed-mode nodes, KML export for ATAK, cable loss calculator, relay register.
+- [[Rivers and flood alerts|Rivières-et-alerte-crue]]: water levels from public gauging stations (Hub'Eau, like Vigicrues), fast-rise and threshold alerts.
+- [[LoRaWAN sensors|Capteurs-LoRaWAN]]: sensors of a The Things Network or ChirpStack application (level, weather, rain…), curves and threshold alerts.
 - [[Versions and compatibility|Versions et compatibilité]]: supported firmware, Meshtastic 2.8.
 
 ## Help

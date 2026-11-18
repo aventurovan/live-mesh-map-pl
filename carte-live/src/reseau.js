@@ -144,6 +144,7 @@ function creerReseau(stockage, config) {
       if (premiereReception) {
         if (evt.utilisateur) {
           q.infos.run({ num: evt.de, ...evt.utilisateur, firmware: null, preset: null });
+          q.licencie.run(evt.utilisateur.licencie ? 1 : 0, evt.de);
           if (evt.utilisateur.cle) q.clePublique.run(evt.utilisateur.cle, evt.de, evt.utilisateur.cle);
         }
         if (evt.rapportCarte) {
@@ -254,6 +255,8 @@ function creerReseau(stockage, config) {
       roleFr: ROLES_FR[n.role] || n.role || 'Inconnu',
       firmware: n.firmware,
       preset: n.preset,
+      licencie: !!n.licencie,
+      aCle: !!n.cle_publique, // clé publique annoncée (firmware 2.5 et plus) : messages directs chiffrés possibles
       lat: arrondir(n.lat, dec),
       lon: arrondir(n.lon, dec),
       alt: n.alt,
@@ -336,6 +339,16 @@ function creerReseau(stockage, config) {
         ajouter('gps:' + n.num, {
           num: n.num, type: 'gps', niveau: 'attention', nom,
           message: `${nom} : GPS figé, il renvoie une position mesurée il y a ${formaterDuree((maintenant - gf.fix) / 60000)}${gf.sats != null ? ` (${gf.sats} satellite${gf.sats > 1 ? 's' : ''})` : ''}`,
+        });
+      }
+      // Passerelle muette : toujours entendue en radio, mais elle ne remonte plus rien au broker depuis un moment
+      // (coupure internet ou Wi-Fi sur le site, MQTT désactivé…) ; si elle n'est plus entendue du tout, l'alerte
+      // « muet » ci-dessus s'en charge
+      const silenceMin = n.dernier_vu_passerelle ? (maintenant - n.dernier_vu_passerelle) / 60000 : null;
+      if (n.est_passerelle && n.etat_passerelle !== 'offline' && silenceMin != null && silenceMin > s.muetMinutes && silenceMin < 7 * 1440 && ageMin <= s.muetMinutes) {
+        ajouter('mqtt-muet:' + n.num, {
+          num: n.num, type: 'passerelle', niveau: 'attention', nom,
+          message: `Passerelle ${nom} : plus rien remonté au broker depuis ${formaterDuree(silenceMin)} (toujours entendue en radio : internet ou Wi-Fi du site ?)`,
         });
       }
       if (n.est_passerelle && n.etat_passerelle === 'offline') {

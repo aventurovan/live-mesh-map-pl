@@ -12,6 +12,8 @@ Carte en temps réel, supervision et **administration à distance** d'un réseau
 3. [[Connecter un module]] : Bluetooth, USB ou adresse IP, et l'[[Agent]].
 4. Découvrir [[La carte]].
 
+📸 **[[Aperçu en images|Aperçu-en-images]]** : les principaux écrans en 18 captures.
+
 ## Utiliser la carte
 - [[La carte]] : nœuds, liaisons, couches, parcours d'un message, rejeu.
 - [[Messages]] : envoi, accusés, non lus, sons, alertes.
@@ -22,10 +24,15 @@ Carte en temps réel, supervision et **administration à distance** d'un réseau
 ## Administrer
 - [[Programmation à distance]] : réglages Meshtastic par LoRa, lecture ciblée, modèles, favoris, firmware 2.8.
 - [[Signalements]] : route inondée, arbre tombé… posé sur la carte et envoyé en LoRa (point de passage Meshtastic compatible Bipper / GerMaCrise, message MeshCore).
+- [[Faire grandir le réseau]] : repérer les nœuds réglés sur un autre preset et les inviter, page publique « Rejoindre le réseau » avec QR du canal, règles et relais.
 - [[Équipes]] : canal chiffré par équipe, posé ou retiré à distance sur les nœuds des intervenants, nouvelle clé, équivalent en ligne de commande.
 - [[MeshCore]] : companion, répéteurs, traces, régions, republication MQTT.
 - [[Comptes et sécurité]] : rôles, gestionnaires de secteur, double authentification, journal.
 - [[Archive PostgreSQL]] : historique complet, conservation, taille maximale.
+- [[Domotique et supervision]] : Home Assistant, Node-RED (y compris envoyer un message LoRa), Prometheus / Grafana pour surveiller les relais, modules Wi-Fi retrouvés par mDNS.
+- [[Radioamateurs, APRS, ATAK|Radioamateurs-APRS-ATAK]] : stations LoRa APRS, nœuds en mode licencié, export KML pour ATAK, calculette des pertes de câble, registre des relais.
+- [[Rivières et alerte crue|Rivières-et-alerte-crue]] : hauteurs d'eau des stations publiques (Hub'Eau, comme Vigicrues), alertes de montée rapide et de seuil.
+- [[Capteurs LoRaWAN|Capteurs-LoRaWAN]] : capteurs d'une application The Things Network ou ChirpStack (niveau, météo, pluie…), courbes et alertes sur seuil.
 
 ## Aide
 

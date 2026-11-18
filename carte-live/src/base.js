@@ -70,6 +70,7 @@ function ouvrirBase(fichier) {
   ajouter('paquets', 'pki', 'INTEGER');
   ajouter('receptions', 'sujet', 'TEXT');
   ajouter('noeuds', 'cle_publique', 'TEXT');
+  ajouter('noeuds', 'licencie', 'INTEGER'); // mode licencié (radioamateur) : pas de chiffrement, indicatif comme nom
   db.exec('CREATE INDEX IF NOT EXISTS idx_noeuds_cle ON noeuds(cle_publique)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_paquets_vers ON paquets(vers, heure)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_receptions_gw ON receptions(passerelle, heure)');
@@ -115,6 +116,7 @@ function creerStockage(fichier) {
           rssi = CASE WHEN excluded.rssi IS NULL THEN liens.rssi WHEN liens.rssi IS NULL THEN excluded.rssi ELSE ROUND(liens.rssi * 0.7 + excluded.rssi * 0.3, 1) END,
           nb = liens.nb + 1, dernier_vu = MAX(liens.dernier_vu, excluded.dernier_vu)`),
     noeuds: db.prepare('SELECT * FROM noeuds ORDER BY dernier_vu DESC'),
+    licencie: db.prepare('UPDATE noeuds SET licencie = ? WHERE num = ?'),
     clePublique: db.prepare('UPDATE noeuds SET cle_publique = ? WHERE num = ? AND cle_publique IS NOT ?'),
     liens: db.prepare('SELECT * FROM liens WHERE dernier_vu >= ?'),
     paquetsRecents: db.prepare(`SELECT p.*, (SELECT json_group_array(json_object('passerelle', r.passerelle, 'snr', r.snr, 'rssi', r.rssi, 'sauts', r.sauts))
@@ -151,10 +153,30 @@ function creerStockage(fichier) {
         (SELECT json_group_array(json_object('g', r.passerelle, 's', r.sauts, 'snr', r.snr, 'rel', r.relais_num, 'h', r.heure))
           FROM receptions r WHERE r.paquet = p.rowid AND r.passerelle <> p.de) AS entendus
       FROM paquets p WHERE p.port = 'texte' ORDER BY p.heure DESC LIMIT ?`),
+    // Historique d'un seul canal (diffusion) ou des seuls messages directs : un canal calme n'est pas noyé par les bavards
+    messagesCanal: db.prepare(`SELECT p.rowid, p.de, p.vers, p.canal, p.heure, p.texte, p.sauts, p.via_mqtt AS viaMqtt,
+        (SELECT COUNT(*) FROM receptions r WHERE r.paquet = p.rowid AND r.sujet LIKE 'radio%') AS radio,
+        (SELECT r.snr FROM receptions r WHERE r.paquet = p.rowid AND r.sujet LIKE 'radio%' LIMIT 1) AS snrRadio,
+        (SELECT r.sauts FROM receptions r WHERE r.paquet = p.rowid AND r.sujet LIKE 'radio%' LIMIT 1) AS sautsRadio,
+        (SELECT COUNT(*) FROM receptions r WHERE r.paquet = p.rowid AND (r.sujet IS NULL OR r.sujet NOT LIKE 'radio%')) AS mqtt,
+        p.id_paquet AS idPaquet,
+        (SELECT json_group_array(json_object('g', r.passerelle, 's', r.sauts, 'snr', r.snr, 'rel', r.relais_num, 'h', r.heure))
+          FROM receptions r WHERE r.paquet = p.rowid AND r.passerelle <> p.de) AS entendus
+      FROM paquets p WHERE p.port = 'texte' AND p.canal = ? AND p.vers = 4294967295 ORDER BY p.heure DESC LIMIT ?`),
+    messagesDirects: db.prepare(`SELECT p.rowid, p.de, p.vers, p.canal, p.heure, p.texte, p.sauts, p.via_mqtt AS viaMqtt,
+        (SELECT COUNT(*) FROM receptions r WHERE r.paquet = p.rowid AND r.sujet LIKE 'radio%') AS radio,
+        (SELECT r.snr FROM receptions r WHERE r.paquet = p.rowid AND r.sujet LIKE 'radio%' LIMIT 1) AS snrRadio,
+        (SELECT r.sauts FROM receptions r WHERE r.paquet = p.rowid AND r.sujet LIKE 'radio%' LIMIT 1) AS sautsRadio,
+        (SELECT COUNT(*) FROM receptions r WHERE r.paquet = p.rowid AND (r.sujet IS NULL OR r.sujet NOT LIKE 'radio%')) AS mqtt,
+        p.id_paquet AS idPaquet,
+        (SELECT json_group_array(json_object('g', r.passerelle, 's', r.sauts, 'snr', r.snr, 'rel', r.relais_num, 'h', r.heure))
+          FROM receptions r WHERE r.paquet = p.rowid AND r.passerelle <> p.de) AS entendus
+      FROM paquets p WHERE p.port = 'texte' AND p.vers <> 4294967295 ORDER BY p.heure DESC LIMIT ?`),
   };
 
   const purges = [
-    db.prepare('DELETE FROM paquets WHERE heure < ?'),
+    // Les messages texte suivent leur propre durée (MESSAGES_RETENTION_JOURS), le reste du trafic RETENTION_JOURS
+    db.prepare("DELETE FROM paquets WHERE heure < ? AND (port IS NOT 'texte' OR heure < ?)"),
     db.prepare('DELETE FROM receptions WHERE heure < ?'),
     db.prepare('DELETE FROM telemetrie WHERE heure < ?'),
     db.prepare('DELETE FROM positions WHERE heure < ?'),
@@ -167,9 +189,10 @@ function creerStockage(fichier) {
     q.creerNoeud.run(num, '!' + (num >>> 0).toString(16).padStart(8, '0'), heure, heure);
   }
 
-  function purger(retentionJours) {
+  function purger(retentionJours, retentionMessagesJours = retentionJours) {
     const limite = Date.now() - retentionJours * 86400000;
-    const tx = db.transaction(() => purges.reduce((t, st) => t + st.run(limite).changes, 0));
+    const limiteMessages = Date.now() - Math.max(retentionMessagesJours, retentionJours) * 86400000;
+    const tx = db.transaction(() => purges.reduce((t, st, i) => t + (i === 0 ? st.run(limite, limiteMessages) : st.run(limite)).changes, 0));
     const n = tx();
     db.pragma('wal_checkpoint(TRUNCATE)');
     return n;

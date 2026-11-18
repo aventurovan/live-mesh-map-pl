@@ -51,11 +51,16 @@ const config = {
     racine: texte('MQTT_RACINE', 'msh/EU_868').replace(/\/+$/, ''),
     // Sujets supplémentaires, séparés par des virgules (ex. flux déjà déchiffré d'un autre serveur)
     sujetsSupplementaires: texte('MQTT_SUJETS_SUPPLEMENTAIRES').split(',').map((s) => s.trim()).filter(Boolean),
+    // Brokers supplémentaires écoutés en même temps (bulle régionale + broker voisin…) : « url » ou « url|racine »,
+    // séparés par des virgules ; identifiant et mot de passe dans l'adresse (mqtts://nom:motdepasse@hote:8883)
+    brokers: texte('MQTT_BROKERS_SUPPLEMENTAIRES').split(',').map((x) => x.trim()).filter(Boolean).map((x) => { const [url, racine] = x.split('|'); return { url: url.trim(), racine: (racine || '').trim().replace(/\/+$/, '') }; }).filter((b) => /^(mqtts?|wss?):\/\//.test(b.url)).slice(0, 5),
   },
   canaux: lireCanaux(texte('CANAUX', 'LongFast=AQ==')),
   // Canaux dont les messages texte sont conservés (admin uniquement). Vide = tous les canaux déchiffrés.
   canauxTexte: texte('CANAUX_TEXTE').split(/[,;]/).map((s) => s.trim()).filter(Boolean),
   retentionJours: nombre('RETENTION_JOURS', 7),
+  // Messages texte : gardés plus longtemps que le reste du trafic (l'historique d'un canal calme ne disparaît pas)
+  messagesRetentionJours: nombre('MESSAGES_RETENTION_JOURS', 90),
   admin: {
     motDePasse: texte('ADMIN_MOT_DE_PASSE'),
     secret: texte('SECRET_SESSION', ''),
@@ -203,7 +208,7 @@ config.reglages = {};
 // d'où vient chaque valeur, et pour pouvoir revenir au .env
 config.env = {
   titre: config.carte.titre, departement: { ...config.departement }, inscriptions: config.inscriptions,
-  mqtt: { url: config.mqtt.url, utilisateur: config.mqtt.utilisateur, racine: config.mqtt.racine, motDePasseDefini: !!config.mqtt.motDePasse },
+  mqtt: { url: config.mqtt.url, utilisateur: config.mqtt.utilisateur, racine: config.mqtt.racine, motDePasseDefini: !!config.mqtt.motDePasse, brokers: config.mqtt.brokers.map((b) => ({ ...b })) },
   canaux: config.canaux.map((c) => `${c.nom}=${c.cle}`).join('\n'),
 };
 function appliquerReglages(r) {
@@ -218,6 +223,8 @@ function appliquerReglages(r) {
   if (r.mqtt) {
     for (const k of ['url', 'utilisateur', 'motDePasse', 'racine']) if (typeof r.mqtt[k] === 'string' && r.mqtt[k] !== '') config.mqtt[k] = r.mqtt[k];
     if (Array.isArray(r.mqtt.sujetsSupplementaires)) config.mqtt.sujetsSupplementaires = r.mqtt.sujetsSupplementaires;
+    // Brokers supplémentaires réglés dans la page d'administration (remplacent MQTT_BROKERS_SUPPLEMENTAIRES)
+    if (Array.isArray(r.mqtt.brokers)) config.mqtt.brokers = r.mqtt.brokers.filter((b) => b && /^(mqtts?|wss?):\/\//.test(String(b.url || ''))).map((b) => ({ url: String(b.url).trim(), racine: String(b.racine || '').trim().replace(/\/+$/, '') })).slice(0, 5);
     config.mqtt.racine = config.mqtt.racine.replace(/\/+$/, '');
   }
   if (typeof r.canaux === 'string' && r.canaux.trim()) config.canaux = lireCanaux(r.canaux);
@@ -235,6 +242,7 @@ function appliquerReglages(r) {
     if ([1, 2, 3].includes(m.liensOctetsMin)) config.meshcore.liensOctetsMin = m.liensOctetsMin;
     if (Array.isArray(m.iataVoisins)) config.meshcore.iataVoisins = m.iataVoisins.map((x) => String(x).toUpperCase()).filter((x) => /^[A-Z0-9]{2,8}$/.test(x));
     if (Array.isArray(m.canaux) && m.canaux.length) config.meshcore.canaux = m.canaux.map(String);
+    if (Number.isInteger(m.supervisionHeures) && m.supervisionHeures >= 0 && m.supervisionHeures <= 48) config.meshcore.supervisionHeures = m.supervisionHeures;
   }
 }
 try {

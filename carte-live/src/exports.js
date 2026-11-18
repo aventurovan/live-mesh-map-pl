@@ -3,7 +3,7 @@
 // Mêmes règles de confidentialité que la carte publique : positions des clients arrondies, pas de messages.
 // Si EXPORT_JETON est défini, chaque export exige ?jeton=… ou l'en-tête « Authorization: Bearer … ».
 
-function creerExports({ config, stockage, reseau, reseauMc, maintenance, santeCarte, relief, alertes }) {
+function creerExports({ config, stockage, reseau, reseauMc, maintenance, santeCarte, relief, alertes, alertesMc = () => [], adminMc = null }) {
   const jetonOk = (req) => {
     const j = config.exportJeton;
     if (!j) return true;
@@ -77,6 +77,30 @@ function creerExports({ config, stockage, reseau, reseauMc, maintenance, santeCa
     g('processeur_pourcent', 'Processeur utilisé par la carte', [['', r.carte.processeurPct]]);
     g('memoire_mo', 'Mémoire utilisée par la carte', [['', r.carte.memoireMo]]);
     g('mqtt_connecte', 'Broker MQTT connecté (1/0)', [['', r.carte.mqttConnecte ? 1 : 0]]);
+    // Nœuds surveillés (relais, passerelles, nœuds suivis) : un relevé par nœud, pour alerter depuis Prometheus /
+    // Alertmanager quand l'un d'eux se tait (même principe que mesh-metrics)
+    const t = Date.now();
+    const mt = stockage.q.noeuds.all().filter((n) => reseau.estSurveille(n));
+    const lt = (n) => `{reseau="meshtastic",id="${e(n.id)}",nom="${e(n.nom_long || n.nom_court || n.id)}",role="${e(n.role || '')}"}`;
+    let mc = [];
+    try { if (config.meshcore.actif) mc = reseauMc.surveilles(adminMc ? adminMc.memorises() : []); } catch { /* MeshCore pas prêt */ }
+    const lc = (n) => `{reseau="meshcore",id="${e(n.cle.slice(0, 12))}",nom="${e(n.nom || n.cle.slice(0, 8))}",role="${e(n.role || '')}"}`;
+    const age = (v) => (v ? Math.round((t - v) / 1000) : null);
+    g('noeud_vu_secondes', 'Secondes depuis le dernier paquet entendu du nœud', [...mt.map((n) => [lt(n), age(n.dernier_vu)]), ...mc.map((n) => [lc(n), age(n.dernier_vu)])]);
+    g('noeud_en_ligne', 'Nœud surveillé entendu récemment (1/0)', [
+      ...mt.map((n) => [lt(n), n.dernier_vu && t - n.dernier_vu <= config.seuils.muetMinutes * 60000 ? 1 : 0]),
+      ...mc.map((n) => [lc(n), n.dernier_vu && t - n.dernier_vu <= config.meshcore.muetHeures * 3600000 ? 1 : 0]),
+    ]);
+    g('noeud_batterie_pourcent', 'Batterie du nœud', mt.filter((n) => n.batterie != null && n.batterie <= 100).map((n) => [lt(n), n.batterie]));
+    g('noeud_tension_volts', 'Tension du nœud', mt.map((n) => [lt(n), n.tension]));
+    if (adminMc) {
+      const sup = (adminMc.supervision() || {}).sansReponse || {};
+      g('meshcore_etat_lu_secondes', 'Secondes depuis la dernière réponse du répéteur à une demande d’état', mc.map((n) => [lc(n), age(((adminMc.lecture(n.cle) || {}).statut || {}).heure)]));
+      g('meshcore_sans_reponse', 'Demandes d’état restées sans réponse de suite', mc.map((n) => [lc(n), (sup[n.cle] || {}).essais || 0]));
+    }
+    let toutes = [];
+    try { toutes = [...alertes(), ...alertesMc()]; } catch { /* ignoré */ }
+    g('alerte_active', 'Alerte active (une ligne par alerte)', toutes.map((a, i) => [`{cle="${e(a.cle || a.num || i)}",type="${e(a.type || '')}",niveau="${e(a.niveau || '')}",nom="${e(a.nom || '')}"}`, 1]));
     return l.join('\n') + '\n';
   }
 
@@ -89,7 +113,35 @@ function creerExports({ config, stockage, reseau, reseauMc, maintenance, santeCa
       + '\n</gpx>\n';
   }
 
-  return { jetonOk, noeudsGeoJSON, liensGeoJSON, resume, metriques, relaisGpx };
+  // KML pour ATAK, Google Earth, QGIS : relais et passerelles, autres nœuds, liaisons radio des dernières 24 h.
+  // Couleurs KML en aabbggrr. Mêmes règles de confidentialité que la carte publique.
+  function reseauKml({ heures = 24, titre = 'Carte live' } = {}) {
+    const x = (t) => String(t ?? '').replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
+    const tous = noeudsVisibles();
+    const pos = new Map(tous.map((n) => [n.num, n]));
+    const pt = (n, style) => `<Placemark><name>${x(n.nomCourt || n.nomLong || n.id)}</name><styleUrl>#${style}</styleUrl>`
+      + `<description>${x([n.nomLong, n.roleFr || n.role, n.passerelle ? 'passerelle MQTT' : '', n.statut, n.dernierVu ? 'vu ' + new Date(n.dernierVu).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : ''].filter(Boolean).join(' · '))}</description>`
+      + `<Point><coordinates>${n.lon},${n.lat}${n.alt != null ? ',' + n.alt : ''}</coordinates></Point></Placemark>`;
+    const style = (id, couleur, echelle) => `<Style id="${id}"><IconStyle><color>${couleur}</color><scale>${echelle}</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle><LabelStyle><scale>0.8</scale></LabelStyle></Style>`;
+    const coulLien = (snr) => (snr == null ? 'ffc8d0dc' : snr >= 5 ? 'ff8ae63e' : snr >= 0 ? 'ff6bf5e9' : snr >= -7 ? 'ff47b5ff' : 'ff6c5cff');
+    const relais = tous.filter((n) => n.infrastructure || n.passerelle);
+    const autres = tous.filter((n) => !n.infrastructure && !n.passerelle && n.statut !== 'inactif');
+    const liens = reseau.liens(heures * 3600000).filter((l) => pos.has(l.a) && pos.has(l.b));
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${x(titre)}</name>`
+      + style('relais', 'ffff8cb4', 1.2) + style('passerelle', 'fff0c94c', 1.1) + style('noeud', 'ff99ed80', 0.8) + style('eteint', 'ff968a7d', 0.8)
+      + `<Folder><name>Relais et passerelles</name>${relais.map((n) => pt(n, n.statut === 'inactif' ? 'eteint' : n.passerelle && !n.infrastructure ? 'passerelle' : 'relais')).join('')}</Folder>`
+      + `<Folder><name>Autres nœuds</name>${autres.map((n) => pt(n, 'noeud')).join('')}</Folder>`
+      + `<Folder><name>Liaisons radio (${heures} h)</name>${liens.map((l) => `<Placemark><name>${x((pos.get(l.a).nomCourt || '') + ' ↔ ' + (pos.get(l.b).nomCourt || ''))}</name><description>SNR ${l.snr ?? '?'} dB · ${l.nb || 0} observations</description><Style><LineStyle><color>${coulLien(l.snr)}</color><width>3</width></LineStyle></Style><LineString><tessellate>1</tessellate><coordinates>${pos.get(l.a).lon},${pos.get(l.a).lat} ${pos.get(l.b).lon},${pos.get(l.b).lat}</coordinates></LineString></Placemark>`).join('')}</Folder>`
+      + '</Document></kml>\n';
+  }
+  // Lien réseau KML : ATAK ou Google Earth recharge le KML du réseau toutes les minutes
+  function reseauKmlLive(url) {
+    const x = (t) => String(t ?? '').replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><NetworkLink><name>Carte live (en direct)</name><refreshVisibility>0</refreshVisibility>`
+      + `<Link><href>${x(url)}</href><refreshMode>onInterval</refreshMode><refreshInterval>60</refreshInterval></Link></NetworkLink></kml>\n`;
+  }
+
+  return { jetonOk, noeudsGeoJSON, liensGeoJSON, resume, metriques, relaisGpx, reseauKml, reseauKmlLive };
 }
 
 module.exports = { creerExports };

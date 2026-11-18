@@ -1,5 +1,6 @@
 **Getting started**
 - [[Home]]
+- [[Screenshots|Aperçu-en-images]]
 - [[Installation]]
 - [[Connect the network|Brancher le réseau]]
 - [[Connect a node|Connecter un module]]
@@ -16,6 +17,7 @@
 - [[Remote programming|Programmation à distance]]
 - [[Teams|Équipes]]
 - [[Reports|Signalements]]
+- [[Growing the network|Faire grandir le réseau]]
 - [[MeshCore]]
 - [[Cross-network bridge|Passerelle inter-réseaux]]
 - [[Accounts and security|Comptes et sécurité]]
@@ -27,3 +29,5 @@
 
 **🇫🇷 Français**
 - [[Documentation en français|Français-Home]]
+- [[Rivers and flood alerts|Rivières-et-alerte-crue]]
+- [[LoRaWAN sensors|Capteurs-LoRaWAN]]

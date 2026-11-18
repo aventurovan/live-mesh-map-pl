@@ -229,11 +229,12 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
         contenu: JSON.stringify({ ...c, texte: undefined, signature: undefined }),
       });
       const premiere = r.nb_receptions === 1;
+      let nouveauMessage = null; // message de canal noté pour la première fois : compté comme « non lu » chez les membres
       if (garderTexte && premiere) {
         // Notre propre message, relayé par un répéteur et réentendu : on le note comme « relayé » au lieu d'un doublon
         const echo = c.expediteur && moi && c.expediteur === moi.nom ? q.msgEcho.get(c.canal, c.texte, heure - 5 * 60000) : null;
         if (echo) { q.msgRelais.run('relaye', echo.id); if (p.region) q.msgRegion.run(p.region, echo.id); } // région réellement portée par notre message
-        else if (!q.msgHachage.get(p.hachage)) q.msgInserer.run({ heure, sens: 'recu', genre: 'canal', canal: c.canal, indexCanal: null, de: null, nomDe: c.expediteur || null, vers: null, nomVers: null, texte: c.texte, sauts, snr: sauts === 0 ? obs.snr ?? null : null, statut: null, ack: null, auteur: null, hachage: p.hachage, region: p.region || null });
+        else if (!q.msgHachage.get(p.hachage)) nouveauMessage = Number(q.msgInserer.run({ heure, sens: 'recu', genre: 'canal', canal: c.canal, indexCanal: null, de: null, nomDe: c.expediteur || null, vers: null, nomVers: null, texte: c.texte, sauts, snr: sauts === 0 ? obs.snr ?? null : null, statut: null, ack: null, auteur: null, hachage: p.hachage, region: p.region || null }).lastInsertRowid);
         if (!echo && sauts) q.msgTailleHachage.run(p.tailleHachage, p.hachage); // aussi pour un message déjà reçu par le companion
       }
 
@@ -263,7 +264,7 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
         de: origine, dePrefixe: c.de || null, nom: noeudOrig ? noeudOrig.nom : c.expediteur || null, observateur: obsCle, snr: obs.snr ?? null, rssi: obs.rssi ?? null,
         chemin: p.chemin, cheminResolu: resolu.map((n) => (n ? n.cle : null)), dernier: dernier ? dernier.cle : null,
         sauts, canal: c.canal || null, expediteur: c.expediteur || null, texte: garderTexte ? c.texte : undefined,
-        resume: resumer(p), premiere, heure, via: obs.via, nouveauNoeud: p.type === 'ADVERT',
+        resume: resumer(p), premiere, heure, via: obs.via, nouveauNoeud: p.type === 'ADVERT', nouveauMessage,
       };
     })();
     return sortie;
@@ -539,8 +540,21 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
     return n > 0;
   }
 
+  // Bonnes pratiques vues de l'extérieur : taille des hachages de chemin et annonces en inondation d'un nœud
+  const qAnnoncesDe = db.prepare("SELECT route, chemin, heure FROM mc_paquets WHERE type = 'ADVERT' AND de = ? AND heure >= ?");
+  function annoncesDe(cle, depuis) {
+    const l = qAnnoncesDe.all(cle, depuis);
+    const tailles = new Set();
+    let inondations = 0;
+    for (const p of l) {
+      if (p.route === 'FLOOD' || p.route === 'TRANSPORT_FLOOD') inondations++;
+      try { const c = JSON.parse(p.chemin || '[]'); if (c.length) tailles.add(String(c[0]).length / 2); } catch { /* chemin illisible */ }
+    }
+    return { annonces: l.length, inondations, tailles: [...tailles] };
+  }
+
   return {
-    supprimerNoeud,
+    supprimerNoeud, annoncesDe,
     positionDe, noterEtat, telemetrie, calculerAlertes, analyse, surveilles, integrer, importerContact, noterObservateur, vueNoeud, liens, statistiques, detailNoeud, paquets, detailPaquet, messages, noterMessage, confirmerAck, statutMessage, lierVoisins, lierMesure, definirCanaux, definirMoi, canaux: () => canaux, purger, q, resoudreChemin };
 }
 

@@ -44,7 +44,7 @@ button, input, select { font: inherit; color: inherit; }
 .barre > * { pointer-events: auto; }
 .marque, .kpis { background: var(--surface); border: 1px solid var(--bord); border-radius: var(--rayon); backdrop-filter: blur(8px); }
 .marque { display: flex; align-items: center; gap: 10px; padding: 8px 14px; }
-.logo { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(62,230,196,.18), 0 0 18px var(--accent); }
+.logo { width: 26px; height: 29px; flex: none; background: url(/symbole.svg) center / contain no-repeat; }
 .nom { font-weight: 700; letter-spacing: .02em; }
 .sous { color: var(--doux); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
 .direct { display: flex; align-items: center; gap: 6px; margin-left: 6px; padding: 3px 8px; border-radius: 99px; background: rgba(255,255,255,.04); font-size: 12px; color: var(--doux); }
@@ -440,6 +440,8 @@ svg.profil .curseur-profil text.mauvais { fill: #ff8a95; }
 .mk.alerte .c { box-shadow: 0 0 0 2.5px var(--critique), 0 0 12px var(--critique) !important; }
 .mk.passerelle .c::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid #22c55e; opacity: .95; }
 .mk.passerelle-hs .c::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 1.5px dashed #6b7785; opacity: .8; }
+.mk.autre-preset .c::before { content: ""; position: absolute; inset: -7px; border-radius: 50%; border: 2px dashed #ff9f1c; }
+.badge.autre-preset { background: rgba(255,159,28,.18); border-color: #ff9f1c; color: #ffc46b; }
 .mk.infra.passerelle .c::after, .mk.infra.passerelle-hs .c::after { border-radius: 3px; }
 
 .legende { padding: 6px 10px; min-width: 300px; max-width: 360px; }
@@ -531,6 +533,11 @@ svg.signal .t-rssi { fill: #f4a261; }
 #bloc-agents summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 .etapes-agent { padding-left: 18px; margin: 6px 0; }
 .etapes-agent li { margin: 3px 0; }
+.agent-pret { border: 1px solid rgba(62,230,196,.45); border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: rgba(62,230,196,.05); }
+.agent-pret .actions-prop { flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+#bloc-agents a.lien-agent { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--bord); color: var(--texte, #e6edf3); text-decoration: none; font-weight: 600; }
+#bloc-agents a.lien-agent.principal { background: var(--accent, #2dd4bf); border-color: var(--accent, #2dd4bf); color: #04221d; }
+.agent-classique { margin-top: 6px; }
 .code-agent { font-size: 13px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .mono { font-family: ui-monospace, monospace; }
 
@@ -626,6 +633,9 @@ body.fond-sombre .noms-ign { filter: invert(1) hue-rotate(180deg) brightness(1.1
 /* Module branché sur ce PC */
 .bloc-usb { border: 1px solid var(--bord); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; background: rgba(62,230,196,.04); }
 .bloc-usb.relie { border-color: rgba(62,230,196,.5); }
+.bloc-usb .usb-auto { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; }
+.bloc-usb .usb-auto select { font-size: 12px; padding: 2px 4px; }
+.bloc-usb .usb-auto + .note { display: block; margin-top: 4px; }
 .titre-usb { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .titre-usb small { color: var(--doux); width: 100%; padding-left: 18px; }
 .principal-usb { border-color: var(--accent) !important; color: var(--accent) !important; font-weight: 600; }
@@ -1111,7 +1121,7 @@ a.bouton-lien { text-decoration: none; display: inline-flex; align-items: center
   .marque { padding: 5px 10px; gap: 8px; }
   .marque .nom { font-size: 13px; }
   .marque .sous, .marque .version { font-size: 10px; }
-  .recherche-lieu { top: 56px; left: 6px; right: 6px; }
+  .recherche-lieu { top: calc(var(--bas-barre, 50px) + 6px); left: 6px; right: 6px; }
   .recherche-lieu input { padding-top: 7px; padding-bottom: 7px; }
   .outils { left: 0; right: 0; bottom: 0; top: auto; border-radius: 0; border-width: 1px 0 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; scrollbar-width: none; gap: 4px; }
   .outils::-webkit-scrollbar { display: none; }
@@ -1136,7 +1146,7 @@ a.bouton-lien { text-decoration: none; display: inline-flex; align-items: center
   .poignee-fiche { display: none; }
   /* Noms des nœuds seulement en zoomant (sinon ils se chevauchent sur un petit écran) */
   body:not(.zoom-proche) .mk .lbl, body:not(.zoom-proche) .mkc .lbl { display: none; }
-  .leaflet-top.leaflet-right { top: 100px; }
+  .leaflet-top.leaflet-right { top: calc(var(--bas-barre, 50px) + 50px); }
   .leaflet-bottom.leaflet-right { bottom: calc(var(--h-outils, 50px) + var(--h-tiroir-reel, 96px)); }
   .rejeu { bottom: calc(var(--h-outils, 50px) + 104px); }
   .menu-couches .menu, .menu-outils .menu { position: fixed; left: 8px; right: 8px; top: auto; bottom: calc(var(--h-outils, 50px) + 6px); max-height: 60vh; overflow-y: auto; }
@@ -1144,6 +1154,45 @@ a.bouton-lien { text-decoration: none; display: inline-flex; align-items: center
 @media (min-width: 901px) { .poignee-tiroir { display: none; } }
 /* Tablette en paysage : panneaux un peu plus étroits pour laisser la carte respirer */
 @media (pointer: coarse) and (min-width: 901px) and (max-width: 1366px) { :root { --l-panneau: 320px; --l-fiche: 340px; } }
+/* Tablette (portrait 701 à 1100 px, et toute tablette tactile jusqu'à 1366 px) : vraie mise en page tablette, pas celle du téléphone.
+   Panneau fixe à gauche ; la fiche s'ouvre par-dessus ce panneau (même largeur) pour garder la carte visible à droite ;
+   barre d'outils en bas sur toute la largeur ; légende repliée (bouton Couches). */
+@media (min-width: 901px) and (max-width: 1100px), (pointer: coarse) and (min-width: 901px) and (max-width: 1366px) {
+  :root { --l-panneau: 360px; --l-fiche: 360px; }
+  .kpis { display: none; }
+  .panneau { top: 84px; bottom: calc(var(--h-outils, 54px) + 8px); }
+  .fiche { left: 12px; right: auto; width: var(--l-panneau); top: 84px; bottom: calc(var(--h-outils, 54px) + 8px); z-index: 1003; }
+  .poignee-fiche { display: none; }
+  .outils { top: auto; bottom: 0; left: 0; right: 0; border-radius: 0; border-width: 1px 0 0; padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; scrollbar-width: none; gap: 6px; }
+  .outils::-webkit-scrollbar { display: none; }
+  .outils > * { flex: none; }
+  .outils #sel-zone { max-width: 190px; }
+  .menu-couches .menu, .menu-outils .menu { position: fixed; top: auto; bottom: calc(var(--h-outils, 54px) + 6px); max-height: 70vh; overflow-y: auto; }
+  body .bandeau-consultation { bottom: calc(var(--h-outils, 54px) + 10px); }
+  .legende { display: none; }
+  .leaflet-bottom.leaflet-right { bottom: var(--h-outils, 54px); }
+  .rejeu { bottom: calc(var(--h-outils, 54px) + 10px); }
+  /* Moins tassé : recherche repliée en loupe (s'ouvre au toucher), outils en icônes avec un petit libellé dessous,
+     bandeau du haut réduit au nom et à l'état */
+  .recherche-lieu { top: 12px; left: auto; right: 66px; width: 46px; min-width: 0; transition: width .2s ease; }
+  .recherche-lieu:focus-within { width: min(520px, calc(100vw - var(--l-panneau) - 100px)); }
+  .recherche-lieu:not(:focus-within) input { color: transparent; cursor: pointer; padding: 0; height: 44px; background-position: center; background-size: 20px; }
+  .recherche-lieu input { height: 44px; }
+  body .fab-plus { left: auto; transform: none; right: 16px; bottom: calc(var(--h-outils, 60px) + 16px); }
+  .recherche-lieu:not(:focus-within) input::placeholder { color: transparent; }
+  .marque .sous, .marque .lien-github { display: none; }
+  .outils { gap: 2px; align-items: stretch; }
+  .outils > details > summary, .outils > button, .outils > .choix { display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10.5px; line-height: 1.15; min-width: 64px; padding: 4px 6px; gap: 2px; }
+  .outils > details > summary::before, .outils > button::before { font-size: 20px; line-height: 1; }
+  .outils > details.menu-couches:not(.menu-radio):not(.menu-outils) > summary::before { content: '🗂️'; }
+  .outils > details.menu-radio > summary::before { content: '📡'; }
+  .outils > details.menu-outils > summary::before { content: '🧰'; }
+  .outils > #btn-rejeu::before { content: '⏯️'; }
+  .outils > #btn-chercher-reglage { font-size: 18px; }
+  .outils > .choix select { font-size: 13px; padding: 2px 4px; }
+  .groupes { padding-right: 30px; justify-content: space-between; }
+  .groupes button[data-groupe] { font-size: 12.5px; padding-left: 3px; padding-right: 3px; flex: none; }
+}
 
 @media (min-width: 901px) { .poignee-fiche-mob { display: none; } }
 
@@ -1226,7 +1275,7 @@ body.theme-clair .pp-journal .in { color: #047857; } body.theme-clair .pp-journa
 .pp-sens .mini.actif { border-color: var(--accent); color: var(--accent); font-weight: 700; }
 .pp-filtres { margin-top: 4px; } .pp-filtres label { display: block; font-size: 12px; color: var(--doux); margin: 4px 0; } .pp-filtres input { width: 100%; }
 .pp-ajout { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; } .pp-ajout input:not([type=checkbox]) { flex: 1 1 220px; }
-@media (max-width: 700px) { .pp-colonnes { grid-template-columns: 1fr; } .pp-sens { padding-top: 0; flex-direction: row; flex-wrap: wrap; } .pp-grille { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .pp-colonnes { grid-template-columns: 1fr; } .pp-sens { padding-top: 0; flex-direction: row; flex-wrap: wrap; } .pp-grille { grid-template-columns: 1fr; } }
 .badge-passerelle { font-size: 10.5px; padding: 0 6px; border-radius: 99px; border: 1px solid rgba(147,197,253,.6); color: #93c5fd; }
 body.theme-clair .badge-passerelle { color: #1d4ed8; border-color: #1d4ed8; }
 .note-source { font-size: 12.5px; color: var(--doux); background: var(--surface-2); border: 1px solid var(--bord); border-radius: 8px; padding: 6px 10px; }
@@ -1292,12 +1341,13 @@ code.coupe { word-break: break-all; }
 
 /* ===== Ergonomie 2.15 : rubriques, accueil, niveaux, réglages, aide, accessibilité ===== */
 body[data-niveau="simple"] .niv-op, body[data-niveau="simple"] .niv-exp, body[data-niveau="operateur"] .niv-exp, .titre-vide { display: none !important; }
-.groupes { display: flex; gap: 0; padding: 6px 26px 0 4px; position: relative; flex: none; border-bottom: 1px solid var(--bord); }
-.groupes button[data-groupe] { flex: 1 1 auto; min-width: 0; background: none; border: 0; border-bottom: 3px solid transparent; padding: 9px 4px 8px; cursor: pointer; color: var(--texte); font-size: 13px; font-weight: 600; white-space: nowrap; position: relative; }
+.groupes { display: flex; gap: 0; padding: 6px 0 0 2px; position: relative; flex: none; border-bottom: 1px solid var(--bord); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.groupes::-webkit-scrollbar { display: none; }
+.groupes button[data-groupe] { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; background: none; border: 0; border-bottom: 3px solid transparent; padding: 9px 2px 8px; letter-spacing: -0.01em; cursor: pointer; color: var(--texte); font-size: 12.5px; font-weight: 600; white-space: nowrap; position: relative; }
 .groupes button[data-groupe].actif { color: var(--accent); border-bottom-color: var(--accent); }
 .groupes button[data-groupe]:hover { background: rgba(255,255,255,.05); }
 .groupes .aide-onglet { flex: none; width: 24px; height: 24px; padding: 0; margin: 0 2px 0 4px; align-self: center; border-radius: 50%; border: 1.5px solid var(--doux); background: none; color: var(--texte); font-weight: 700; cursor: pointer; }
-.groupes .replier { position: absolute; right: 2px; top: 8px; font-size: 16px; background: none; border: 0; color: var(--doux); cursor: pointer; }
+.groupes .replier { position: static; flex: none; align-self: center; margin-left: 2px; padding: 0 4px; font-size: 16px; background: var(--surface); border: 0; color: var(--doux); cursor: pointer; }
 .pastille-groupe { display: inline-block; margin-left: 5px; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #062019; font-size: 11px; font-weight: 700; line-height: 18px; }
 .onglets button.hors-groupe, .onglets.seul { display: none !important; }
 .onglets { padding-right: 6px !important; background: rgba(0,0,0,.18); }
@@ -1372,6 +1422,7 @@ body.theme-clair .bulle-visite { background: #fff; color: #0f172a; }
 .puce-canal.vient { animation: puce-vient 1s ease-in-out 4; }
 @keyframes puce-vient { 50% { transform: scale(1.08); box-shadow: 0 0 12px var(--coul); } }
 .puce-canal.tous .nb { background: var(--ok); color: #04121a; }
+.puce-canal.tout-lu { border-style: dashed; opacity: .9; }
 /* Canal de chaque message, en couleur, et messages arrivés depuis la dernière lecture */
 .canal-msg { --coul: var(--doux); color: var(--coul); }
 b.canal-msg { padding: 0 6px; border-radius: 4px; background: color-mix(in srgb, var(--coul) 16%, transparent); }
@@ -1461,10 +1512,146 @@ body.theme-clair .leaflet-control-attribution a[href*="helloasso"] { color: #c01
 .menu-noeud button:hover, .menu-noeud button:focus-visible { background: var(--surface); outline: 2px solid var(--accent); outline-offset: -2px; }
 .bandeau-consultation { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 1200; background: var(--surface-2); color: var(--texte); border: 1px solid var(--accent); border-radius: 99px; padding: 5px 14px; font-size: 13px; max-width: calc(100vw - 32px); text-align: center; box-shadow: 0 4px 14px #0007; }
 .bandeau-consultation a { color: var(--accent); }
+.bandeau-consultation .fermer-bandeau { background: none; border: 0; color: var(--doux); cursor: pointer; font-size: 14px; margin-left: 8px; padding: 0 2px; }
+/* Sur téléphone : bandeau large aux coins arrondis (une pilule sur plusieurs lignes devient un rond illisible) */
+@media (max-width: 900px) { .bandeau-consultation { border-radius: 12px; width: calc(100vw - 24px); max-width: none; font-size: 12px; padding: 6px 10px; } }
 body.consultation #outil-connecter, body.consultation #outil-companion-mc { display: none !important; }
 .lien-github { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding: 2px 9px; border-radius: 99px; background: #24292f; color: #fff !important; border: 1px solid #57606a; font-weight: 700; font-size: 11px; text-decoration: none; vertical-align: middle; }
 .lien-github:hover, .lien-github:focus-visible { background: #3d444d; outline: 2px solid #fff; outline-offset: 1px; }
 body.consultation #btn-admin, body.consultation .lien-inscription, body.consultation #hub-compte { display: none !important; }
+
+.tache-maj { margin: 8px 0 0; padding: 6px 8px; border-left: 2px solid var(--bord); font-size: 13px; }
+#maj-detail { margin-left: 6px; }
+
+/* Panneau détaché (fenêtre à part, ?panneau=…) : le panneau occupe toute la fenêtre, sans la carte */
+.onglets:has(.detacher:not([hidden])) { padding-right: 54px; }
+.onglets .detacher { position: absolute; right: 28px; top: 2px; background: none; border: 0; color: var(--doux); font-size: 16px; padding: 6px 6px; cursor: pointer; }
+.onglets .detacher:hover { color: var(--texte); }
+@media (max-width: 900px) { .onglets .detacher { display: none; } .onglets:has(.detacher) { padding-right: 26px; } }
+body.panneau-seul #carte, body.panneau-seul .outils, body.panneau-seul .barre, body.panneau-seul .kpis, body.panneau-seul .legende,
+body.panneau-seul .recherche-lieu, body.panneau-seul #deplier, body.panneau-seul .fab-plus, body.panneau-seul .replier, body.panneau-seul .rejeu { display: none !important; }
+body.panneau-seul .panneau { position: fixed !important; inset: 0 !important; width: auto !important; height: auto !important; max-width: none !important; border-radius: 0 !important; transform: none !important; }
+body.panneau-seul .fiche { position: fixed !important; inset: 0 0 0 auto !important; width: min(480px, 100vw) !important; top: 0 !important; height: auto !important; border-radius: 0 !important; transform: none !important; }
+.etiquette-auto { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #334155; color: #e2e8f0; font-size: 11px; font-weight: 700; }
+.va-groupe { margin: 8px 0; border: 1px solid var(--bord, #334155); border-radius: 8px; padding: 6px 10px; }
+.va-groupe > summary { cursor: pointer; font-weight: 700; }
+.va-ligne { display: grid; gap: 4px; padding: 8px 0; border-top: 1px solid rgba(148, 163, 184, .15); }
+.va-ligne label { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.va-origine { font-size: 11px; padding: 0 6px; border-radius: 8px; background: #334155; color: #e2e8f0; }
+.va-origine.va-carte { background: #14532d; color: #dcfce7; }
+.va-origine.va-env { background: #1e3a8a; color: #dbeafe; }
+
+/* ---- Haut de l'écran sans chevauchement (calculé par app.js : --bas-barre, --bas-outils, --bas-haut) ----
+   Écran à 150 %, nom de carte long, badge de mise à jour ou alerte : les derniers compteurs se masquent, puis la
+   barre d'outils passe sous la barre ; recherche, panneau, fiche et légende se placent en dessous. */
+.kpis .kpi.kpi-cache, .kpis.kpis-vides { display: none !important; }
+@media (min-width: 1101px) {
+  body.outils-dessous .outils { top: calc(var(--bas-barre, 72px) + 8px); left: calc(var(--l-panneau, 360px) + 24px); }
+  .recherche-lieu { top: max(84px, calc(var(--bas-haut, 0px) + 10px)); }
+  .panneau { top: max(84px, calc(var(--bas-barre, 0px) + 6px)); }
+  .fiche { top: max(64px, calc(var(--bas-outils, 0px) + 6px)); }
+  .legende { max-height: calc(100vh - var(--bas-outils, 60px) - 40px); overflow-y: auto; }
+}
+/* Réglages de la page « Rejoindre le réseau » */
+.champ-rj { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.champ-rj > span { font-weight: 600; }
+.champ-rj input, .champ-rj textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.ligne-case { display: flex; align-items: center; gap: 8px; margin: 10px 0; font-weight: 600; }
+
+/* Avertissement : autorisations avant d'installer un relais sur un site proposé */
+.avertissement-sites { margin: 10px 0; border: 1px solid var(--attention, #ffb547); border-left-width: 4px; border-radius: 8px; background: rgba(255, 181, 71, 0.08); padding: 8px 12px; }
+.avertissement-sites summary { cursor: pointer; font-weight: 650; color: var(--attention, #ffb547); }
+.avertissement-sites ul { margin: 6px 0 6px 18px; padding: 0; }
+.avertissement-sites li { margin: 3px 0; }
+.avertissement-sites p { margin: 6px 0; }
+
+/* Vigilance ou foyer déjà envoyé par radio : carte éteinte, bord vert, coche ; les nouvelles alertes gardent leur couleur */
+.vig-ligne.deja-envoye { border-left-color: #3ee68a !important; background: rgba(62, 230, 138, 0.07) !important; }
+.vig-ligne.deja-envoye > b { opacity: 0.75; }
+.vig-ligne .envoye-radio { display: block; margin-top: 4px; color: #3ee68a; font-weight: 650; font-size: 0.92em; }
+.vig-ligne .envoye-radio small { color: var(--doux, #c3d0dc); font-weight: 400; }
+.vig-ligne.deja-envoye .ao-env-btn { background: transparent; border-color: rgba(62, 230, 138, 0.5); }
+body.theme-clair .vig-ligne .envoye-radio { color: #0a7a45; }
+body.theme-clair .vig-ligne.deja-envoye { border-left-color: #0a7a45 !important; background: rgba(10, 122, 69, 0.08) !important; }
+
+/* Nœud en mode licencié (radioamateur) */
+.badge.licencie { background: rgba(180, 140, 255, 0.18); border-color: #b48cff; color: #e6dcff; }
+body.theme-clair .badge.licencie { color: #4b2a9a; background: rgba(120, 80, 220, 0.12); }
+
+/* Calculette des pertes de câble */
+.calculette-btn { margin-top: 4px; }
+.calculette-pertes { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: flex-end; margin: 6px 0; padding: 8px 10px; border: 1px solid var(--bord, rgba(120,160,190,.3)); border-radius: 8px; background: rgba(62, 230, 196, 0.06); grid-column: 1 / -1; }
+.calculette-pertes label { display: flex; flex-direction: column; gap: 2px; font-size: 0.92em; }
+.calculette-pertes input[type=number] { width: 6em; }
+.calculette-resultat { display: flex; gap: 10px; align-items: center; }
+.calculette-pertes .note { flex-basis: 100%; }
+
+/* Registre des relais */
+.registre-relais .table-defile { overflow-x: auto; }
+/* Le registre est un tableau : la fiche s'élargit le temps de l'afficher (sur grand écran) */
+@media (min-width: 1100px) { .fiche:has(.registre-relais) { width: min(1000px, calc(100vw - 440px)); } }
+.registre-relais table { min-width: 720px; }
+.registre-relais th { white-space: nowrap; }
+.registre-relais table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+.registre-relais th, .registre-relais td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--bord, rgba(120,160,190,.25)); vertical-align: top; }
+.registre-relais tr.cliquable { cursor: pointer; }
+.registre-relais tr.cliquable:hover { background: rgba(62, 230, 196, 0.06); }
+.registre-relais .etat-ok { color: #3ee68a; } .registre-relais .etat-attention, .registre-relais .attention { color: #ffb547; }
+.registre-relais .etat-ko, .registre-relais .ko { color: #ff6b6b; } .registre-relais .etat-inconnu { color: var(--doux, #c3d0dc); }
+body.theme-clair .registre-relais .etat-ok { color: #0a7a45; } body.theme-clair .registre-relais .etat-attention, body.theme-clair .registre-relais .attention { color: #a35a00; } body.theme-clair .registre-relais .etat-ko, body.theme-clair .registre-relais .ko { color: #b42318; }
+
+/* Stations APRS */
+/* Stations APRS : carré blanc à coins arrondis marqué « A » (bleu : APRS VHF/Internet, violet épais : LoRa APRS) */
+.aprs-pt span { display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 3px; background: #fff; color: #0b3d91; font: 800 10px/1 system-ui, sans-serif; border: 2px solid #2f6fd6; box-shadow: 0 0 0 1px #0b1117; }
+.aprs-pt.lora span { color: #5b21b6; border-color: #a855f7; border-width: 2.5px; }
+.aprs-etiquette { background: #0b1117; color: #fff; border: 1px solid #2f6fd6; font-size: 11px; padding: 0 4px; }
+.aprs-etiquette.lora { border-color: #a855f7; }
+.aprs-etiquette .aprs-tag { display: inline-block; padding: 0 3px; border-radius: 3px; background: #fff; color: #0b3d91; font-size: 9px; font-weight: 800; }
+.aprs-etiquette.lora .aprs-tag { color: #5b21b6; }
+
+/* Rivières (Hub'Eau) */
+.riviere-pt span { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; background: #12324a; border: 2px solid #5fb4ff; box-shadow: 0 0 0 1px #0008; }
+.riviere-pt.attention span { border-color: #ffb547; background: #4a3612; }
+.riviere-pt.critique span { border-color: #ff6b6b; background: #4a1616; animation: pulse-riviere 1.4s infinite; }
+@keyframes pulse-riviere { 50% { box-shadow: 0 0 0 6px #ff6b6b44; } }
+.riviere-etiquette { background: #0d1b26e6; color: #cfe8ff; border: 1px solid #5fb4ff; font-weight: 700; padding: 1px 5px; }
+.riviere-etiquette.attention { border-color: #ffb547; color: #ffd79a; } .riviere-etiquette.critique { border-color: #ff6b6b; color: #ffb3b3; }
+.popup-riviere .riviere-valeurs { display: flex; gap: 14px; margin: 8px 0 4px; }
+.popup-riviere .riviere-valeurs span { display: flex; flex-direction: column; } .popup-riviere .riviere-valeurs b { font-size: 15px; }
+.popup-riviere .riviere-valeurs small { color: #4a5a68; }
+.courbe-riviere .txt-courbe { font-size: 10px; fill: #cfe8ff; }
+.courbe-riviere { display: block; margin: 4px 0; background: #0b1620; border-radius: 6px; }
+body.theme-clair .riviere-etiquette { background: #ffffffee; color: #0b4f86; } body.theme-clair .courbe-riviere { background: #eef4f8; }
+
+/* Capteurs LoRaWAN */
+.lorawan-pt span { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; font-size: 11px; background: #2a1a46; border: 2px solid #b48cff; box-shadow: 0 0 0 1px #0008; }
+.lorawan-pt.vieux span { opacity: .55; } .lorawan-pt.alerte span { border-color: #ffb547; background: #4a3612; }
+.lorawan-gw span { display: grid; place-items: center; width: 16px; height: 16px; font-size: 11px; border-radius: 50%; background: #1d2a36; border: 1px solid #8aa0b3; }
+.lorawan-etiquette { background: #160d26e6; color: #e2d4ff; border: 1px solid #b48cff; font-weight: 700; padding: 1px 5px; }
+.lorawan-mesures { border-collapse: collapse; margin: 6px 0; } .lorawan-mesures td { padding: 1px 8px 1px 0; } .lorawan-mesures td:first-child { color: #4a5a68; }
+body.theme-clair .lorawan-etiquette { background: #ffffffee; color: #5a2ea6; }
+/* Menu Couches en trois colonnes (fond et repères · réseau · autour du réseau) : il tient en hauteur sur ordinateur */
+.menu-couches .menu.menu-colonnes { background: var(--fond); }
+.menu-couches .menu.menu-colonnes .col-menu { display: flex; flex-direction: column; gap: 4px; }
+@media (min-width: 901px) {
+  .menu-couches .menu.menu-colonnes { flex-direction: row; align-items: flex-start; gap: 10px; max-width: calc(100vw - 24px); max-height: calc(100vh - 150px); overflow-y: auto; }
+  .menu-couches .menu.menu-colonnes .col-menu { min-width: 150px; }
+  .menu-couches .menu.menu-colonnes .col-menu + .col-menu { border-left: 1px solid var(--bord); padding-left: 10px; }
+}
+.annonce.cliquable::after { content: ' ›'; }
+.annonce.cliquable:hover { text-decoration: underline; }
+/* Légende : symboles des couches APRS, LoRaWAN et rivières (mêmes pastilles que sur la carte) */
+.legende .leg-ic { display: inline-flex; vertical-align: middle; margin: 0 2px 0 6px; } .legende .leg-ic:first-child { margin-left: 0; }
+.legende .leg-ic.riviere-pt span, .legende .leg-ic.lorawan-pt span { width: 16px; height: 16px; font-size: 10px; animation: none; }
+/* PL: telefon — zostaje układ MeshCore Południe (bez ikon-emoji oryginału w zakładkach i dolnym pasku) */
+/* Nœuds à inviter : une carte par nœud, nom en entier */
+.invites-intro p { margin: 0 0 6px; }
+.ap-filtre { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; color: var(--doux); }
+.invite { border: 1px solid var(--bord); border-radius: 8px; padding: 8px 10px; margin: 6px 0; background: var(--surface-2); }
+.invite-nom { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; } .invite-nom b { overflow-wrap: anywhere; }
+.invite-info { color: var(--doux); font-size: 12px; margin-top: 2px; }
+.invite-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+label.bouton-fichier { cursor: pointer; display: inline-flex; align-items: center; }
 
 /* PL: drogi dojazdowe wyłączone — bez wyboru „auto / 4×4 / pieszo” */
 label:has(> #zone-acces), label:has(> #plan-acces), label:has(> #budget-acces), label:has(> #dep-acces), label:has(> #filtre-acces), label:has(> #relier-acces) { display: none !important; }

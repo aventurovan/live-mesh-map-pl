@@ -89,6 +89,7 @@ function appliquerVueReseau() {
   document.querySelectorAll('.outils-mc').forEach((el) => (el.hidden = !etat.config.meshcore || etat.vueReseau === 'meshtastic'));
   document.querySelectorAll('.outils-mt').forEach((el) => (el.hidden = etat.vueReseau === 'meshcore'));
   if (!mc.actif) etat.vueReseau = 'meshtastic';
+  setTimeout(() => { if (typeof majBadgesMessages === 'function') majBadgesMessages(); }, 0); // compteur Messages selon le réseau affiché
   try { localStorage.setItem('gaulix_reseau', etat.vueReseau); } catch { /* stockage indisponible */ }
   document.body.dataset.reseau = etat.vueReseau;
   document.querySelectorAll('.choix-reseau button').forEach((b) => b.classList.toggle('actif', b.dataset.reseau === etat.vueReseau));
@@ -439,7 +440,8 @@ async function mcRendreMessages() {
   const avantLecture = !document.hidden && typeof nonLus !== 'undefined' ? { ...nonLus } : {};
   mcMarquerLus();
   const cleMc = (m) => (m.genre === 'direct' ? 'mcdirect' : 'mc:' + String(m.canal || '?').toLowerCase());
-  if (typeof marquerNouveaux === 'function') marquerNouveaux(l.filter((m) => mcFiltreVoit(cleMc(m))), cleMc, (m) => 'mc' + (m.id != null ? m.id : m.heure + (m.nomDe || '')), (m) => m.sens === 'recu', avantLecture);
+  for (const m of l) if (m.sens === 'envoye' && m.nomDe) mcNomsMoi.add(m.nomDe);
+  if (typeof marquerNouveaux === 'function') marquerNouveaux(l.filter((m) => mcListeMontre(cleMc(m))), cleMc, (m) => 'mc' + (m.id != null ? m.id : m.heure + (m.nomDe || '')), (m) => m.sens === 'recu' && !mcEstDeMoi(m), avantLecture);
   const c = (mc.etat && mc.etat.companion) || {};
   const canaux = c.canaux || [];
   const peutEnvoyer = etat.admin && c.connecte;
@@ -551,6 +553,13 @@ document.addEventListener('click', (e) => {
   ouvrirMenu(b, `${esc(mcNom(cle))} <small>${esc(cle.slice(0, 8))}</small>`, items);
 });
 
+// Message de la carte elle-même : envoyé par son companion, ou entendu en retour (répété par un relais, vu par un
+// observateur MQTT) sous le nom du companion. Il n'est ni « nouveau » ni compté comme non lu.
+const mcNomsMoi = new Set();
+function mcEstDeMoi(m) {
+  const c = (mc.etat && mc.etat.companion) || {};
+  return m.sens === 'envoye' || (!!m.nomDe && (m.nomDe === c.nom || mcNomsMoi.has(m.nomDe)));
+}
 function mcLigneMessage(m) {
   const qui = m.sens === 'envoye' ? `<b>${esc(m.nomDe || 'moi')}</b>${m.genre === 'direct' ? ` → ${mcBoutonAuteur(m.nomVers || mcNom(m.vers), m.vers)}` : ''}` : `${mcBoutonAuteur(m.nomDe || '?', m.genre === 'direct' ? m.de : null)}${m.genre === 'direct' ? ' → moi' : ''}`;
   const lieu = m.genre === 'direct' ? 'Direct' : m.canal || '';
@@ -618,10 +627,14 @@ async function mcFicheMaintenance() {
   const badge = (n) => n.etatFw === 'a-jour' ? '<span class="badge actif">à jour</span>' : n.etatFw === 'retard' ? `<span class="badge attente">${esc(n.derniereVersion)} disponible</span>` : '';
   const memo = r.noeuds.filter((n) => n.motDePasse);
   z.innerHTML = `<h2>🛠️ Maintenance MeshCore</h2>
+    <p class="note">Nowy repeater? <a href="https://meshcoresouth.pl/flasher.php" target="_blank" rel="noopener">Flasher SF6</a> wgra firmware, a <a href="https://meshcoresouth.pl/rpt/" target="_blank" rel="noopener">Konfigurator RPT</a> ustawi go z przeglądarki (preset Południe SF6).</p>
     <p class="note">Dernières versions : répéteur <b>${esc(v.repeater ? v.repeater.version : '?')}</b> · room server <b>${esc(v['room-server'] ? v['room-server'].version : '?')}</b> · companion <b>${esc(v.companion ? v.companion.version : '?')}</b>. La version d’un nœud est connue après une lecture de sa configuration (mot de passe admin nécessaire). Mise à jour : en USB avec le flasheur MeshCore, ou sur place (« start ota » puis le Wi-Fi du nœud).</p>
     ${r.noeuds.map((n) => `<div class="carte-cle"><div class="ligne-cle"><b>${esc(n.nom)}</b> <small>${n.role === 'salon' ? 'room server' : 'répéteur'} · vu ${ilYa(n.dernierVu)}</small></div>
       <div class="puces-cle">${n.motDePasse ? '<span class="badge actif">🔑 mot de passe mémorisé</span>' : '<span class="badge refus">pas de mot de passe</span>'} ${n.firmware ? `<span class="badge">${esc(n.firmware)}</span> ${badge(n)}` : '<span class="badge attente">version inconnue</span>'}${n.materiel ? ` <span class="badge">${esc(n.materiel)}</span>` : ''}${n.lu ? ` <small>lu ${ilYa(n.lu)}</small>` : ''}</div>
+      ${n.configuration ? `<p class="note">⚙️ Configuré${n.configuration.date ? ' le ' + new Date(n.configuration.date).toLocaleDateString('fr-FR') : ''} avec le configurateur${n.configuration.carte ? ' · ' + esc(n.configuration.carte) : ''}${n.configuration.firmware ? ' · ' + esc(n.configuration.firmware) : ''}${n.configuration.radio ? ` · radio <span translate="no">${esc(n.configuration.radio)}</span>` : ''}${n.configuration.regions.length ? ` · régions <span translate="no">${esc(n.configuration.regions.join(', '))}</span>` : ''}</p>` : ''}
       ${n.aFaire.length ? `<ul class="a-faire">${n.aFaire.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}</div>`).join('') || '<div class="vide">Aucun répéteur MeshCore dans la zone.</div>'}
+    ${etat.admin ? `<div class="actions-prop"><label class="mini bouton-fichier">📥 Importer une sauvegarde du configurateur (.json)<input type="file" id="mc-import-cfg" accept=".json,application/json" hidden></label></div>
+      <p class="note">Le fichier « meshcore-config-….json » enregistré par le configurateur : la carte en garde le matériel, le firmware, la date et les réglages (jamais les mots de passe ni la clé privée), et les compare aux recommandations françaises.</p><p class="erreur" id="mc-import-retour"></p>` : ''}
     <h3>🌙 Conformité automatique chaque nuit</h3>
     ${etat.admin ? `<form id="f-mc-conf" class="form-gestion">
       <label>Référence <select name="reference"><option value="">—</option>${memo.map((n) => `<option value="${n.cle}" ${n.cle === c.reference ? 'selected' : ''}>${esc(n.nom)}</option>`).join('')}</select></label>
@@ -630,6 +643,19 @@ async function mcFicheMaintenance() {
       <div class="actions-prop"><button type="submit" class="principal">Enregistrer</button><button type="button" id="mc-conf-maintenant">Vérifier maintenant</button></div>
       <p class="erreur" id="mc-conf-retour"></p></form>` : ''}
     ${d ? `<p>Dernière vérification le ${new Date(d.date).toLocaleString('fr-FR')} : <b>${d.conformes.length} conforme(s)</b>, ${d.ecarts.length} avec écarts, ${d.nonLus.length} non lu(s).</p>${d.ecarts.map((e) => `<div class="alerte attention">${esc(e.nom)} : ${esc(e.ecarts.map((x) => `${x.element} = ${x.valeur} au lieu de ${x.reference}`).join(' ; '))}</div>`).join('')}${d.nonLus.length ? `<p class="note">Non lus : ${esc(d.nonLus.map((x) => x.nom).join(', '))}</p>` : ''}` : '<p class="note">Pas encore de vérification automatique.</p>'}`;
+  const imp = $('#mc-import-cfg');
+  if (imp) imp.onchange = async () => {
+    const fichier = imp.files[0];
+    if (!fichier) return;
+    try {
+      const doc = JSON.parse(await fichier.text());
+      // La clé privée (même chiffrée) et les mots de passe ne quittent pas le navigateur
+      const { format, version, date, carte, nom, firmware, commandes } = doc;
+      const r2 = await postJson('/api/mc/maintenance/configuration', { format, version, date, carte, nom, firmware, commandes: (commandes || []).filter((c) => !/^(password\b|set\s+(prv\.key|guest\.password|password)\b)/i.test(String(c).trim())), identite: doc.identite && doc.identite.cle_publique ? { cle_publique: doc.identite.cle_publique } : null });
+      $('#mc-import-retour').textContent = `✔ Sauvegarde de ${r2.nom || 'ce répéteur'} importée`;
+      setTimeout(mcFicheMaintenance, 1200);
+    } catch (x) { $('#mc-import-retour').textContent = x instanceof SyntaxError ? 'Fichier illisible : sauvegarde .json du configurateur attendue' : x.message; }
+  };
   const f = $('#f-mc-conf');
   if (!f) return;
   const valeurs = () => ({ reference: f.reference.value || null, actif: f.actif.checked, elements: [...f.querySelectorAll('input[name="el"]:checked')].map((x) => x.value) });
@@ -753,7 +779,8 @@ async function mcRendreGestion() {
     <div id="mc-g-outil"></div>
     <div id="mc-g-tache"></div>
     <h4>Dernières opérations</h4>
-    <div class="liste">${i.taches.map((t) => `<div class="ligne" data-mc-tache="${t.id}"><span class="point ${t.statut === 'ok' ? 'actif' : t.statut === 'en_cours' || t.statut === 'en_attente' ? 'recent' : 'alerte'}"></span><span class="titre">${esc(MC_TACHES[t.type] || t.type)}<small>${t.cles.map((k) => esc(t.noms[k] || k.slice(0, 6))).join(', ')}${t.reprises ? ' · reprise après redémarrage' : ''}</small></span><span class="meta">${MC_STATUTS[t.statut]} · ${ilYa(t.creee)}</span></div>`).join('') || '<div class="vide">Aucune.</div>'}</div>`;
+    <p class="note">Les lignes <b>🤖 automatique</b> sont lancées par la carte elle-même, sans rien cocher : état des répéteurs et salons de la zone (fréquence réglable dans Module MeshCore, en bas, « jamais » pour arrêter), relevé des capteurs et traces de nuit vers 3 h. Les cases ci-dessus ne servent qu’aux opérations que vous lancez.</p>
+    <div class="liste">${i.taches.map((t) => `<div class="ligne" data-mc-tache="${t.id}"><span class="point ${t.statut === 'ok' ? 'actif' : t.statut === 'en_cours' || t.statut === 'en_attente' ? 'recent' : 'alerte'}"></span><span class="titre">${esc(MC_TACHES[t.type] || t.type)}${/^(supervision|capteurs)/.test(String(t.auteur || '')) ? ' <span class="etiquette-auto" title="Lancée par la carte elle-même (supervision des répéteurs surveillés, relevé des capteurs, traces de nuit), sans rien cocher">🤖 automatique</span>' : ''}<small>${t.cles.map((k) => esc(t.noms[k] || k.slice(0, 6))).join(', ')}${t.reprises ? ' · reprise après redémarrage' : ''}</small></span><span class="meta">${MC_STATUTS[t.statut]} · ${ilYa(t.creee)}</span></div>`).join('') || '<div class="vide">Aucune.</div>'}</div>`;
   z.querySelectorAll('[data-mc-sel]').forEach((c) => (c.onchange = () => { if (c.checked) sel.add(c.dataset.mcSel); else sel.delete(c.dataset.mcSel); z.querySelector('.actions-prop .note').textContent = `${sel.size} coché(s)`; }));
   z.querySelector('[data-mc-tout]').onclick = () => { liste.forEach((n) => sel.add(n.cle)); mcRendreGestion(); };
   z.querySelector('[data-mc-rien]').onclick = () => { sel.clear(); mcRendreGestion(); };
@@ -1317,6 +1344,7 @@ function mcRendreCompanion() {
         <label>Paquets conservés <select name="perimetre">${[['departement', 'captés dans le département'], ['voisins', 'captés dans le département et ses voisins'], ['national', 'tout le flux national (lourd)']].map(([v, t]) => `<option value="${v}" ${e.reglages.perimetre === v ? 'selected' : ''}>${t}</option>`).join('')}</select><small>${e.reglages.horsPerimetre ? `${e.reglages.horsPerimetre} paquets ignorés depuis le démarrage` : 'selon la position de l’observateur qui les capte'}</small></label>
         <label>Liaisons déduites des chemins <select name="liensOctetsMin">${[[1, 'tous les chemins (1 octet compris)'], [2, 'chemins en 2 octets ou plus'], [3, 'chemins en 3 octets seulement']].map(([v, t]) => `<option value="${v}" ${Number(e.reglages.liensOctetsMin || 2) === v ? 'selected' : ''}>${t}</option>`).join('')}</select><small>à 1 octet, deux répéteurs peuvent avoir le même préfixe : liaisons parfois fausses</small></label>
         <label>Codes de zone voisins <input name="iataVoisins" value="${esc(e.reglages.iataVoisins || '')}" placeholder="ex. CFE, LYS, EBU"><small>pour les observateurs sans position connue</small></label>
+        <label>Relevé automatique de l’état des répéteurs <select name="supervisionHeures">${[[0, 'jamais'], [1, 'toutes les heures'], [3, 'toutes les 3 h'], [6, 'toutes les 6 h'], [12, 'toutes les 12 h'], [24, 'une fois par jour']].map(([v, t]) => `<option value="${v}" ${Number(e.reglages.supervisionHeures ?? 3) === v ? 'selected' : ''}>${t}</option>`).join('')}</select><small>par le companion, sans rien cocher (lignes « 🤖 automatique » de Programmer)</small></label>
         <label style="grid-column:1/-1">Canaux à déchiffrer (un par ligne) <textarea name="canaux" rows="3">${esc(e.reglages.canaux)}</textarea><small>Public · #nom (canal « hashtag ») · nom=secret (32 caractères hexadécimaux)</small></label>
       </div>
       <div class="actions-prop"><button type="submit" class="principal">Enregistrer et redémarrer</button></div>
@@ -1362,7 +1390,7 @@ function mcRendreCompanion() {
     ev.preventDefault();
     const f = ev.target;
     if (!(await confirmer('Enregistrer ces réglages MeshCore ? Le service redémarre (quelques secondes).'))) return;
-    try { await postJson('/api/mc/reglages', { iata: f.iata.value.trim(), racine: f.racine.value.trim(), republier: f.republier.checked, canaux: f.canaux.value, perimetre: f.perimetre.value, liensOctetsMin: Number(f.liensOctetsMin.value), iataVoisins: f.iataVoisins.value }); attendreRedemarrage('Réglages MeshCore enregistrés'); } catch (err) { retour(err.message); }
+    try { await postJson('/api/mc/reglages', { iata: f.iata.value.trim(), racine: f.racine.value.trim(), republier: f.republier.checked, canaux: f.canaux.value, perimetre: f.perimetre.value, liensOctetsMin: Number(f.liensOctetsMin.value), iataVoisins: f.iataVoisins.value, supervisionHeures: Number(f.supervisionHeures.value) }); attendreRedemarrage('Réglages MeshCore enregistrés'); } catch (err) { retour(err.message); }
   };
 }
 
@@ -1891,7 +1919,7 @@ function mcRecevoir(m) {
     mcMajAlertes();
     if (etat.admin && mc.vue === 'companion') mcChargerEtat();
   } else if (m.genre === 'mc-noeuds') mcPlanifier();
-  else if (m.genre === 'mc-message' && etat.membre) { if (m.sens === 'recu') mcNoterMessageRecu(m); mcMessagesARafraichir(); }
+  else if (m.genre === 'mc-message' && etat.membre) { if (m.sens === 'recu' && !mcEstDeMoi(m)) mcNoterMessageRecu(m); mcMessagesARafraichir(); }
 }
 // Messages MeshCore non lus (même réglage de sons que Meshtastic : bip par nom de canal, alerte des messages directs)
 function mcNoterMessageRecu(m) {
@@ -1900,8 +1928,8 @@ function mcNoterMessageRecu(m) {
   const vu = !document.hidden && mc.vue === 'messages' && $('[data-vue="meshcore"]') && $('[data-vue="meshcore"]').classList.contains('actif') && mcFiltreVoit(k);
   if (typeof noterDernierRecu === 'function') noterDernierRecu(k);
   if (!vu) { nonLus[k] = (nonLus[k] || 0) + 1; ecrireLs('gaulix_non_lus', nonLus); }
-  if (m.direct) { if (sons.direct) bip([880, 1320, 1760], 0.12); afficherAlerteDirect(`✉️ Message direct MeshCore de ${m.nomDe || 'inconnu'}`, m.texte); }
-  else if (sons.canaux[String(m.canal || '').toLowerCase()]) bip([noteCanal(String(m.canal).toLowerCase())], 0.18);
+  if (m.direct) { if (sons.direct) sonDirect(); afficherAlerteDirect(`✉️ Message direct MeshCore de ${m.nomDe || 'inconnu'}`, m.texte); }
+  else if (sons.canaux[String(m.canal || '').toLowerCase()]) sonCanal(String(m.canal).toLowerCase());
   majBadgesMessages();
 }
 function mcMajBadgeMessages() {
@@ -1920,7 +1948,9 @@ function mcMajBadgeMessages() {
   }
 }
 // Ce que la liste MeshCore affichée montre : tout, les directs ou un canal (« Relayés » ne vaut pas lecture)
-const mcFiltreVoit = (k) => !mcFiltreMsg || (mcFiltreMsg === 'direct' ? k === 'mcdirect' : mcFiltreMsg.startsWith('c:') && k === 'mc:' + mcFiltreMsg.slice(2).toLowerCase());
+const mcListeMontre = (k) => !mcFiltreMsg || (mcFiltreMsg === 'direct' ? k === 'mcdirect' : mcFiltreMsg.startsWith('c:') && k === 'mc:' + mcFiltreMsg.slice(2).toLowerCase());
+// « Tous » ne vaut pas lecture : les compteurs de chaque canal restent visibles (« ✓ Tout lu » les remet à zéro)
+const mcFiltreVoit = (k) => !!mcFiltreMsg && mcListeMontre(k);
 function mcMarquerLus() {
   if (typeof nonLus === 'undefined' || document.hidden) return;
   let ch = false;

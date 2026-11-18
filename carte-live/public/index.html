@@ -75,6 +75,7 @@
         <button id="btn-couvrir" class="bascule" title="Cliquez un lieu sur la carte : la carte propose 4 points hauts capables de le couvrir (puis d’autres points à couvrir avec un seul site)">🎯 Couvrir un ou plusieurs points</button>
         <button id="btn-relier" class="bascule" title="Cliquez un point de départ puis un point d’arrivée : la carte indique s’il faut des relais, et où les installer">🔗 Relier deux lieux</button>
         <button id="btn-profil" class="bascule" title="Profil de relief entre deux points : cliquez A puis B (nœud, sommet ou n’importe quel lieu)">⛰️ Profil entre deux points</button>
+        <button id="btn-vue3d" class="bascule" title="Relais et liaisons posés sur le relief en 3D (nouvel onglet)">🏔️ Vue 3D du réseau</button>
         <button id="btn-simulation" class="bascule" title="Et si on retirait ou ajoutait des relais ? Couverture et liaisons entre les villes">🧪 Simulation « et si… »</button>
         <button id="btn-plan-menu" class="bascule" title="Où poser des relais pour couvrir tout le département, avec l’accès à chaque site">🗺️ Plan pour couvrir le département</button>
       </div>
@@ -85,7 +86,9 @@
       <summary>Outils ▾</summary>
       <div class="menu">
         <button id="outil-connecter" class="bascule outil-principal" title="Bluetooth, USB ou adresse IP : Meshtastic ou MeshCore, reconnu tout seul">🔌 Connecter un module…</button>
+        <button id="outil-registre" class="bascule" title="Sites, autorisations, dernières visites, énergie et firmware de chaque relais, avec export CSV">🗂️ Registre des relais</button>
         <div class="titre-outils outils-mt">Meshtastic</div>
+        <button id="outil-inviter" class="bascule outils-mt niv-op" title="Nœuds d’un autre preset (LongFast…) autour du réseau : les repérer et les inviter">📣 Nœuds à inviter</button>
         <button id="outil-usb" class="bascule outils-mt" title="Brancher sur la carte le module relié en USB à ce PC (Chrome ou Edge)">🔌 Module USB de ce PC</button>
         <button id="outil-ble" class="bascule outils-mt" title="Relier à la carte un module Bluetooth proche de ce PC (Chrome ou Edge)">📶 Module Bluetooth</button>
         <a id="lien-client" class="bascule outils-mt" target="_blank" rel="noopener" title="Client officiel Meshtastic : gérer un module en USB, Bluetooth ou Wi-Fi depuis ce navigateur">📟 Client Meshtastic</a>
@@ -97,6 +100,7 @@
         <button class="bascule outils-mc" hidden id="outil-companion-mc" title="Relier à la carte un companion MeshCore branché sur ce PC (onglet MeshCore → Companion)">🔌 Relier un companion MeshCore</button>
         <div class="titre-outils">Réseau</div>
         <button id="outil-namierz" class="bascule" title="Skąd nadaje węzeł o danym prefiksie klucza (np. zalew pakietów REQ): pierwsze repeatery w ścieżkach, szacowany rejon, kandydaci">🎯 Namierz nadawcę</button>
+        <button id="outil-rejoindre" class="bascule niv-op" hidden title="Page publique pour les nouveaux venus : QR du canal, réglages conseillés, règles, relais, dons">🤝 Page « Rejoindre le réseau »</button>
         <a class="bascule outils-mc" hidden href="topologie.html?reseau=mc" title="Graphe des liaisons MeshCore : points de rupture, répéteurs les plus traversés, trafic en direct, simulation de l’inondation">🕸️ Topologie et simulation MeshCore</a>
         <button id="outil-passerelle" class="bascule" hidden title="Relayer des messages entre un canal Meshtastic et un canal MeshCore (outil d’appoint, administrateurs)">⇄ Passerelle inter-réseaux</button>
         <button id="outil-trafic" class="bascule outils-mt" title="Nœuds trop bavards (positions, télémétrie) et paquets réinjectés depuis MQTT">🚦 Contrôle du trafic</button>
@@ -146,6 +150,7 @@
       <button data-onglet="messages" id="onglet-messages" hidden>Messages</button>
       <button data-onglet="reglages" hidden>Réglages</button>
       <button data-onglet="meshcore" class="onglet-mc" hidden title="Réseau MeshCore : nœuds, paquets, companion">MeshCore</button>
+      <button class="detacher" id="detacher" title="Détacher le panneau dans une fenêtre à part (deuxième écran)" aria-label="Détacher le panneau">⧉</button>
       <button class="replier" id="replier" title="Replier le panneau">‹</button>
     </nav>
 
@@ -443,6 +448,7 @@
 
   <script src="/langue.js"></script>
   <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/vendor/protomaps-leaflet/protomaps-leaflet.js"></script>
   <script src="/dfci.js"></script>
   <script src="/app.js"></script>
   <script src="/animations.js"></script>

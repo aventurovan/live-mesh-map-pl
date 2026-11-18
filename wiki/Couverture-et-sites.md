@@ -12,11 +12,35 @@ Onglet **Couverture** et menu **Couverture radio**. Les calculs utilisent le mod
 - **Plan à budget** : « j'ai N relais à poser », surface et habitants gagnés.
 - **Simulation « et si… »** : retirer ou ajouter des relais, villes qui ne seraient plus couvertes.
 - **Profil entre deux points** : hauteur de chaque antenne **au-dessus du sol** (mât dessiné sur le profil, altitude du sol et de l'antenne affichées), **sites routiers** (webcams du Département et de la DIR), **déplacer des relais**.
+- **Profil en 3D** : bouton **🏔️ Voir ce profil en 3D** dans le profil : la liaison vue de côté sur le vrai relief, visée colorée (vert dégagée, orange Fresnel gênée, rouge coupée), 1re zone de Fresnel en volume, mâts et obstacle principal.
 - **Fiche d'installation** de chaque relais (antenne, hauteur, gain, câble, puissance, alimentation) : utilisée par les calculs.
 - **Couverture mesurée** : d'où les nœuds sont réellement reçus, relevés de terrain.
 - **Bulles voisines** : les relais des cartes des départements voisins (*Outils › Partager*).
 
 En vue MeshCore, les calculs utilisent le réglage radio français MeshCore (869,618 MHz, BW 62,5 kHz, SF8, CR8).
+
+## Avant d'installer un relais : autorisations
+
+La carte choisit les emplacements d'après le **relief** : elle ne sait pas si l'on a le droit d'y poser quoi que ce soit. Un avertissement le rappelle dans chaque outil qui propose des sites.
+
+- **Terrain privé** (champ, bois, toit, pylône) : accord écrit du propriétaire, et de l'exploitant s'il y en a un.
+- **Terrain public** (mairie, château d'eau, bâtiment communal) : autorisation de la commune ou du gestionnaire.
+- **Lieux à respecter** : cimetières, lieux de culte, monuments aux morts, jamais sans accord explicite. Un relais a déjà été retrouvé dans un cimetière.
+- **Sites classés ou inscrits, abords des monuments historiques** (500 m) : avis de l'Architecte des Bâtiments de France.
+- **Littoral** (loi Littoral) et **espaces naturels protégés** (Natura 2000, parcs, réserves) : règles strictes ; se renseigner en mairie ou auprès de la DDT(M).
+
+Un relais posé sans autorisation peut être retiré, et c'est l'image de tout le réseau qui en pâtit.
+
+## Vue 3D du réseau
+*Couverture radio › 🏔️ Vue 3D du réseau* (ou rubrique Couverture › Outils sur la carte) ouvre dans un nouvel onglet les relais Meshtastic, les passerelles MQTT et les répéteurs MeshCore posés sur le relief, avec les liaisons des dernières 24 h colorées selon le SNR (pointillés pour MeshCore).
+
+- **Fond** : sombre, photos aériennes IGN ou topographique.
+- **Relief ×** : exagère le relief (×1 à ×4) pour mieux voir vallées et crêtes.
+- **Nœuds mobiles** : affiche aussi les nœuds qui ne sont ni relais ni passerelles.
+- **↻ Tourner** : rotation lente autour du centre (un clic sur la carte l'arrête) ; **Vue de dessus** : retour à plat.
+- Clic sur un point : altitude et dernier paquet entendu.
+
+Le relief vient des données déjà préparées par la carte (aucun service extérieur). Tant qu'il n'est pas prêt, la vue s'affiche à plat avec un avis.
 
 ## Zone dessinée à la main
 Dans *Couverture › Plan*, **🖊 Dessiner une zone** sert à étudier un secteur plutôt que tout le département : secteur d'intervention, vallée, massif, itinéraire de course…

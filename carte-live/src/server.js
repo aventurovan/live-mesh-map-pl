@@ -1,6 +1,10 @@
 'use strict';
 // Carte live Meshtastic — serveur : MQTT -> décodage -> SQLite -> API REST + WebSocket temps réel
 
+// Réglages avancés faits depuis la carte : appliqués avant toute lecture de la configuration (ils priment sur le .env)
+const variables = require('./variables');
+variables.appliquer();
+
 const http = require('http');
 const { ecrireSur, lireJson } = require('./fichiers');
 const path = require('path');
@@ -164,9 +168,9 @@ app.use((req, res, next) => {
 const DEMO_LECTURE = [
   /^\/api\/messages(\/\d+\/parcours)?$/, /^\/api\/mc\/messages$/, /^\/api\/trames\/\d+$/, /^\/api\/paquets$/,
   /^\/api\/admin-noeuds(\/(modeles|favoris|firmware|conformite-auto|v28|taches\/[\w-]+|lecture\/\d+(\/detail)?))?$/,
-  /^\/api\/trafic\/controle$/, /^\/api\/noeuds-nouveaux$/, /^\/api\/installations$/, /^\/api\/responsables$/,
+  /^\/api\/lorawan(\/[\w:.-]+)?$/, /^\/api\/trafic\/controle$/, /^\/api\/noeuds-nouveaux$/, /^\/api\/installations$/, /^\/api\/responsables$/,
   /^\/api\/mc\/(admin(\/modeles|\/taches\/[\w-]+)?|maintenance|audit\/(regions|collisions)|noeuds\/[0-9A-Fa-f]{64}\/chemin|capteurs\/[0-9A-Fa-f]{64}|companion\/(stats|telemetrie|decouverte))$/,
-  /^\/api\/(sante-carte|reglages|diagnostic|alertes-officielles|passerelle|signalements|releves|ecoutes)$/,
+  /^\/api\/(sante-carte|reglages|diagnostic|alertes-officielles|passerelle|signalements|releves|ecoutes|fond-hors-ligne)$/,
   /^\/api\/maintenance\/[\w-]+$/, /^\/api\/envoi$/, /^\/api\/equipes$/, /^\/api\/firmware\/(info|modules)$/, /^\/api\/radio\/modules$/, /^\/rapport$/,
 ];
 const SECRET_DEMO = /(mot_?de_?passe|motdepasse|password|^pass$|psk|secret|jeton|token|e?mail|channel_?url|urlcanal|privee|private|admin_?keys?|clesadmin|^contact$|telephone|^(hote|ip|host|adresse|url|mqttUrl|urlMqtt|utilisateur|auteur|par)$)/i;
@@ -201,6 +205,8 @@ app.use((req, res, next) => {
   next();
 });
 app.use('/vendor/leaflet', express.static(path.join(path.dirname(require.resolve('leaflet/package.json')), 'dist'), { maxAge: '7d' }));
+app.use('/vendor/maplibre', express.static(path.join(path.dirname(require.resolve('maplibre-gl/package.json')), 'dist'), { maxAge: '7d' }));
+app.use('/vendor/protomaps-leaflet', express.static(path.join(path.dirname(require.resolve('protomaps-leaflet/package.json')), 'dist'), { maxAge: '7d' }));
 // Pages : jamais gardées en cache, et leurs feuilles de style et scripts portent le numéro de version
 // (après une mise à jour, le navigateur charge forcément les nouveaux fichiers, sans Ctrl+F5)
 const pagesVersionnees = new Map();
@@ -269,11 +275,13 @@ app.get('/api/config', (req, res) => {
   res.json({
     fonctionsMasquees: typeof fonctionsMasquees !== 'undefined' ? [...fonctionsMasquees] : [],
     version: infosVersion(),
+    freqMHz: Number(process.env.RADIO_FREQ_MHZ) || 869.525,
     titre: config.carte.titre,
     outils: { client: config.urlClient || '', flasher: config.urlFlasher || '' },
     centre: [config.carte.centreLat, config.carte.centreLon],
     zoom: config.carte.zoom,
     tuiles: config.carte.tuiles,
+    fondHorsLigne: typeof fondsHorsLigne !== 'undefined' ? (fondsHorsLigne.etat().fond || null) : null,
     retentionJours: config.retentionJours,
     seuils: config.seuils,
     admin: estAdmin(req),
@@ -289,6 +297,7 @@ app.get('/api/config', (req, res) => {
     horsFrance: horsFrance(),
     zoneNom: config.zoneNom,
     radio: true,
+    rejoindre: adhesion.actif(),
     meshcore: config.meshcore.actif && config.carte.reseaux !== 'meshtastic',
     reseaux: config.meshcore.actif ? config.carte.reseaux : 'meshtastic',
     mcRadioAttendue: config.meshcore.radioAttendue,
@@ -385,7 +394,7 @@ function obtenirAsymetrie() {
       return l && l.lora && l.lora.txPower > 0 ? l.lora.txPower : null;
     },
     seuilDemod: () => {
-      const pr = (sourceRadio && sourceRadio.etat().preset) || config.reseauPreset || 'LONG_FAST';
+      const pr = presetReseau() || config.reseauPreset || 'LONG_FAST';
       const sf = (require('./analyse').PRESETS[pr] || { sf: 11 }).sf;
       return -7.5 - 2.5 * (sf - 7);
     },
@@ -603,13 +612,29 @@ function Rdep(req, depForce) {
   if (precharge.instance && precharge.courant === dep) return precharge.instance;
   if (!reliefsEtude.has(dep)) {
     if (!estCodeMonde(dep) && !listeDepartements.some((d) => d.code === dep)) return relief;
-    if (reliefsEtude.size >= 2) { const [k, v] = reliefsEtude.entries().next().value; v.arreter(); reliefsEtude.delete(k); }
+    if (reliefsEtude.size >= 6) { const [k, v] = reliefsEtude.entries().next().value; v.arreter(); reliefsEtude.delete(k); }
     journal(`[Relief] étude de la zone ${dep} : chargement du relief ${estCodeMonde(dep) ? 'Copernicus' : 'IGN'} et des points hauts`);
     reliefsEtude.set(dep, creerRelief(config, journal, { ...fournisseursRelief, envDefaut: () => { const c = relief.calibration(); return c && c.perteEnvironnementDb != null ? c.perteEnvironnementDb : null; } }, { code: dep }));
   } else { const v = reliefsEtude.get(dep); reliefsEtude.delete(dep); reliefsEtude.set(dep, v); }
   return reliefsEtude.get(dep);
 }
 
+// Relief d'un département déjà préparé sur le disque : il s'ouvre en une à deux secondes. On attend qu'il soit prêt
+// plutôt que de répondre « en cours de chargement » (le navigateur ne réessayait que 20 s plus tard).
+async function reliefPret(RR, ms = 12000) {
+  const fin = Date.now() + ms;
+  // Relief prêt et, pour un département préparé, ses points hauts aussi (sinon « 0 point haut évalué »)
+  const fini = () => RR.pret() && (!RR.code || !reliefSurDisque(RR.code) || (RR.etat().sommets || 0) > 0);
+  while (!fini() && Date.now() < fin) {
+    const e = RR.etat ? RR.etat() : {};
+    if (e.mnt === 'erreur' || (RR.code && !reliefSurDisque(RR.code))) break; // téléchargement IGN : plusieurs minutes, inutile d'attendre ici
+    await new Promise((ok) => setTimeout(ok, 200));
+  }
+  return RR.pret();
+}
+const messageChargement = (RR) => (RR.code && reliefSurDisque(RR.code)
+  ? `Relief de la zone ${RR.code} : ouverture en cours, quelques secondes`
+  : `Relief de la zone ${RR.code || ''} en cours de chargement (${estCodeMonde(RR.code) ? 'Copernicus' : 'IGN'}) : réessayez dans quelques minutes`);
 app.get('/api/relief/france', (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
   const kody = kodyDoPrzygotowania();
@@ -651,24 +676,26 @@ app.post('/api/relief/recalculer', (req, res) => {
   R(req).calculerClassement(optsRelief(req.body || {}));
   res.json({ ok: true });
 });
-app.get('/api/relief/couvrir', (req, res) => {
+app.get('/api/relief/couvrir', async (req, res) => {
   const lat = Number(req.query.lat), lon = Number(req.query.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return res.status(400).json({ erreur: 'Point invalide' });
   const o = optsRelief(req.query);
   if (req.query.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
-  try { res.json(R(req, { lat, lon }).couvrirPoint({ lat, lon }, o)); } catch (e) { res.status(503).json({ erreur: e.message }); }
+  const RR = R(req, { lat, lon }); await reliefPret(RR);
+  try { res.json(RR.couvrirPoint({ lat, lon }, o)); } catch (e) { res.status(503).json({ erreur: e.message }); }
 });
 // Un seul site pour plusieurs points : ?pts=lat,lon;lat,lon;…
-app.get('/api/relief/couvrir-points', (req, res) => {
+app.get('/api/relief/couvrir-points', async (req, res) => {
   const cibles = String(req.query.pts || '').split(';').map((x) => x.split(',').map(Number)).filter((x) => x.length === 2 && x.every(Number.isFinite)).slice(0, 5).map(([lat, lon], i) => ({ lat, lon, nom: `Point ${i + 1}` }));
   if (cibles.length < 2) return res.status(400).json({ erreur: 'Indiquer au moins deux points' });
   const o = optsRelief(req.query);
   if (req.query.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
-  try { res.json(R(req, ...cibles).couvrirPoints(cibles, o)); } catch (e) { res.status(503).json({ erreur: e.message }); }
+  const RR = R(req, ...cibles); await reliefPret(RR);
+  try { res.json(RR.couvrirPoints(cibles, o)); } catch (e) { res.status(503).json({ erreur: e.message }); }
 });
 // Répéteurs MeshCore positionnés et entendus depuis 24 h (relais existants pour « Relier » et « Couvrir »)
 const repeteursMc = () => { const lim = Date.now() - 24 * 3600000; return reseauMc.q.noeuds.all().filter((n) => n.lat != null && ['repeteur', 'salon'].includes(n.role) && (n.dernier_vu || 0) >= lim).map((n) => ({ num: n.cle, nom: n.nom || n.cle.slice(0, 8), lat: n.lat, lon: n.lon })); };
-app.get('/api/relief/relier', (req, res) => {
+app.get('/api/relief/relier', async (req, res) => {
   const q = req.query, n = (v) => Number(v);
   const a = { lat: n(q.aLat), lon: n(q.aLon), nom: q.aNom ? String(q.aNom).slice(0, 60) : 'Départ' }, b = { lat: n(q.bLat), lon: n(q.bLon), nom: q.bNom ? String(q.bNom).slice(0, 60) : 'Arrivée' };
   if (![a.lat, a.lon, b.lat, b.lon].every(Number.isFinite)) return res.status(400).json({ erreur: 'Points invalides' });
@@ -676,7 +703,8 @@ app.get('/api/relief/relier', (req, res) => {
   if (q.hA) o.hauteurA = Math.min(Math.max(Number(q.hA) || 2, 0.5), 60);
   if (q.hB) o.hauteurB = Math.min(Math.max(Number(q.hB) || 2, 0.5), 60);
   if (q.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
-  try { res.json(R(req, a, b).relierPoints(a, b, o)); } catch (e) { res.status(503).json({ erreur: e.message }); }
+  const RR = R(req, a, b); await reliefPret(RR);
+  try { res.json(RR.relierPoints(a, b, o)); } catch (e) { res.status(503).json({ erreur: e.message }); }
 });
 const cacheCouverture = new Map();
 const calculsPublics = new Map();
@@ -686,12 +714,12 @@ function limiterCalcul(ip) {
   if (calculsPublics.size > 2000) calculsPublics.clear();
   return l.length > 20;
 }
-app.get('/api/relief/couverture', (req, res) => {
+app.get('/api/relief/couverture', async (req, res) => {
   const lat = Number(req.query.lat), lon = Number(req.query.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return res.status(400).json({ erreur: 'Point invalide' });
   const RR = R(req, { lat, lon });
   if (!dansEmprise({ lat, lon }, RR.emprise())) return res.status(400).json({ erreur: estMembre(req) ? 'Point hors du relief disponible' : 'Point hors de la zone couverte par le modèle de relief (département et ses abords)' });
-  if (!RR.pret()) return res.status(503).json({ erreur: `Relief de la zone ${RR.code || ''} en cours de chargement : réessayez dans quelques minutes` });
+  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
   const o = optsRelief(req.query);
   // PL: tryb=rpt → zasięg do innych repeaterów: odbiornik na maszcie 10 m z anteną 5 dBi, małe straty terenu, do 100 km
   if (req.query.tryb === 'rpt' && RR.envRpt) { o.env = RR.envRpt(); o.ht = 10; o.gb = 5; o.rayonKm = 150; }
@@ -709,12 +737,12 @@ app.get('/api/relief/couverture', (req, res) => {
   res.json({ image: `/api/relief/couverture/${r.id}.png`, emprise: RR.emprise(), departement: RR.etat().departement, surfaceKm2: r.surfaceKm2, surfaceZoneKm2: r.surfaceZoneKm2, pctZone: r.pctZone, sol: r.sol, env: r.env, rayonKm: r.rayonKm });
 });
 // Couverture cumulée : ?pts=lat,lon[,hauteur];lat,lon[,hauteur];… (2 à 10 sites)
-app.get('/api/relief/couverture-multi', (req, res) => {
+app.get('/api/relief/couverture-multi', async (req, res) => {
   const sites = String(req.query.pts || '').split(';').map((x) => x.split(',').map(Number)).filter((x) => x.length >= 2 && x.slice(0, 2).every(Number.isFinite)).slice(0, 10)
     .map(([lat, lon, h]) => ({ lat, lon, h: Number.isFinite(h) ? Math.min(Math.max(h, 0.5), 100) : undefined }));
   if (!sites.length) return res.status(400).json({ erreur: 'Aucun site' });
   const RR = R(req, ...sites);
-  if (!RR.pret()) return res.status(503).json({ erreur: 'Le modèle de terrain est en cours de chargement' });
+  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
   const o = optsRelief(req.query);
   const cle = JSON.stringify(['multi', RR.code, sites, o, (RR.calibration() || {}).date]);
   let r = cacheCouverture.get(cle);
@@ -740,9 +768,9 @@ function couvertureReseauCachee(RR, o, reseauCle) {
   }
   return r;
 }
-app.get('/api/relief/couverture-reseau', (req, res) => {
+app.get('/api/relief/couverture-reseau', async (req, res) => {
   const RR = R(req);
-  if (!RR.pret()) return res.status(503).json({ erreur: 'Le modèle de terrain est en cours de chargement' });
+  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
   const o = optsRelief(req.query);
   if (req.query.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
   if (req.query.hn) o.hn = Math.min(Math.max(Number(req.query.hn) || 10, 0.5), 60);
@@ -767,9 +795,9 @@ async function villesDepartement(code) {
 }
 // Déplacer des relais existants : calcul en arrière-plan (1 à 3 min), résultat gardé jusqu'au prochain classement
 const optimisations = new Map(); // clé -> { etat, progression, resultat, erreur }
-app.get('/api/relief/optimisation', (req, res) => {
+app.get('/api/relief/optimisation', async (req, res) => {
   const RR = R(req);
-  if (!RR.pret()) return res.status(503).json({ erreur: 'Le modèle de terrain est en cours de chargement' });
+  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
   const rayon = Math.min(Math.max(Number(req.query.rayon) || 6, 2), 15);
   const acces = (DROGI_DOJAZDOWE ? ['voiture', '4x4', 'pied'] : []).includes(req.query.acces) ? req.query.acces : null;
   const cle = JSON.stringify([RR.code, rayon, acces, (RR.classement() || {}).date, Math.floor(Date.now() / 3600000)]);
@@ -790,7 +818,7 @@ app.get('/api/sites-routiers', async (req, res) => { res.set('Cache-Control', 'p
 const evaluationsRoutiers = new Map();
 app.get('/api/relief/sites-routiers', async (req, res) => {
   const RR = R(req);
-  if (!RR.pret()) return res.status(503).json({ erreur: 'Le modèle de terrain est en cours de chargement' });
+  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
   const h = Math.min(Math.max(Number(req.query.h) || 10, 2), 30);
   const cle = JSON.stringify([RR.code, h, (RR.classement() || {}).date, Math.floor(Date.now() / 3600000)]);
   let o = evaluationsRoutiers.get(cle);
@@ -831,7 +859,7 @@ app.get('/api/relief/budget', async (req, res) => {
 // Simulation « et si… » : { retirer: [num…], ajouter: [{ lat, lon, h, nom }…] }
 app.post('/api/relief/simulation', async (req, res) => {
   const RR = R(req);
-  if (!RR.pret()) return res.status(503).json({ erreur: 'Le modèle de terrain est en cours de chargement' });
+  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
   const b = req.body || {};
   const o = optsRelief(req.query);
   if (req.query.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
@@ -958,6 +986,24 @@ app.get('/api/radio/agents', (req, res) => {
 app.post('/api/radio/agents/code', (req, res) => {
   if (!exigerAdmin(req, res)) return;
   res.json({ code: agents.renouvelerCode() });
+});
+// Agent prêt à l'emploi (admin) : le programme de l'agent, avec l'adresse de cette carte et le code secret ajoutés à la
+// fin du fichier. L'agent 1.7 les y lit : aucune question au premier lancement, il relie tout seul les modules branchés.
+const AGENTS_PRETS = ['live-mesh-agent-windows.exe', 'live-mesh-agent-linux-amd64', 'live-mesh-agent-raspberrypi-arm64', 'live-mesh-agent-raspberrypi-armv7', 'live-mesh-agent-macos-arm64'];
+app.get('/api/agent/pret/:fichier', (req, res) => {
+  if (!exigerAdmin(req, res)) return;
+  const f = String(req.params.fichier || '');
+  if (!AGENTS_PRETS.includes(f)) return res.status(404).json({ erreur: 'Agent inconnu' });
+  let binaire;
+  try { binaire = fs.readFileSync(path.join(__dirname, '..', 'public', 'agent', f)); } catch {
+    return res.status(404).json({ erreur: 'Agent absent de cette installation (il est compilé dans l’image Docker) : prenez-le sur la page des versions GitHub' });
+  }
+  // Adresse par laquelle ce navigateur joint la carte (réseau local ou Tailscale), puis celles données dans AGENTS_ADRESSES
+  const hotes = [String(req.hostname || ''), ...String(process.env.AGENTS_ADRESSES || '').split(',')].map((h) => h.trim()).filter((h) => /^[a-z0-9.-]+(:\d+)?$/i.test(h));
+  const serveurs = [...new Set(hotes.map((h) => (/:\d+$/.test(h) ? h : `${h}:${agents.port}`)))];
+  const reglages = { serveurs, code: agents.code(), carte: String(config.titre || '').slice(0, 60), role: req.query.role === 'ecoute' ? 'ecoute' : 'principal' };
+  res.set({ 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${f}"`, 'Cache-Control': 'no-store' });
+  res.send(Buffer.concat([binaire, Buffer.from('\nCARTE-LIVE-AGENT' + JSON.stringify(reglages) + '\n')]));
 });
 app.post('/api/radio/connecter', (req, res) => {
   if (!exigerAdmin(req, res)) return;
@@ -1158,6 +1204,26 @@ app.post('/api/connexion/ip', async (req, res) => {
 });
 
 let scanEnCours = false;
+// Modules Meshtastic en Wi-Fi annoncés par mDNS (_meshtastic._tcp) : ajoutés à la liste des modules (sans connexion),
+// au démarrage puis toutes les 15 minutes, et à chaque « Rechercher »
+const { chercherMeshtastic } = require('./mdns');
+let derniersMdns = [];
+async function chercherModulesMdns() {
+  try {
+    derniersMdns = await chercherMeshtastic();
+    const connus = sourceRadio.modules().modules || [];
+    for (const m of derniersMdns) {
+      const ex = connus.find((x) => x.hote === m.hote && x.port === m.port);
+      if (!ex) journal(`[mDNS] module Meshtastic trouvé : ${m.nom} (${m.hote}:${m.port})`);
+      if (!ex || !ex.nom) sourceRadio.ajouterModule(m.hote, m.port, m.nom); // le nom choisi par l'administrateur reste
+    }
+  } catch (e) { journal('[mDNS]', e.message); }
+  return derniersMdns;
+}
+if (String(process.env.MDNS_MESHTASTIC || 'oui').toLowerCase() !== 'non') {
+  setTimeout(chercherModulesMdns, 20000).unref();
+  setInterval(chercherModulesMdns, 15 * 60000).unref();
+}
 app.post('/api/radio/scanner', async (req, res) => {
   if (!exigerAdmin(req, res)) return;
   const prefixe = String((req.body || {}).prefixe || '');
@@ -1165,7 +1231,11 @@ app.post('/api/radio/scanner', async (req, res) => {
   if (!/^(192\.168\.\d{1,3}|10\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3})$/.test(prefixe)) return res.status(400).json({ erreur: 'Réseau privé attendu, ex. 192.168.0' });
   if (scanEnCours) return res.status(409).json({ erreur: 'Recherche déjà en cours' });
   scanEnCours = true;
-  try { res.json({ trouves: await sourceRadio.scanner(prefixe), ...sourceRadio.modules() }); } finally { scanEnCours = false; }
+  try {
+    // Sondage du port 4403 et, en même temps, annonces mDNS des modules (nom du module, même sur un autre réseau Wi-Fi local)
+    const [trouves, mdns] = await Promise.all([sourceRadio.scanner(prefixe), chercherModulesMdns()]);
+    res.json({ trouves: [...new Set([...trouves, ...mdns.map((m) => m.hote)])], mdns, ...sourceRadio.modules() });
+  } finally { scanEnCours = false; }
 });
 
 // ---- Administration des nœuds par LoRa (admin) ---------------------------------------------
@@ -1474,7 +1544,9 @@ app.get('/api/noeuds/:num/qr', async (req, res) => {
 app.get('/api/envoi', (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
   const i = sourceRadio.infos();
-  res.json({ connecte: i.connecte, noeudLocal: i.noeudLocal, canaux: i.canaux || [] });
+  // Nœuds dont le module de la carte connaît la clé publique : sans elle, un message direct est refusé par le module
+  const cles = i.clesPubliques instanceof Map ? [...i.clesPubliques.keys()].map((n) => n >>> 0) : null;
+  res.json({ connecte: i.connecte, noeudLocal: i.noeudLocal, canaux: i.canaux || [], clesConnues: cles });
 });
 app.post('/api/envoi', (req, res) => {
   const u = utilisateur(req);
@@ -1484,6 +1556,11 @@ app.post('/api/envoi', (req, res) => {
     setTimeout(() => diffuser({ genre: 'statut' }), 500);
     res.json(r);
   } catch (e) { res.status(400).json({ erreur: e.message }); }
+});
+// Avant un message direct : envoie la fiche du module (clé publique) au nœud, qui répond avec la sienne
+app.post('/api/echanger-infos/:num', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  try { res.json(administration.echangerInfos(Number(req.params.num))); } catch (e) { res.status(409).json({ erreur: e.message }); }
 });
 app.get('/api/envoi/:id', (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
@@ -1841,13 +1918,41 @@ app.get('/api/messages', (req, res) => {
   // Démonstration : canaux publics (clé par défaut) seulement, jamais les messages directs
   const publics = new Set(config.canaux.filter((c) => !c.cle || c.cle === 'AQ==' || c.cle === '1PG7OiApB1nwvP+rz05pAQ==').map((c) => c.nom));
   const garder = (m) => !req.demoLecture || (m.vers === 0xffffffff && publics.has(m.canal));
-  res.json(stockage.q.messages.all(Math.min(Number(req.query.limite) || 300, 2000)).filter(garder).map((m) => {
+  const limite = Math.min(Number(req.query.limite) || 300, 2000);
+  // ?canal=nom : un seul canal ; ?direct=1 : messages directs seulement ; sinon les derniers, tous canaux confondus
+  const liste = req.query.canal ? stockage.q.messagesCanal.all(String(req.query.canal).slice(0, 40), limite)
+    : req.query.direct ? stockage.q.messagesDirects.all(limite) : stockage.q.messages.all(limite);
+  res.json(liste.filter(garder).map((m) => {
     const a = administration.accuseMessage(m.idPaquet, m.de);
     let entendus = [];
     try { entendus = JSON.parse(m.entendus || '[]'); } catch { /* vide */ }
     return { ...m, entendus, accuse: a ? { statut: a.statut, detail: a.detail || null, heure: a.heureAccuse || null, dest: a.dest } : null };
   }));
 });
+
+// Notifications de l'application Android (service en arrière-plan, écran éteint) : ce qui mérite de réveiller le
+// téléphone depuis « depuis » (ms) — messages directs reçus (Meshtastic et MeshCore), alertes critiques nouvelles,
+// signalements nouveaux. Réservé aux membres connectés (session de l'application).
+app.get('/api/notifications', (req, res) => {
+  if (!estMembre(req) || req.demoLecture) return res.status(401).json({ erreur: 'Connexion requise' });
+  const depuis = Math.max(Number(req.query.depuis) || 0, Date.now() - 24 * 3600000);
+  // Langue du téléphone (?langue=en) : alertes et libellés traduits ; les messages reçus restent tels quels
+  const tr = String(req.query.langue || '').toLowerCase().startsWith('en') ? require('./traduction').traduire : (t) => t;
+  const l = [];
+  try {
+    const moi = sourceRadio ? sourceRadio.etat().noeudLocal : null;
+    if (moi != null) for (const m of stockage.q.messages.all(200)) {
+      if ((m.heure || 0) > depuis && m.vers === moi && m.de !== moi && m.texte) l.push({ id: 'mt-' + m.idPaquet, genre: 'direct', heure: m.heure, titre: `✉️ ${nomNoeudServeur(m.de)}`, texte: m.texte });
+    }
+  } catch { /* pas de module */ }
+  try {
+    for (const m of reseauMc.messages(200)) if ((m.heure || 0) > depuis && m.sens === 'recu' && m.genre === 'direct') l.push({ id: 'mc-' + m.id, genre: 'direct', heure: m.heure, titre: `✉️ ${m.nomDe || 'MeshCore'} (MeshCore)`, texte: m.texte });
+  } catch { /* MeshCore absent */ }
+  for (const a of dernieresAlertes) if (a.niveau === 'critique' && (a.depuis || 0) > depuis) l.push({ id: 'al-' + a.cle, genre: 'alerte', heure: a.depuis, titre: '⚠️ ' + tr('Alerte'), texte: tr(a.message) });
+  try { for (const x of signalements.lister()) if (x.actif && (x.cree || 0) > depuis) l.push({ id: 'sg-' + x.id, genre: 'signalement', heure: x.cree, titre: '📍 ' + tr('Signalement'), texte: [x.titre, x.details].filter(Boolean).join(' : ') }); } catch { /* pas prêt */ }
+  res.set('Cache-Control', 'no-store').json({ maintenant: Date.now(), notifications: l.sort((a, b) => a.heure - b.heure).slice(-20) });
+});
+function nomNoeudServeur(num) { try { const n = stockage.q.noeud.get(num >>> 0); return (n && (n.nom_long || n.nom_court)) || '!' + (num >>> 0).toString(16); } catch { return '!' + (num >>> 0).toString(16); } }
 
 // Blocage après 3 échecs (adresse et compte), voir blocages.js
 const blocages = require('./blocages').creerBlocages(config, journal);
@@ -2200,6 +2305,56 @@ app.get('/api/sf8', async (req, res) => {
   res.json({ ok: true, ts: sf8.ts, nodes: sf8.nodes, blad: sf8Blad });
 });
 
+// ---- Fond de carte hors ligne (PMTiles OpenStreetMap) et relief ombré calculé sur place ----------------------
+const fondsHorsLigne = require('./fonds').creerFonds({ config, departements: () => listeDepartements, journal });
+app.get('/api/fond-hors-ligne', (req, res) => res.set('Cache-Control', 'no-store').json(fondsHorsLigne.etat()));
+app.post('/api/fond-hors-ligne', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  const b = req.body || {};
+  if (b.action === 'arreter') { fondsHorsLigne.arreter(); return res.json(fondsHorsLigne.etat()); }
+  if (b.action === 'supprimer') { fondsHorsLigne.supprimer(); return res.json(fondsHorsLigne.etat()); }
+  if (fondsHorsLigne.etat().enCours.actif) return res.status(409).json({ erreur: 'Téléchargement déjà en cours' });
+  fondsHorsLigne.telecharger({ zone: b.zone, maxzoom: b.maxzoom }, utilisateur(req).identifiant).catch(() => { /* erreur gardée dans l'état */ });
+  setTimeout(() => res.json(fondsHorsLigne.etat()), 300);
+});
+app.get('/fonds/fond.pmtiles', (req, res) => {
+  const f = fondsHorsLigne.fichier();
+  if (!f) return res.status(404).end();
+  res.sendFile(f, { acceptRanges: true, cacheControl: true, maxAge: '1d' });
+});
+// Altitudes pour la vue 3D (format Terrarium) : grille de 250 m, inutile au-delà du zoom 12
+const cacheTerrain = new Map();
+app.get('/api/relief/terrain/:z/:x/:y.png', (req, res) => {
+  const [z, x, y] = ['z', 'x', 'y'].map((k) => Number(req.params[k]));
+  if (![z, x, y].every(Number.isInteger) || z < 5 || z > 12) return res.status(404).end();
+  const r = Rdep(req); // département étudié (?dep=) ou celui de la carte
+  if (!r.pret()) return res.status(404).end();
+  const cle = `${r === relief ? '' : String(req.query.dep).toUpperCase()}/${z}/${x}/${y}`;
+  let t = cacheTerrain.get(cle);
+  if (t === undefined) {
+    try { t = r.terrainTuile(z, x, y); } catch { t = null; }
+    cacheTerrain.set(cle, t);
+    if (cacheTerrain.size > 600) cacheTerrain.delete(cacheTerrain.keys().next().value);
+  }
+  if (!t) return res.status(404).end();
+  res.set('Content-Type', 'image/png').set('Cache-Control', 'public, max-age=86400').send(t);
+});
+const cacheOmbrage = new Map();
+app.get('/api/relief/ombrage/:z/:x/:y.png', (req, res) => {
+  const [z, x, y] = ['z', 'x', 'y'].map((k) => Number(req.params[k]));
+  if (![z, x, y].every(Number.isInteger) || z < 6 || z > 14) return res.status(204).end();
+  const cle = `${z}/${x}/${y}`;
+  let t = cacheOmbrage.get(cle);
+  if (t === undefined) {
+    try { t = relief.ombrageTuile(z, x, y); } catch { t = null; }
+    if (!relief.pret()) return res.status(204).end(); // relief pas encore chargé : ne pas mémoriser de tuile vide
+    cacheOmbrage.set(cle, t);
+    if (cacheOmbrage.size > 800) cacheOmbrage.delete(cacheOmbrage.keys().next().value);
+  }
+  if (!t) return res.status(204).end();
+  res.set('Content-Type', 'image/png').set('Cache-Control', 'public, max-age=86400').send(t);
+});
+
 function emprise(geom) {
   let s = 90, o = 180, n = -90, e = -180;
   const parcourir = (c) => { if (typeof c[0] === 'number') { o = Math.min(o, c[0]); e = Math.max(e, c[0]); s = Math.min(s, c[1]); n = Math.max(n, c[1]); } else c.forEach(parcourir); };
@@ -2235,6 +2390,24 @@ function preparerReglages(b, existants = {}) {
     if (typeof b.mqtt.motDePasse === 'string' && b.mqtt.motDePasse !== '') m.motDePasse = b.mqtt.motDePasse.slice(0, 200);
     if (txt(b.mqtt.racine, 120)) m.racine = txt(b.mqtt.racine, 120);
     if (typeof b.mqtt.sujetsSupplementaires === 'string') m.sujetsSupplementaires = b.mqtt.sujetsSupplementaires.split(/[,\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 10);
+    // Brokers supplémentaires : une ligne « adresse » ou « adresse|racine » ; un mot de passe affiché masqué (nom:***@)
+    // reprend celui déjà enregistré pour le même compte et le même serveur
+    if (typeof b.mqtt.brokers === 'string') {
+      const lignes = b.mqtt.brokers.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+      if (lignes.length > 5) throw new Error('5 brokers supplémentaires au plus');
+      m.brokers = lignes.map((l) => {
+        const [u, racine] = l.split('|').map((x) => (x || '').trim());
+        if (!/^(mqtts?|wss?):\/\/[^\s]+$/.test(u)) throw new Error(`Broker « ${masquerUrl(u)} » : adresse mqtt://, mqtts://, ws:// ou wss:// attendue`);
+        let url = u;
+        const masque = u.match(/^([a-z]+:\/\/)([^:@/]*):\*\*\*@(.+)$/i);
+        if (masque) {
+          const ancien = config.mqtt.brokers.find((x) => { const a = x.url.match(/^([a-z]+:\/\/)([^:@/]*):([^@/]*)@(.+)$/i); return a && a[1] === masque[1] && a[2] === masque[2] && a[4] === masque[3]; });
+          if (!ancien) throw new Error(`Broker « ${u} » : mot de passe masqué inconnu, retapez-le en entier`);
+          url = ancien.url;
+        }
+        return { url, racine: racine.replace(/\/+$/, '') };
+      });
+    }
     r.mqtt = m;
   }
   // PL: drugi broker (tylko odczyt MeshCore), np. sieć kolegi; hasło zapisywane tylko na serwerze
@@ -2279,6 +2452,7 @@ function sansValeursEnv(r) {
   if (r.mqtt) {
     for (const k of ['url', 'utilisateur', 'racine']) if (r.mqtt[k] !== undefined && String(r.mqtt[k]) === String(e.mqtt[k] || '')) delete r.mqtt[k];
     if (Array.isArray(r.mqtt.sujetsSupplementaires) && !r.mqtt.sujetsSupplementaires.length) delete r.mqtt.sujetsSupplementaires;
+    if (Array.isArray(r.mqtt.brokers) && JSON.stringify(r.mqtt.brokers) === JSON.stringify(e.mqtt.brokers || [])) delete r.mqtt.brokers;
     if (!Object.keys(r.mqtt).length) delete r.mqtt;
   }
   return r;
@@ -2404,6 +2578,10 @@ app.get('/api/mqtt', (req, res) => {
     url: masquerUrl(config.mqtt.url), utilisateur: config.mqtt.utilisateur, motDePasseDefini: !!config.mqtt.motDePasse,
     racine: config.mqtt.racine, sujetsSupplementaires: config.mqtt.sujetsSupplementaires.join(', '), sujets,
     connecte: !!(clientMqtt && clientMqtt.connected), depuis: statsMqtt.depuis, reconnexions: statsMqtt.reconnexions, derniereErreur: statsMqtt.derniereErreur,
+    brokersReglage: config.mqtt.brokers.map((b) => b.url.replace(/\/\/([^:@/]*):[^@/]*@/, '//$1:***@') + (b.racine ? '|' + b.racine : '')).join('\n'),
+    brokersSupplementaires: (typeof brokersSup !== 'undefined' ? brokersSup : []).map((b) => b.etat), doublonsIgnores: compteur.doublons || 0,
+    domotique: typeof domotique !== 'undefined' ? domotique.etat() : null,
+    udp: typeof udpMt !== 'undefined' ? { ...udpMt.etat(), demande: String(process.env.UDP_MESHTASTIC || 'non').toLowerCase() === 'oui', noeuds: Object.fromEntries([...ipVersNoeud.entries()].map(([ip, n]) => [ip, noeuds.get('!' + n.toString(16).padStart(8, '0')) || '!' + n.toString(16).padStart(8, '0')])) } : null,
     dernierMessage: statsMqtt.dernierMessage, parMinute: +(n10 / 10).toFixed(1), ...compteur,
     passerelles: [...statsMqtt.passerelles.entries()].sort((a, b) => b[1].derniere - a[1].derniere).slice(0, 40).map(([id, e]) => ({ id, nom: noeuds.get(id) || null, ...e })),
     canaux: [...statsMqtt.canaux.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([canal, messages]) => ({ canal, messages })),
@@ -2527,7 +2705,7 @@ function etatMc(admin) {
   if (admin) {
     e.companion = { ...c, canaux: companion.canaux() };
     e.republication = publicateurMc.etat();
-    e.reglages = { iata: config.meshcore.iata, racine: config.meshcore.racine, republier: config.meshcore.republier, canaux: config.meshcore.canaux.join('\n'), perimetre: config.meshcore.perimetre, liensOctetsMin: config.meshcore.liensOctetsMin, iataVoisins: config.meshcore.iataVoisins.join(', '), horsPerimetre: compteurMc.horsPerimetre || 0 };
+    e.reglages = { iata: config.meshcore.iata, racine: config.meshcore.racine, republier: config.meshcore.republier, canaux: config.meshcore.canaux.join('\n'), perimetre: config.meshcore.perimetre, liensOctetsMin: config.meshcore.liensOctetsMin, iataVoisins: config.meshcore.iataVoisins.join(', '), supervisionHeures: config.meshcore.supervisionHeures, horsPerimetre: compteurMc.horsPerimetre || 0 };
     e.agents = agents.liste();
     e.ecoutes = ecoutes.liste().meshcore;
   }
@@ -2693,11 +2871,11 @@ app.post('/api/mc/companion/cli', async (req, res) => {
     res.json({ reponse: /^get wifi\.pwd/i.test(commande) ? '(masqué)' : r });
   } catch (e) { res.status(409).json({ erreur: e.message }); }
 });
-// Relevés automatiques : statistiques toutes les 15 min, découverte toutes les 6 h
+// Relevés automatiques : statistiques toutes les 15 min, découverte et régions des répéteurs une fois par jour
 setInterval(() => { if (config.meshcore.actif && companion.etat().pret) statsCompanionMc().catch(() => {}); }, 15 * 60000);
 let derniereDecouverteMc = 0;
 setInterval(() => {
-  if (!config.meshcore.actif || !companion.etat().pret || Date.now() - derniereDecouverteMc < 6 * 3600000) return;
+  if (!config.meshcore.actif || !companion.etat().pret || Date.now() - derniereDecouverteMc < 24 * 3600000) return;
   derniereDecouverteMc = Date.now();
   decouvrirMc().then(() => interrogerRegionsMc().catch(() => {})).catch((e) => journal('[MeshCore] découverte automatique :', e.message));
 }, 5 * 60000);
@@ -2720,7 +2898,8 @@ async function interrogerRegionsMc(cles) {
       auditMc.noterDeclarees(k, r);
       interrogationMc.resultats.push({ cle: k, nom: n.nom, ok: true, ...r });
       await new Promise((ok) => setTimeout(ok, 2000));
-      try {
+      // Propriétaire : redemandé au plus une fois par semaine (chaque demande est une requête anonyme sur le réseau)
+      if (!(proprietairesMc[k] && Date.now() - (proprietairesMc[k].heure || 0) < 7 * 86400000)) try {
         const pr = await companion.proprietaire({ cle: n.cle, nom: n.nom, role: n.role, lat: n.lat, lon: n.lon, horodatageAnnonce: n.horodatage_annonce });
         proprietairesMc[k] = { nom: pr.nom, infos: pr.infos, heure: Date.now() };
         ecrireSur(fProprietairesMc, JSON.stringify(proprietairesMc));
@@ -2836,6 +3015,33 @@ app.post('/api/mc/admin/mot-de-passe', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- Réglages avancés : variables du fichier .env réglables depuis la carte ----
+app.get('/api/reglages/variables', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  res.set('Cache-Control', 'no-store').json({ variables: variables.vue() });
+});
+// Corps : { variables: { NOM: valeur | null } } ; null = revenir à la valeur du .env ; secret vide = inchangé
+app.post('/api/reglages/variables', (req, res) => {
+  const u = utilisateur(req);
+  if (!u || u.role !== 'admin') return res.status(401).json({ erreur: 'Connexion admin requise' });
+  const b = (req.body || {}).variables;
+  if (!b || typeof b !== 'object') return res.status(400).json({ erreur: 'Aucun réglage' });
+  const v = { ...((config.reglages || {}).variables || {}) };
+  try {
+    for (const [nom, val] of Object.entries(b)) {
+      const def = variables.PAR_NOM.get(nom);
+      if (!def) throw new Error(`Réglage inconnu : ${nom}`);
+      if (val === null) { delete v[nom]; continue; }
+      if (def.type === 'secret' && String(val) === '') continue;
+      v[nom] = variables.valider(nom, val);
+    }
+  } catch (e) { return res.status(400).json({ erreur: e.message }); }
+  const r = { ...config.reglages };
+  if (Object.keys(v).length) r.variables = v; else delete r.variables;
+  res.json({ ok: true, redemarrage: true });
+  enregistrerReglagesEtRedemarrer(r, u.identifiant);
+});
+
 app.post('/api/mc/reglages', (req, res) => {
   const u = utilisateur(req);
   if (!u || u.role !== 'admin') return res.status(401).json({ erreur: 'Connexion admin requise' });
@@ -2847,6 +3053,7 @@ app.post('/api/mc/reglages', (req, res) => {
   if (['departement', 'voisins', 'national'].includes(b.perimetre)) m.perimetre = b.perimetre;
   if ([1, 2, 3].includes(Number(b.liensOctetsMin))) m.liensOctetsMin = Number(b.liensOctetsMin);
   if (typeof b.iataVoisins === 'string') m.iataVoisins = b.iataVoisins.split(/[,;\s]+/).map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z0-9]{2,8}$/.test(x)).slice(0, 20);
+  if (b.supervisionHeures !== undefined) { const h = Number(b.supervisionHeures); if (!Number.isInteger(h) || h < 0 || h > 48) return res.status(400).json({ erreur: 'Supervision : 0 à 48 heures' }); m.supervisionHeures = h; }
   if (typeof b.canaux === 'string') {
     const l = b.canaux.split(/[;\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 20);
     const ok = preparerCanauxMc(l);
@@ -2912,16 +3119,19 @@ wssModule.on('connection', (ws, req) => {
   const q = new URL(req.url, 'http://x').searchParams;
   const nom = (q.get('nom') || `Navigateur ${u ? u.identifiant : ''}`).slice(0, 40);
   const source = (q.get('source') || 'USB').slice(0, 40);
-  const flux = fluxWebSocket(ws);
-  if (q.get('role') === 'ecoute') {
-    // En plus du module principal : passerelle d'écoute tant que la page reste ouverte
-    const h = agents.ajouterVirtuel(nom, source + ' (navigateur)', flux, (req.socket.remoteAddress || '').replace(/^::ffff:/, ''));
+  brancherModuleFlux(fluxWebSocket(ws), nom, source + ' (navigateur)', (req.socket.remoteAddress || '').replace(/^::ffff:/, ''), q.get('role') === 'ecoute' ? 'ecoute' : 'principal');
+});
+// Module Meshtastic déjà ouvert (page web ou agent 1.7 « direct ») : principal tant que le flux reste ouvert, puis
+// retour au module utilisé avant ; ou passerelle d'écoute en plus du principal
+function brancherModuleFlux(flux, nom, source, ip, role, version) {
+  if (role === 'ecoute') {
+    const h = agents.ajouterVirtuel(nom, source, flux, ip, version);
     ecoutes.ajouterRadio(h, 1, nom, { navigateur: true, source });
     flux.on('close', () => { ecoutes.retirerRadio(h, 1); rafraichirEtat(); diffuser({ genre: 'statut' }); });
     return;
   }
   const precedent = sourceRadio.modules().actif;
-  const hote = agents.ajouterVirtuel(nom, source + ' (navigateur)', flux, (req.socket.remoteAddress || '').replace(/^::ffff:/, ''));
+  const hote = agents.ajouterVirtuel(nom, source, flux, ip, version);
   sourceRadio.ajouterModule(hote, 1, nom);
   sourceRadio.connecterA(hote, 1);
   // À la déconnexion du navigateur, on revient au module utilisé avant
@@ -2934,15 +3144,20 @@ wssModule.on('connection', (ws, req) => {
     rafraichirEtat(); diffuser({ genre: 'statut' });
   });
   rafraichirEtat(); diffuser({ genre: 'statut' });
-});
+}
 // Companion MeshCore branché sur le PC de l'utilisateur, relayé par la page
 function brancherCompanionNavigateur(ws, req) {
   const u = utilisateur(req);
   const q = new URL(req.url, 'http://x').searchParams;
   const source = q.get('source') === 'Bluetooth' ? 'Bluetooth' : 'USB';
   const nom = (q.get('nom') || `${source} ${u ? u.identifiant : ''}`).slice(0, 40);
-  if (q.get('role') === 'ecoute') { ecoutes.ajouterCompanion(null, nom, { navigateur: fluxWebSocket(ws), source }); diffuserEtatMc(); return; }
-  companion.brancherNavigateur(fluxWebSocket(ws), nom, source);
+  brancherCompanionFlux(fluxWebSocket(ws), nom, source, q.get('role') === 'ecoute' ? 'ecoute' : 'principal');
+}
+// Companion MeshCore déjà ouvert (page web ou agent 1.7 « direct ») : principal tant que le flux reste ouvert, ou en écoute
+function brancherCompanionFlux(flux, nom, source, role) {
+  if (!config.meshcore.actif) throw new Error('companion MeshCore reconnu, mais MeshCore n’est pas activé dans cette carte');
+  if (role === 'ecoute') ecoutes.ajouterCompanion(null, nom, { navigateur: flux, source });
+  else companion.brancherNavigateur(flux, nom, source);
   diffuserEtatMc();
 }
 wss.on('connection', (ws, req) => {
@@ -2970,7 +3185,7 @@ function verPasserelle(m) {
       const n = reseauMc.q.noeud.get(m.de);
       if (n && n.role === 'companion' && n.lat != null) passerelle.recevoirPosition({ reseau: 'mc', de: n.cle, nom: n.nom || n.cle.slice(0, 8), lat: n.lat, lon: n.lon });
     } else if (m.genre === 'mc-paquet' && m.premiere && m.texte && m.canal) passerelle.recevoir({ reseau: 'mc', canal: m.canal, de: null, nom: m.expediteur || null, texte: m.texte });
-    else if (m.genre === 'mc-message' && m.sens === 'recu' && !m.direct && m.canal && m.texte) passerelle.recevoir({ reseau: 'mc', canal: m.canal, de: null, nom: m.nomDe || null, texte: m.texte });
+    else if (m.genre === 'mc-message' && m.sens === 'recu' && !m.direct && !m.dejaPasserelle && m.canal && m.texte) passerelle.recevoir({ reseau: 'mc', canal: m.canal, de: null, nom: m.nomDe || null, texte: m.texte });
   } catch (e) { journal('[Passerelle]', e.message); }
 }
 // Paquets Meshtastic décodés (MQTT, module, agents) : positions et signalements pour la passerelle, si une liaison les relaie
@@ -3036,6 +3251,12 @@ function dansPerimetreMc(cleObs, iata) {
   const code = String(iata || '').toUpperCase();
   return code === config.meshcore.iata || config.meshcore.iataVoisins.includes(code);
 }
+// Paquet MeshCore intégré ; un message de canal déchiffré depuis le paquet brut (observateur MQTT ou companion)
+// part aussi comme « mc-message » : les cartes des membres le comptent dans les non-lus et rafraîchissent la liste
+function diffuserSortieMc(sortie) {
+  diffuser(sortie);
+  if (sortie.nouveauMessage && sortie.texte) diffuser({ genre: 'mc-message', id: sortie.nouveauMessage, sens: 'recu', canal: sortie.canal, texte: sortie.texte, nomDe: sortie.expediteur, heure: Date.now(), dejaPasserelle: true });
+}
 function messageMc(topic, message) {
   compteurMc.recus++;
   const m = lireMessageMc(topic, message);
@@ -3048,7 +3269,7 @@ function messageMc(topic, message) {
   if (!dansPerimetreMc(m.cle, m.iata)) { compteurMc.horsPerimetre = (compteurMc.horsPerimetre || 0) + 1; return; }
   if (m.nom) reseauMc.noterObservateur(m.cle, { nom: m.nom, details: { iata: m.iata } });
   const sortie = reseauMc.integrer(m.obs);
-  if (sortie) { compteurMc.observations++; diffuser(sortie); }
+  if (sortie) { compteurMc.observations++; diffuserSortieMc(sortie); }
 }
 clientMqtt.on('connect', () => {
   statsMqtt.depuis = Date.now();
@@ -3078,10 +3299,37 @@ if (config.meshcore.actif && config.mqtt2 && config.mqtt2.actif && config.mqtt2.
     try { messageMc(topic, message); } catch (e) { compteurMc.erreurs++; }
   });
 }
-clientMqtt.on('message', (topic, message) => {
+// Le même paquet peut arriver par deux brokers (ponts entre bulles) : ignoré s'il a déjà été vu dans les 2 minutes
+const vusMqtt = new Map();
+function dejaVuMqtt(topic, message) {
+  const k = topic + '|' + crypto.createHash('sha1').update(message).digest('base64').slice(0, 16);
+  const t = Date.now(), v = vusMqtt.get(k);
+  if (v && t - v < 120000) return true;
+  vusMqtt.set(k, t);
+  if (vusMqtt.size > 20000) { for (const [x, h] of vusMqtt) { if (t - h > 120000) vusMqtt.delete(x); } if (vusMqtt.size > 20000) vusMqtt.clear(); }
+  return false;
+}
+clientMqtt.on('message', (topic, message) => traiterMessageMqtt(topic, message));
+// Brokers supplémentaires (MQTT_BROKERS_SUPPLEMENTAIRES) : mêmes traitements que le broker principal
+const brokersSup = config.mqtt.brokers.map((b) => {
+  const etatB = { url: b.url.replace(/\/\/[^@]*@/, '//'), racine: b.racine || config.mqtt.racine, connecte: false, depuis: null, messages: 0, derniereErreur: null };
+  const c = mqtt.connect(b.url, { clientId: 'carte-live-' + crypto.randomBytes(3).toString('hex'), reconnectPeriod: 10000, rejectUnauthorized: !config.mqtt.tlsNonVerifie });
+  const sujetsB = [etatB.racine + '/#', ...(config.meshcore.actif ? [config.meshcore.racine + '/#'] : [])];
+  c.on('connect', () => { Object.assign(etatB, { connecte: true, depuis: Date.now() }); journal(`MQTT supplémentaire connecté à ${etatB.url}, abonnement à ${sujetsB.join(', ')}`); c.subscribe(sujetsB, { qos: 0 }); });
+  c.on('close', () => { etatB.connecte = false; etatB.depuis = null; });
+  c.on('error', (e) => { etatB.derniereErreur = { message: e.message, heure: Date.now() }; });
+  c.on('message', (topic, message) => { etatB.messages++; traiterMessageMqtt(topic, message); });
+  return { client: c, etat: etatB };
+});
+function traiterMessageMqtt(topic, message) {
+  if ((brokersSup.length || config.mqtt.dedoublonner) && dejaVuMqtt(topic, message)) { compteur.doublons = (compteur.doublons || 0) + 1; return; }
   compteur.recus++;
   if (config.meshcore.actif && topic.startsWith(prefixeMc)) { compteurMc.recusMqtt = (compteurMc.recusMqtt || 0) + 1; try { messageMc(topic, message); } catch (e) { compteurMc.erreurs++; journal('Erreur MeshCore :', e.message, topic); } return; }
   noterMessageMqtt(topic);
+  traiterEnveloppeMt(topic, message);
+}
+// Enveloppe Meshtastic (MQTT, ou paquet du réseau local remis sous forme d'enveloppe) : décodage puis carte
+function traiterEnveloppeMt(topic, message) {
   try {
     const evt = decoderMessage(topic, message, canaux);
     if (!evt) return;
@@ -3091,17 +3339,96 @@ clientMqtt.on('message', (topic, message) => {
     if (evt.port === 'texte' && evt.texte && /^Pager ACK/i.test(evt.texte)) { try { signalements.texteRecu(evt); } catch { /* pas encore prêt */ } } if (evt.port === 'texte' && evt.texte) { try { equipes.texteRecu(evt); } catch { /* pas encore prêt */ } }
     if (evt.port === 'position' && evt.position && evt.position.lat != null) { try { const d = administration.reponsePosition(evt.de); if (d != null) diffuser({ genre: 'position-reponse', num: evt.de >>> 0, lat: evt.position.lat, lon: evt.position.lon, delai: d }); } catch { /* pas encore prêt */ } }
     const sortie = reseau.integrer(evt);
+    try { autresPresets.noterPaquet(evt); } catch { /* pas encore prêt */ }
     if (sortie) { compteur.decodes++; diffuser(sortie); }
   } catch (e) {
     compteur.erreurs++;
     journal('Erreur de traitement :', e.message, topic);
   }
+}
+
+// ---- Nœuds d'un autre preset que le réseau : repérés pour être invités ----------------------------------------------
+const { creerAutresPresets } = require('./autres-presets');
+const autresPresets = creerAutresPresets(stockage.db, (...a) => journal('[Presets]', ...a));
+function presetDuReseau() {
+  return presetReseau() || config.reseauPreset || 'LONG_FAST';
+}
+app.get('/api/autres-presets', (req, res) => {
+  if (!exigerAdmin(req, res)) return;
+  const reseauP = presetDuReseau();
+  const sentinelles = ecoutes.liste().meshtastic.filter((m) => m.connecte && m.preset && m.preset !== reseauP).map(({ hote, port, nom, preset, noeud }) => ({ hote, port, nom, preset, noeud }));
+  res.set('Cache-Control', 'no-store').json({ preset: reseauP, noeuds: autresPresets.liste(reseauP, { jours: Math.min(365, Math.max(1, Number(req.query.jours) || 30)) }), sentinelles });
 });
+// Invitation : message direct envoyé par un module en écoute réglé sur le preset du nœud (« sentinelle »)
+app.post('/api/autres-presets/inviter', (req, res) => {
+  if (!exigerAdmin(req, res)) return;
+  const b = req.body || {};
+  try {
+    const num = Number(b.num) >>> 0;
+    const n = stockage.db.prepare('SELECT num, preset, nom_long FROM noeuds WHERE num = ?').get(num);
+    if (!n) throw new Error('Nœud inconnu');
+    const s = ecoutes.liste().meshtastic.find((m) => m.hote === String(b.hote || '') && Number(m.port) === Number(b.port));
+    if (!s || !s.connecte) throw new Error('Module sentinelle introuvable ou non connecté');
+    if (n.preset && s.preset && n.preset !== s.preset) throw new Error(`Le module « ${s.nom} » est en ${s.preset}, le nœud en ${n.preset} : il ne l’entendrait pas`);
+    const r = ecoutes.radio(s.hote, s.port).envoyerInvitation(num, b.texte);
+    res.json({ ok: true, id: r.id });
+  } catch (e) { res.status(400).json({ erreur: e.message }); }
+});
+
+// ---- Page publique « Rejoindre le réseau » (/rejoindre) ----------------------------------------------------------
+const adhesion = require('./adhesion').creerAdhesion({ config, db: stockage.db, reseauMc: typeof reseauMc !== 'undefined' ? reseauMc : null, presetDuReseau, journal: (...a) => journal('[Rejoindre]', ...a) });
+app.get('/rejoindre', envoyerPage('rejoindre.html'));
+app.get('/api/rejoindre', async (req, res) => {
+  const adresse = `${req.protocol}://${req.get('host')}/rejoindre`;
+  const p = await adhesion.publique(adresse);
+  if (!p) return res.status(404).json({ erreur: 'Page non publiée par l’administrateur' });
+  res.set('Cache-Control', 'max-age=60').json(p);
+});
+app.get('/api/rejoindre/reglages', (req, res) => {
+  if (!exigerAdmin(req, res)) return;
+  res.set('Cache-Control', 'no-store').json({ ...adhesion.lire(), preset: presetDuReseau() });
+});
+app.post('/api/rejoindre/reglages', (req, res) => {
+  if (!exigerAdmin(req, res)) return;
+  try { res.json(adhesion.enregistrer(req.body || {})); } catch (e) { res.status(400).json({ erreur: e.message }); }
+});
+// Lien du canal principal (avec les réglages LoRa) du module relié à la carte, pour remplir la page en un clic
+app.get('/api/rejoindre/lien-module', async (req, res) => {
+  if (!exigerAdmin(req, res)) return;
+  const m = adhesion.moduleCarte();
+  const q = m && m.noeud ? await require('./reglages-noeuds').qr(m.noeud, { indices: [0], avecLora: true }).catch(() => null) : null;
+  if (!q) return res.status(404).json({ erreur: 'Canaux du module pas encore connus : reliez un module Meshtastic à la carte' });
+  res.set('Cache-Control', 'no-store').json({ lien: q.url });
+});
+
+// ---- Modules Meshtastic du réseau local, écoutés par UDP multicast (UDP_MESHTASTIC=oui) ---------------------------
+// Le module qui diffuse est repéré par ses propres paquets (sans mesure radio) : il devient la « passerelle » des paquets
+// qu'il entend, comme une passerelle MQTT.
+const { creerUdpMeshtastic } = require('./udp-meshtastic');
+const ipVersNoeud = new Map();
+const udpMt = creerUdpMeshtastic({
+  types: { MeshPacket: require('./decodeur').racine.lookupType('meshtastic.MeshPacket') },
+  journal: (...a) => journal('[UDP]', ...a),
+  surPaquet: (p, ip) => {
+    const de = p.from >>> 0;
+    if (!p.rxSnr && !p.rxRssi && (!p.hopStart || p.hopStart === p.hopLimit)) ipVersNoeud.set(ip, de);
+    const gw = ipVersNoeud.get(ip);
+    const gatewayId = gw != null ? '!' + gw.toString(16).padStart(8, '0') : undefined;
+    const env = ServiceEnvelopeUdp.encode({ packet: p, gatewayId }).finish();
+    compteur.udp = (compteur.udp || 0) + 1;
+    traiterEnveloppeMt(`udp/2/e/LAN/${gatewayId || ip}`, Buffer.from(env));
+  },
+});
+const ServiceEnvelopeUdp = require('./decodeur').types.ServiceEnvelope;
+if (String(process.env.UDP_MESHTASTIC || 'non').toLowerCase() === 'oui') udpMt.demarrer();
 
 // ---- Tâches périodiques ---------------------------------------------------
 let dernieresAlertes = [];
 // Alertes des services internes (adresses, messages d'erreur) réservées aux administrateurs
-function alertesPubliques(l) { return l.filter((a) => a.type !== 'service'); }
+function alertesPubliques(l) {
+  const lorawanPublic = (() => { try { return lorawan.etat().public; } catch { return false; } })();
+  return l.filter((a) => a.type !== 'service' && (a.type !== 'lorawan' || lorawanPublic));
+}
 // Services de fond en échec prolongé : visibles dans les alertes de la carte, pas seulement dans le journal du serveur
 const enEchecDepuis = {};
 function alertesServices() {
@@ -3123,6 +3450,10 @@ function alertesServices() {
     const m = sourceMM.etat();
     suivre('meshmonitor', !!(m && m.erreur), 30, `Source MeshMonitor injoignable : ${m && m.erreur}`);
   }
+  // Tâches de fond des couches en option : un échec durable remonte dans les alertes de la carte
+  if (typeof rivieres !== 'undefined') { const r = rivieres.etat(); suivre('rivieres', r.actif && !!r.erreur, 60, `Rivières : relevé Hub’Eau impossible (${r.erreur})`); }
+  if (typeof lorawan !== 'undefined') { const l = lorawan.etat(); suivre('lorawan', l.actif && !l.connecte, 30, `LoRaWAN : serveur MQTT injoignable${l.erreur ? ' (' + l.erreur + ')' : ''}`); }
+  if (typeof aprs !== 'undefined') { const a = aprs.etat(); suivre('aprs', a.actif && a.indicatif && !a.connecte, 30, `APRS-IS injoignable${a.erreur ? ' : ' + a.erreur : ''} (couche APRS figée)`); }
   // MQTT : déjà signalé par la pastille « En direct » du bandeau (et absent volontairement sur les cartes reliées à un module seul)
   return l;
 }
@@ -3131,6 +3462,8 @@ function rafraichirEtat() {
   try { if (typeof equipes !== 'undefined') dernieresAlertes = [...dernieresAlertes, ...equipes.alertes((n) => { const r = reqNomSig.get(n >>> 0); return r && (r.nom_long || r.nom_court); })]; } catch { /* équipes pas encore prêtes */ }
   if (passerelle) { try { dernieresAlertes = [...dernieresAlertes, ...passerelle.alertes()]; } catch (e) { journal('[Passerelle]', e.message); } }
   try { dernieresAlertes = [...dernieresAlertes, ...alertesServices()]; } catch (e) { journal('alertes des services :', e.message); }
+  try { dernieresAlertes = [...dernieresAlertes, ...lorawan.alertes()]; } catch (e) { if (!(e instanceof ReferenceError)) journal('[LoRaWAN]', e.message); }
+  try { dernieresAlertes = [...dernieresAlertes, ...rivieres.alertes()]; } catch (e) { if (!(e instanceof ReferenceError)) journal('[Rivières]', e.message); } // pas encore créé au démarrage
   try { if (!fonctionMasquee('feux')) dernieresAlertes = [...dernieresAlertes, ...feux.alertes()]; } catch (e) { if (!(e instanceof ReferenceError)) journal('[Feux]', e.message); } // pas encore créé au démarrage
   diffuser({ genre: 'etat', stats: reseau.statistiques(), alertes: dernieresAlertes, meshmonitor: typeof sourceMM !== 'undefined' && sourceMM ? sourceMM.etat() : null, radio: typeof sourceRadio !== 'undefined' && sourceRadio ? sourceRadio.etat() : null, ecoutes: resumeEcoutes() });
 }
@@ -3142,6 +3475,7 @@ function diffuserEtatMc() {
   alertesMc = reseauMc.calculerAlertes({ administres: adminMc.memorises(), companion: { cible: c.cible || c.navigateur, connecte: c.connecte, nom: c.nom, cle: c.cle, erreur: c.erreur } });
   try { alertesMc = [...alertesMc, ...capteursMc.alertes(nomNoeudMc)]; } catch (e) { journal('alertes des capteurs :', e.message); }
   try { if (typeof maintenanceMc !== 'undefined') alertesMc = [...alertesMc, ...maintenanceMc.alertes()]; } catch (e) { journal('alertes de maintenance :', e.message); }
+  try { alertesMc = [...alertesMc, ...adminMc.alertesSupervision()]; } catch (e) { journal('alertes de supervision :', e.message); }
   diffuser({ genre: 'mc-etat', ...etatMc(false) });
 }
 function planifierEtatMc() { if (!minuterieEtatMc) minuterieEtatMc = setTimeout(() => { minuterieEtatMc = null; diffuserEtatMc(); }, 15000); } // statuts d'observateurs fréquents : au plus toutes les 15 s
@@ -3161,11 +3495,18 @@ app.post('/api/postgres/tester', async (req, res) => {
   try { res.json(await archivePg.tester(req.body || {})); } catch (e) { res.status(400).json({ erreur: 'Connexion impossible : ' + e.message }); }
 });
 // Agents (module USB sur un PC, ou module Wi-Fi d'un autre réseau) : ils se connectent au port 4404
-const agents = creerAgents(config, { surArrivee: (hote, nom, protocole) => {
-  if (protocole !== 'meshtastic' && typeof companion !== 'undefined' && companion) companion.agentDisponible(hote);
-  if (protocole !== 'meshcore' && typeof sourceRadio !== 'undefined' && sourceRadio) { sourceRadio.agentDisponible(hote, nom); rafraichirEtat(); diffuser({ genre: 'statut' }); }
-  if (typeof ecoutes !== 'undefined' && ecoutes) ecoutes.agentDisponible(hote, nom, protocole);
-} });
+const agents = creerAgents(config, {
+  surArrivee: (hote, nom, protocole) => {
+    if (protocole !== 'meshtastic' && typeof companion !== 'undefined' && companion) companion.agentDisponible(hote);
+    if (protocole !== 'meshcore' && typeof sourceRadio !== 'undefined' && sourceRadio) { sourceRadio.agentDisponible(hote, nom); rafraichirEtat(); diffuser({ genre: 'statut' }); }
+    if (typeof ecoutes !== 'undefined' && ecoutes) ecoutes.agentDisponible(hote, nom, protocole);
+  },
+  // Agent 1.7 : module branché sur son PC, déjà reconnu ; relié tout de suite (débranché : retour au module d'avant)
+  surDirect: ({ flux, nom, source, ip, protocole, role, version }) => {
+    if (protocole === 'meshcore') brancherCompanionFlux(flux, nom, source.startsWith('USB') ? 'USB' : source, role);
+    else brancherModuleFlux(flux, nom, source + ' (agent)', ip, role, version);
+  },
+});
 // Companion MeshCore (observateur de la carte) et republication sur le broker
 const publicateurMc = creerPublicateurMc(config, (...a) => journal('[MeshCore]', ...a));
 const companion = creerCompanion(config, {
@@ -3174,7 +3515,7 @@ const companion = creerCompanion(config, {
   surObservation: (obs) => {
     try {
       const sortie = reseauMc.integrer(obs);
-      if (sortie) diffuser(sortie);
+      if (sortie) diffuserSortieMc(sortie);
       const c = companion.etat();
       if (obs.observateur && config.meshcore.republier) publicateurMc.publier(obs, decoderPaquetMc(obs.brut), c);
     } catch (e) { journal('[MeshCore] observation non traitée :', e.message); }
@@ -3225,7 +3566,7 @@ function fabriquerCompanionEcoute({ cible, nom }) {
     surObservation: (obs) => {
       try {
         const sortie = reseauMc.integrer(obs);
-        if (sortie) diffuser(sortie);
+        if (sortie) diffuserSortieMc(sortie);
         if (obs.observateur && config.meshcore.republier && inst) publicateurMc.publier(obs, decoderPaquetMc(obs.brut), inst.etat());
       } catch (e) { journal('[MeshCore] observation non traitée :', e.message); }
     },
@@ -3285,6 +3626,11 @@ app.get('/api/mc/maintenance', (req, res) => {
   if (!estAdmin(req)) r.noeuds = r.noeuds.filter((n) => peutGerer(req, n.cle));
   res.set('Cache-Control', 'no-store').json(r);
 });
+app.post('/api/mc/maintenance/configuration', (req, res) => {
+  const u = utilisateur(req);
+  if (!u || u.role !== 'admin') return res.status(401).json({ erreur: 'Connexion admin requise' });
+  try { res.json(maintenanceMc.importerConfiguration(req.body || {}, u.identifiant)); } catch (e) { res.status(400).json({ erreur: e.message }); }
+});
 app.post('/api/mc/maintenance/conformite', (req, res) => {
   const u = utilisateur(req);
   if (!u || u.role !== 'admin') return res.status(401).json({ erreur: 'Connexion admin requise' });
@@ -3301,6 +3647,7 @@ const sourceRadio = creerSourceRadio(stockage, config, canaux, {
     if (evt.port === 'texte' && evt.texte && /^Pager ACK/i.test(evt.texte)) { try { signalements.texteRecu(evt); } catch { /* pas encore prêt */ } } if (evt.port === 'texte' && evt.texte) { try { equipes.texteRecu(evt); } catch { /* pas encore prêt */ } }
     if (evt.port === 'position' && evt.position && evt.position.lat != null) { try { const d = administration.reponsePosition(evt.de); if (d != null) diffuser({ genre: 'position-reponse', num: evt.de >>> 0, lat: evt.position.lat, lon: evt.position.lon, delai: d }); } catch { /* pas encore prêt */ } }
     const sortie = reseau.integrer(evt);
+    try { autresPresets.noterPaquet(evt); } catch { /* pas encore prêt */ }
     if (sortie) { compteur.decodes++; diffuser({ ...sortie, viaRadio: true }); }
   },
   apresSynchro: () => { rafraichirEtat(); diffuser({ genre: 'statut' }); },
@@ -3320,6 +3667,7 @@ const ecoutes = creerEcoutes({
     if (evt.port === 'texte' && evt.texte && /^Pager ACK/i.test(evt.texte)) { try { signalements.texteRecu(evt); } catch { /* pas encore prêt */ } } if (evt.port === 'texte' && evt.texte) { try { equipes.texteRecu(evt); } catch { /* pas encore prêt */ } }
     if (evt.port === 'position' && evt.position && evt.position.lat != null) { try { const d = administration.reponsePosition(evt.de); if (d != null) diffuser({ genre: 'position-reponse', num: evt.de >>> 0, lat: evt.position.lat, lon: evt.position.lon, delai: d }); } catch { /* pas encore prêt */ } }
     const sortie = reseau.integrer(evt);
+    try { autresPresets.noterPaquet(evt); } catch { /* pas encore prêt */ }
       if (sortie) { compteur.decodes++; diffuser({ ...sortie, viaRadio: true }); }
     },
     apresSynchro: () => { if (!minuterieStatutEcoute) minuterieStatutEcoute = setTimeout(() => { minuterieStatutEcoute = null; rafraichirEtat(); diffuser({ genre: 'statut' }); }, 3000); },
@@ -3390,12 +3738,35 @@ function tachesEnCours() {
   try { n += adminMc.taches().filter((t) => !t.fin && t.type !== 'telemetrie').length; } catch { /* aucune */ }
   return n;
 }
+// Détail des programmations en cours, pour décider de forcer ou non la mise à jour : quoi, sur quels nœuds,
+// où elle en est, et si elle reprendra d'elle-même après le redémarrage de la carte
+function tachesDetail() {
+  const l = [];
+  const nomMt = (num) => { const n = stockage.q.noeud ? stockage.q.noeud.get(num) : null; return (n && (n.nom_long || n.nom_court)) || '!' + (num >>> 0).toString(16); };
+  try {
+    for (const t of administration.taches().filter((x) => !x.fin)) {
+      const faits = t.noeuds.filter((n) => ['ok', 'echec', 'annule'].includes(n.statut)).length, cours = t.noeuds.find((n) => n.statut === 'en_cours');
+      l.push({ reseau: 'Meshtastic', nom: t.nom || t.type, auteur: t.auteur, debut: t.debut, avancement: `${faits}/${t.noeuds.length} nœud(s)`,
+        courant: cours ? `${nomMt(cours.num)}${cours.detail ? ' : ' + cours.detail : ''}` : (t.noeuds.find((n) => n.statut === 'en_attente') ? 'en attente du prochain nœud' : null),
+        reprise: t.type === 'firmware' ? 'non : une mise à jour de firmware interrompue est à relancer' : Date.now() - t.debut < 6 * 3600000 ? 'oui, reprend toute seule après le redémarrage' : 'non (trop ancienne)' });
+    }
+  } catch { /* aucune */ }
+  try {
+    for (const t of adminMc.taches().filter((x) => !x.fin && x.type !== 'telemetrie')) {
+      const total = (t.cles || []).length, faits = Object.keys(t.resultats || {}).length;
+      l.push({ reseau: 'MeshCore', nom: t.type, auteur: t.auteur, debut: t.debut || t.creee, avancement: `${faits}/${total} relais`,
+        courant: t.courant ? ((t.noms || {})[t.courant] || String(t.courant).slice(0, 8)) : t.prochainEssai ? 'en attente d’un nouvel essai' : t.statut,
+        reprise: t.type === 'motdepasse' ? 'non : un changement de mot de passe interrompu est à relancer' : 'oui, reprend toute seule après le redémarrage' });
+    }
+  } catch { /* aucune */ }
+  return l;
+}
 app.get('/api/maj', async (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
   // Fenêtre « Mise à jour » ouverte : on redemande la dernière version à GitHub (au plus une fois par minute)
   if (Date.now() - (majDispo.verifie || 0) > 60000) await verifierDerniereVersion();
   const v = infosVersion();
-  try { res.json({ ...v, installe: true, service: await appelMaj('GET', '/etat'), taches: tachesEnCours() }); } catch (e) { res.json({ ...v, installe: false, raison: e.message, taches: tachesEnCours() }); }
+  try { res.json({ ...v, installe: true, service: await appelMaj('GET', '/etat'), taches: tachesEnCours(), tachesDetail: tachesDetail() }); } catch (e) { res.json({ ...v, installe: false, raison: e.message, taches: tachesEnCours(), tachesDetail: tachesDetail() }); }
 });
 app.post('/api/maj', async (req, res) => {
   const u = utilisateur(req);
@@ -3616,6 +3987,34 @@ app.get('/api/alertes-officielles', (req, res) => res.set('Cache-Control', 'no-s
   fonctionsMasquees: [...fonctionsMasquees] }));
 // ---- Feux actifs vus par satellite (NASA FIRMS) : couche de la carte, alertes sur la zone, envoi radio à la demande ----
 const feux = require('./feux').creerFeux({ config, journal, diffuser });
+// Couche APRS (dont LoRa APRS 433,775 MHz) : lecture seule sur APRS-IS, zone département + voisins (APRS_IS=oui)
+const aprs = require('./aprs').creerAprs({ zone: () => (zoneVoisins() || {}).bbox || config.zone, journal, version: VERSION });
+// Rivières : hauteurs d'eau des stations publiques Hub'Eau de la zone de la carte (ouvert à tous : données publiques)
+const rivieres = require('./rivieres').creerRivieres({ zone: () => (zoneVoisins() || {}).bbox || config.zone, journal });
+app.get('/api/rivieres', (req, res) => res.json({ etat: rivieres.etat(), stations: rivieres.etat().actif ? rivieres.liste() : [] }));
+// Capteurs LoRaWAN (TTN v3 / ChirpStack v4, en lecture seule) : réservés aux membres sauf LORAWAN_PUBLIC=oui
+const lorawan = require('./lorawan').creerLorawan({ journal });
+const voirLorawan = (req) => lorawan.etat().public || estMembre(req);
+app.get('/api/lorawan', (req, res) => {
+  if (!voirLorawan(req)) return res.status(401).json({ erreur: 'Connexion requise' });
+  const e = lorawan.etat();
+  res.json({ etat: e, capteurs: e.actif ? lorawan.liste() : [], passerelles: e.actif ? lorawan.passerelles() : [] });
+});
+app.get('/api/lorawan/:id', (req, res) => {
+  if (!voirLorawan(req)) return res.status(401).json({ erreur: 'Connexion requise' });
+  const s = lorawan.serie(String(req.params.id).slice(0, 64));
+  if (!s) return res.status(404).json({ erreur: 'Capteur inconnu' });
+  res.json(s);
+});
+app.get('/api/rivieres/:code', (req, res) => {
+  const s = /^[A-Z0-9]{10}$/i.test(req.params.code) ? rivieres.serie(req.params.code.toUpperCase()) : null;
+  if (!s) return res.status(404).json({ erreur: 'Station inconnue' });
+  res.json(s);
+});
+app.get('/api/aprs', (req, res) => {
+  const heures = Math.min(Math.max(Number(req.query.heures) || 6, 1), 24);
+  res.json({ etat: aprs.etat(), stations: aprs.etat().actif ? aprs.liste(heures) : [] });
+});
 app.get('/api/feux', (req, res) => {
   if (fonctionMasquee('feux')) return res.status(404).json({ erreur: 'Fonction masquée par l’administrateur' });
   res.set('Cache-Control', 'no-store').json(feux.etat(Number(req.query.heures) || 24));
@@ -3624,7 +4023,12 @@ app.post('/api/feux/envoyer', async (req, res) => {
   const u = utilisateur(req);
   if (!u || !estGestion(req)) return res.status(401).json({ erreur: 'Connexion gestionnaire requise' });
   const b = req.body || {};
-  try { res.json(await alertesOff.envoyerTexte(feux.texteAlerte(String(b.cle || '')), { canaux: Array.isArray(b.canaux) ? b.canaux : [], canalMc: String(b.canalMc || '').slice(0, 32) }, u.indicatif || u.identifiant)); } catch (e) { res.status(400).json({ erreur: e.message }); }
+  try {
+    const r = await alertesOff.envoyerTexte(feux.texteAlerte(String(b.cle || '')), { canaux: Array.isArray(b.canaux) ? b.canaux : [], canalMc: String(b.canalMc || '').slice(0, 32) }, u.indicatif || u.identifiant);
+    alertesOff.noterEnvoi('feu|' + String(b.cle || ''), u.indicatif || u.identifiant, r.envois);
+    diffuser({ genre: 'alertes-officielles' });
+    res.json(r);
+  } catch (e) { res.status(400).json({ erreur: e.message }); }
 });
 app.post('/api/alertes-officielles/envoyer', async (req, res) => {
   const u = utilisateur(req);
@@ -3781,10 +4185,23 @@ app.post('/api/suivis', (req, res) => {
   try { res.json(suivis.regler(u, b.id, b.liste, !!b.valeur)); } catch (e) { res.status(400).json({ erreur: e.message }); }
 });
 administration.utiliserAgents(agents);
-const analyse = creerAnalyse(stockage, config, reseau, () => (sourceRadio ? sourceRadio.etat().preset : null));
+const analyse = creerAnalyse(stockage, config, reseau, () => presetReseau());
 const liensMesuresNoeuds = () => fournisseursRelief.liensNoeuds(); // + mesures des nœuds mobiles (couverture mesurée)
+// Preset LoRa du réseau : celui du module connecté, sinon le plus fréquent parmi les nœuds entendus depuis 7 jours
+// (rapports de carte), sinon RESEAU_PRESET. Recalculé toutes les 10 minutes.
+var presetReseauCache = { t: 0, v: null };
+function presetReseau() {
+  const radio = sourceRadio ? sourceRadio.etat().preset : null;
+  if (radio) return radio;
+  if (Date.now() - presetReseauCache.t > 600000) {
+    const c = {}, lim = Date.now() - 7 * 86400000;
+    try { for (const n of stockage.q.noeuds.all()) if (n.preset && (n.dernier_vu || 0) >= lim && reseau.estSurveille(n)) c[n.preset] = (c[n.preset] || 0) + 1; } catch { /* base indisponible */ }
+    presetReseauCache = { t: Date.now(), v: Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k]) => k)[0] || null };
+  }
+  return presetReseauCache.v;
+}
 const fournisseursRelief = {
-  presetCourant: () => (sourceRadio ? sourceRadio.etat().preset : null),
+  presetCourant: presetReseau,
   // Relais / passerelles positionnés et entendus dans les dernières 24 h (un relais muet ne couvre plus rien)
   noeudsReseau: () => {
     const limite = Date.now() - 24 * 3600000;
@@ -3866,12 +4283,12 @@ app.post('/api/federation/partenaires', async (req, res) => {
 app.delete('/api/federation/partenaires', (req, res) => { if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' }); federation.retirer(String(req.query.url || '')); res.json({ ok: true }); });
 
 // ---- Exports et intégrations (GeoJSON, Prometheus/Grafana, Home Assistant) ------------------------
-const exportsCarte = creerExports({ config, stockage, reseau, reseauMc, maintenance, santeCarte: { etat: () => santeCarte.etat() }, relief, alertes: () => dernieresAlertes });
+const exportsCarte = creerExports({ config, stockage, reseau, reseauMc, maintenance, santeCarte: { etat: () => santeCarte.etat() }, relief, alertes: () => dernieresAlertes, alertesMc: () => (config.meshcore.actif ? alertesMc : []), adminMc });
 const exporter = (f, type) => (req, res) => {
   if (!exportsCarte.jetonOk(req)) return res.status(401).json({ erreur: 'Jeton d’export requis (?jeton=…)' });
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
-  try { const r = f(req); if (type === 'text') res.type('text/plain; version=0.0.4').send(r); else if (typeof r === 'string') { res.setHeader('Content-Disposition', 'attachment; filename="relais.gpx"'); res.type(type).send(r); } else res.type(type).send(JSON.stringify(r)); } catch (e) { res.status(500).json({ erreur: e.message }); }
+  try { const r = f(req); if (type === 'text') res.type('text/plain; version=0.0.4').send(r); else if (typeof r === 'string') { res.setHeader('Content-Disposition', `attachment; filename="${path.basename(req.path)}"`); res.type(type).send(r); } else res.type(type).send(JSON.stringify(r)); } catch (e) { res.status(500).json({ erreur: e.message }); }
 };
 app.get('/api/export/noeuds.geojson', exporter(() => exportsCarte.noeudsGeoJSON(), 'application/geo+json'));
 app.get('/api/export/liens.geojson', exporter((req) => exportsCarte.liensGeoJSON(Math.min(Math.max(Number(req.query.heures) || 24, 1), 168)), 'application/geo+json'));
@@ -3988,6 +4405,42 @@ app.get('/api/export/statystyki.json', exporter(() => {
   statystykiCache = { t: Date.now(), v };
   return v;
 }, 'application/json'));
+app.get('/api/export/reseau.kml', exporter((req) => exportsCarte.reseauKml({ heures: Math.min(Math.max(Number(req.query.heures) || 24, 1), 168), titre: String(config.carte.titre || 'Carte live') }), 'application/vnd.google-earth.kml+xml'));
+app.get('/api/export/reseau-direct.kml', exporter((req) => {
+  // Adresse vue par le navigateur (?origine=, même hôte seulement) : fiable derrière un reverse proxy https mal réglé
+  let base = `${req.protocol}://${req.get('host')}`;
+  try {
+    const o = new URL(String(req.query.origine || ''));
+    const hotes = [req.get('host'), req.get('x-forwarded-host')].filter(Boolean).map((h) => String(h).split(',')[0].trim().toLowerCase());
+    if (/^https?:$/.test(o.protocol) && hotes.includes(o.host.toLowerCase())) base = o.origin;
+  } catch { /* pas d'origine : adresse de la requête */ }
+  return exportsCarte.reseauKmlLive(`${base}/api/export/reseau.kml${req.query.jeton ? '?jeton=' + encodeURIComponent(String(req.query.jeton)) : ''}`);
+}, 'application/vnd.google-earth.kml+xml'));
+
+// ---- Domotique : Home Assistant et Node-RED par MQTT (DOMOTIQUE_MQTT_URL) --------------------------------------
+const domotique = require('./domotique').creerDomotique({
+  mqtt, version: VERSION, nomCarte: String(config.titre || 'Carte live'), journal,
+  resume: () => exportsCarte.resume(),
+  alertes: () => [...dernieresAlertes, ...(config.meshcore.actif ? alertesMc : [])],
+  noeuds: () => {
+    const t = Date.now();
+    const l = stockage.q.noeuds.all().filter((n) => reseau.estSurveille(n)).map((n) => {
+      const v = reseau.vueNoeud(n, false, t);
+      return { id: n.id, nom: n.nom_long || n.nom_court || n.id, reseau: 'meshtastic', role: n.role, vu: n.dernier_vu, enLigne: !!n.dernier_vu && t - n.dernier_vu <= config.seuils.muetMinutes * 60000, batterie: n.batterie != null && n.batterie <= 100 ? n.batterie : null, tension: n.tension, lat: v.lat, lon: v.lon };
+    });
+    if (config.meshcore.actif) {
+      try {
+        for (const n of reseauMc.surveilles(adminMc.memorises())) l.push({ id: 'mc-' + n.cle.slice(0, 12), nom: n.nom || n.cle.slice(0, 8), reseau: 'meshcore', role: n.role, vu: n.dernier_vu, enLigne: !!n.dernier_vu && t - n.dernier_vu <= config.meshcore.muetHeures * 3600000, lat: n.lat, lon: n.lon });
+      } catch (e) { journal('[Domotique]', e.message); }
+    }
+    return l.slice(0, 300);
+  },
+  envoyer: (b) => {
+    const r = administration.envoyerTexte(b, 'domotique');
+    setTimeout(() => diffuser({ genre: 'statut' }), 500);
+    return r;
+  },
+});
 
 // ---- Historique long (résumés horaires et journaliers) ---------------------------------------
 const historique = creerHistorique(stockage.db, config, {
@@ -4029,13 +4482,13 @@ app.post('/api/historique/compacter', (req, res) => {
 setTimeout(rafraichirEtat, 2000);
 
 setInterval(() => {
-  const n = stockage.purger(config.retentionJours) + reseauMc.purger(config.retentionJours, config.meshcore.retentionPaquetsJours);
+  const n = stockage.purger(config.retentionJours, config.messagesRetentionJours) + reseauMc.purger(config.retentionJours, config.meshcore.retentionPaquetsJours);
   reseau.nettoyer();
   // Compteurs séparés : un broker peut ne porter que du MeshCore (Meshtastic « 0 traité » est alors normal)
   const mcR = compteurMc.recusMqtt || 0;
   journal(`Purge : ${n} lignes de plus de ${config.retentionJours} jours supprimées · MQTT Meshtastic : ${compteur.recus - mcR} reçus, ${compteur.decodes} traités, ${compteur.erreurs} erreurs${config.meshcore.actif ? ` · MeshCore : ${mcR} reçus, ${compteurMc.observations} observations gardées, ${compteurMc.horsPerimetre || 0} hors périmètre` : ''} (depuis le démarrage)`);
 }, 3600000);
-stockage.purger(config.retentionJours);
+stockage.purger(config.retentionJours, config.messagesRetentionJours);
 setTimeout(() => reseauMc.purger(config.retentionJours, config.meshcore.retentionPaquetsJours), 60000);
 {
   const n = reseau.nettoyer();

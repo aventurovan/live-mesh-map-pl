@@ -70,6 +70,7 @@ async function demarrer() {
   installerZone();
   majTitre();
   // Lien vers la carte complète : seulement pour un administrateur connecté (la carte publique sert à consulter)
+  if (config.rejoindre) document.getElementById('lien-rejoindre').hidden = false;
   fetch('/api/compte').then((r) => r.json()).then((u) => { if (u && u.role === 'admin') document.getElementById('lien-complet').hidden = false; }).catch(() => {});
   carte = L.map('carte', { zoomControl: false, attributionControl: true }).setView(config.centre, config.zoom);
   // « Explorer en détail » : la carte complète en consultation, sur la même vue
@@ -167,7 +168,7 @@ async function couverturePoint(ll) {
   let r;
   try { r = await fetch(avecDep(`/api/relief/couverture?lat=${ll.lat.toFixed(5)}&lon=${ll.lng.toFixed(5)}&hs=${h}`)).then((y) => y.json()); } catch (e) { r = { erreur: e.message }; }
   if (couv.mode !== 'point' || couv.dernierPoint !== ll) return;
-  if (r.erreur) { info.innerHTML = ligne('Couverture indisponible : ' + esc(r.erreur)); brancher(); return; }
+  if (r.erreur) { info.innerHTML = ligne('Couverture indisponible : ' + esc(r.erreur).replace(/https:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)); brancher(); return; }
   const e = r.emprise;
   L.imageOverlay(r.image, [[e.sud, e.ouest], [e.nord, e.est]], { opacity: 0.65, pane: 'couverture', className: 'pixelise' }).addTo(g);
   info.innerHTML = ligne(`${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)}${r.sol != null ? ' · sol à ' + r.sol + ' m' : ''}<br>Zone couverte : <b>${Math.round(r.surfaceKm2).toLocaleString('fr-FR')} km²</b>${r.pctZone != null ? `, soit <b>${pc(r.pctZone)} %</b> ${libZone()}` : ''}<br><small>Turquoise : bonne liaison · jaune : liaison juste · orange pâle : à la limite. Cliquez ailleurs pour un autre point.</small>`);
