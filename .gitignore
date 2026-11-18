@@ -21,3 +21,8 @@ Thumbs.db
 
 # Résultats des tests de l’interface (captures, journal)
 carte-live/tests/resultats/
+
+# Claude Code Starter
+.claude/settings.local.json
+.claude/.backups/
+.claude/tsc-cache/
