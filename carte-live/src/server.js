@@ -1894,6 +1894,20 @@ app.get('/api/mc/topologie', (req, res) => {
     };
   });
   const liens = liensCle.filter((p) => num.has(p.a) && num.has(p.b)).map((p) => { const [a, b] = [num.get(p.a), num.get(p.b)]; return a < b ? { a, b, ab: p.ab, ba: p.ba } : { a: b, b: a, ab: p.ba, ba: p.ab }; });
+  if (req.query.stats) {
+    // Statystyki sąsiadów: stopień węzła = liczba różnych sąsiadów (próg nb liczony z obu kierunków)
+    const prog = Math.max(Number(req.query.min) || 1, 1);
+    const st = (lista) => { const v = lista.slice().sort((x, y) => x - y); const n = v.length; if (!n) return { n: 0 }; const sum = v.reduce((a, b) => a + b, 0); return { n, srednia: +(sum / n).toFixed(2), mediana: n % 2 ? v[(n - 1) / 2] : (v[n / 2 - 1] + v[n / 2]) / 2, max: v[n - 1], zero: v.filter((x) => x === 0).length }; };
+    const wynik = {};
+    for (const pr of [1, prog, 5].filter((x, i, a) => a.indexOf(x) === i)) {
+      const st2 = new Map(noeuds.map((n) => [n.num, 0]));
+      let ile = 0;
+      for (const l of liens) { const nb = (l.ab?.nb || 0) + (l.ba?.nb || 0); if (nb < pr) continue; ile++; st2.set(l.a, st2.get(l.a) + 1); st2.set(l.b, st2.get(l.b) + 1); }
+      const rola = (f) => st(noeuds.filter(f).map((n) => st2.get(n.num)));
+      wynik['nb>=' + pr] = { liens: ile, wszystkie: rola(() => true), repeatery: rola((n) => n.role === 'repeteur'), companiony: rola((n) => n.role === 'companion'), top: noeuds.map((n) => [n.nomLong, st2.get(n.num)]).sort((x, y) => y[1] - x[1]).slice(0, 10) };
+    }
+    return res.set('Cache-Control', 'no-store').json({ heures, sources, wezly: noeuds.length, ...wynik });
+  }
   res.set('Cache-Control', 'no-store').json({ reseau: 'meshcore', heures, sources, preset: 'MESHCORE_FR', hopLimit: 64, zoneNom: config.zoneNom, noeuds, liens, genere: Date.now() });
 });
 
