@@ -2038,6 +2038,8 @@ async function odswiezSf7() {
   return sf7Pobierane;
 }
 if (SF7_URL) { setTimeout(() => odswiezSf7(), 25000).unref(); setInterval(() => odswiezSf7(), 30 * 60000).unref(); }
+// PL: liczba repeaterów SF8 / SF7 (etykiety warstw)
+app.get('/api/sf-liczby', (req, res) => { res.set('Cache-Control', 'public, max-age=300'); res.json({ sf8: sf8 && sf8.nodes ? sf8.nodes.length : null, sf7: sf7 && sf7.nodes ? sf7.nodes.length : null }); });
 app.get('/api/sf7', async (req, res) => {
   if (!SF7_URL) return res.json({ ok: false, wylaczone: true, nodes: [] });
   if (!sf7) await odswiezSf7();

@@ -8363,6 +8363,22 @@ async function dessinerSf8() {
   minuteurSf8 = setTimeout(dessinerSf8, 30 * 60000);
 }
 
+// PL: liczba repeaterów SF8 / SF7 na przyciskach warstw (i w panelu warstw na telefonie)
+async function liczbySf() {
+  try {
+    const r = await api('/api/sf-liczby');
+    for (const sf of ['sf8', 'sf7']) {
+      if (r[sf] == null) continue;
+      document.querySelectorAll(`[data-couche="${sf}"]`).forEach((b) => {
+        let s = b.querySelector('.licznik-sf');
+        if (!s) { s = document.createElement('span'); s.className = 'licznik-sf'; s.setAttribute('translate', 'no'); b.append(' ', s); }
+        s.textContent = '(' + r[sf] + ')';
+      });
+    }
+  } catch { /* bez liczników */ }
+}
+setTimeout(liczbySf, 4000); setInterval(liczbySf, 30 * 60000);
+
 // PL: warstwa „Repeatery SF7” (MeshCore Polska) — fioletowe kółka, karta jak dla SF8
 let coucheSf7 = null, minuteurSf7 = null;
 async function dessinerSf7() {
