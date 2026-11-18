@@ -187,7 +187,7 @@ config.departement = { code: texte('DEPARTEMENT', '43'), nom: texte('ZONE_NOM', 
     if (!texte('ZONE_NOM')) config.departement.nom = config.zoneNom = nomMonde(config.departement.code);
   }
 }
-// PL: ZONE_KONTUR (np. strefa-poludnie = 4 województwa): prostokąt strefy wyliczany z konturu, ZONE_BBOX niepotrzebny
+// PL: ZONE_KONTUR (np. strefa-poludnie = 5 województw z lubuskim): prostokąt strefy wyliczany z konturu, ZONE_BBOX niepotrzebny
 {
   const nazwa = texte('ZONE_KONTUR', '').replace(/[^a-z0-9-]/gi, '');
   if (nazwa) {

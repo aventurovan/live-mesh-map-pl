@@ -294,7 +294,9 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     // (jusqu'à plusieurs minutes quand il est saturé). Rafraîchis au plus tous les 90 jours.
     try {
       const c = lireJson(fSommets);
-      if (c && Array.isArray(c.liste) && (!c.date || Date.now() - c.date < 90 * 86400000)) { etat.sommetsOsm = 'cache'; return c.liste; }
+      // PL: cache ważny tylko dla tego samego obszaru (po powiększeniu strefy szczyty pobierane od nowa)
+      const tenSam = !c || !c.emprise || (Math.abs(c.emprise.nord - emprise.nord) < 1e-6 && Math.abs(c.emprise.ouest - emprise.ouest) < 1e-6);
+      if (c && Array.isArray(c.liste) && tenSam && (c.emprise || !konturStrefy()) && (!c.date || Date.now() - c.date < 90 * 86400000)) { etat.sommetsOsm = 'cache'; return c.liste; }
     } catch { /* pas de cache */ }
     const q = `[out:json][timeout:60];node["natural"="peak"](${emprise.sud},${emprise.ouest},${emprise.nord},${emprise.est});out body;`;
     let derniere = null;
@@ -310,7 +312,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
           if (!r.ok) throw new Error('HTTP ' + r.status);
           const j = await r.json();
           const liste = j.elements.map((e) => ({ lat: e.lat, lon: e.lon, nom: e.tags && e.tags.name ? e.tags.name : null, ele: e.tags && e.tags.ele ? parseFloat(String(e.tags.ele).replace(',', '.')) : null }));
-          ecrireSur(fSommets, JSON.stringify({ date: Date.now(), liste }));
+          ecrireSur(fSommets, JSON.stringify({ date: Date.now(), emprise, liste }));
           etat.sommetsOsm = 'ok';
           return liste;
         } catch (e) { derniere = e; }

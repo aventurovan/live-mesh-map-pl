@@ -26,7 +26,7 @@ function poczatekDnia(t) {
 
 // Miejscowości do grupowania aktywnych węzłów w rejony (Południe Polski i okolice)
 const MIASTA = [
-  ['Katowice', 50.259, 19.021], ['Bielsko-Biała', 49.822, 19.044], ['Kraków', 50.062, 19.937], ['Opole', 50.675, 17.921],
+  ['Zielona Góra', 51.935, 15.506], ['Gorzów Wlkp.', 52.731, 15.238], ['Żary', 51.642, 15.137], ['Katowice', 50.259, 19.021], ['Bielsko-Biała', 49.822, 19.044], ['Kraków', 50.062, 19.937], ['Opole', 50.675, 17.921],
   ['Wrocław', 51.107, 17.038], ['Gliwice', 50.294, 18.672], ['Rybnik', 50.098, 18.546], ['Częstochowa', 50.811, 19.120],
   ['Tychy', 50.123, 18.987], ['Żywiec', 49.686, 19.192], ['Cieszyn', 49.749, 18.633], ['Nowy Sącz', 49.625, 20.692],
   ['Nowy Targ', 49.477, 20.032], ['Zakopane', 49.299, 19.950], ['Tarnów', 50.012, 20.989], ['Wadowice', 49.883, 19.493],
