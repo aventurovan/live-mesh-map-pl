@@ -1997,6 +1997,38 @@ async function odswiezSf8() {
   return sf8Pobierane;
 }
 if (SF8_URL) { setTimeout(() => odswiezSf8(), 20000).unref(); setInterval(() => odswiezSf8(), 30 * 60000).unref(); }
+// PL: repeatery SF7 (MeshCore Polska) — jak SF8; źródło SF7_URL (pusty = wyłączone), kopia w /data/sf7.json
+const SF7_URL = process.env.SF7_URL != null ? process.env.SF7_URL : 'https://meshcoresouth.pl/mapper/api.php?action=sf7';
+const fSf7 = path.join(path.dirname(config.fichierBase), 'sf7.json');
+let sf7 = (() => { try { const j = lireJson(fSf7); return j && Array.isArray(j.nodes) ? j : null; } catch { return null; } })();
+let sf7Pobierane = null, sf7Blad = null;
+async function odswiezSf7() {
+  if (!SF7_URL || sf7Pobierane) return sf7Pobierane;
+  sf7Pobierane = (async () => {
+    try {
+      const r = await fetch(SF7_URL + (SF7_URL.includes('?') ? '&' : '?') + '_=' + Date.now(), { headers: { 'User-Agent': 'live-mesh-map-pl/1.0' }, signal: AbortSignal.timeout(30000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      if (!j || !j.ok || !Array.isArray(j.nodes)) throw new Error(j && j.error ? j.error : 'brak danych');
+      const nodes = j.nodes.filter((n) => Number.isFinite(n.lat) && Number.isFinite(n.lon))
+        .map((n) => ({ id: String(n.id || '').slice(0, 16), name: String(n.name || '').slice(0, 60), lat: n.lat, lon: n.lon, f: n.f ?? null, bw: n.bw ?? null, la: n.la ?? null }));
+      sf7 = { ts: j.ts || Math.floor(Date.now() / 1000), pobrano: Date.now(), nodes };
+      sf7Blad = null;
+      try { ecrireSur(fSf7, JSON.stringify(sf7)); } catch { /* tylko do odczytu */ }
+      journal(`[SF7] ${nodes.length} repeaterów SF7`);
+    } catch (e) { sf7Blad = e.message; journal(`[SF7] nie udało się pobrać: ${e.message}`); }
+    finally { sf7Pobierane = null; }
+  })();
+  return sf7Pobierane;
+}
+if (SF7_URL) { setTimeout(() => odswiezSf7(), 25000).unref(); setInterval(() => odswiezSf7(), 30 * 60000).unref(); }
+app.get('/api/sf7', async (req, res) => {
+  if (!SF7_URL) return res.json({ ok: false, wylaczone: true, nodes: [] });
+  if (!sf7) await odswiezSf7();
+  if (!sf7) return res.status(503).json({ ok: false, error: sf7Blad || 'dane SF7 jeszcze niepobrane', nodes: [] });
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json({ ok: true, ts: sf7.ts, nodes: sf7.nodes, blad: sf7Blad });
+});
 // ---- Pomiary w terenie z Mappera SF6 (meshcoresouth.pl/mapper) — warstwa „Pomiary w terenie” (kratki sześciokątne).
 // Pobierane przyrostowo co 10 min (tylko nowe punkty), kopia w /data/mapper.json. Bez nicków i danych użytkowników:
 // tylko [szer., dł., kod repeatera lub null, SNR, czas]. MAPPER_API w .env zmienia adres (pusty = warstwa wyłączona).

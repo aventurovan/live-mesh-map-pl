@@ -56,7 +56,7 @@ const etat = {
   coucheLiens: null,
   alertes: [],
   stats: null,
-  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: false, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false, mapper: false, rekordy: false, slady: false },
+  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: false, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false, sf7: false, mapper: false, rekordy: false, slady: false },
   filtresPorts: new Set(Object.keys(PORTS)),
   selection: null,
   trajet: null,
@@ -6449,7 +6449,7 @@ function brancherInterface() {
     etat.couches[c] = !etat.couches[c];
     b.classList.toggle('actif', etat.couches[c]);
     if (c) ecrireLs('gaulix_couches', etat.couches); // choix gardé pour la prochaine visite
-    if (c === 'inactifs') { dessinerNoeuds(); rendreLegende(); } else if (c === 'sommets') dessinerSommets(); else if (c === 'animations' || c === 'slady') { if (typeof dessinerAxes === 'function') dessinerAxes(); } else if (c === 'federation') dessinerFederation(); else if (c === 'routiers') dessinerRoutiers(); else if (c === 'dfci') dessinerDfci(); else if (c === 'radar') dessinerRadar(); else if (c === 'feux') dessinerFeux(); else if (c === 'sf8') dessinerSf8(); else if (c === 'mapper') dessinerMapper(true); else if (c === 'rekordy') dessinerRekordy(); else if (c === 'releves') dessinerReleves(); else dessinerLiens();
+    if (c === 'inactifs') { dessinerNoeuds(); rendreLegende(); } else if (c === 'sommets') dessinerSommets(); else if (c === 'animations' || c === 'slady') { if (typeof dessinerAxes === 'function') dessinerAxes(); } else if (c === 'federation') dessinerFederation(); else if (c === 'routiers') dessinerRoutiers(); else if (c === 'dfci') dessinerDfci(); else if (c === 'radar') dessinerRadar(); else if (c === 'feux') dessinerFeux(); else if (c === 'sf8') dessinerSf8(); else if (c === 'sf7') dessinerSf7(); else if (c === 'mapper') dessinerMapper(true); else if (c === 'rekordy') dessinerRekordy(); else if (c === 'releves') dessinerReleves(); else dessinerLiens();
   }));
   $('#filtres').onclick = (e) => {
     const b = e.target.closest('button[data-port]');
@@ -8363,6 +8363,29 @@ async function dessinerSf8() {
   minuteurSf8 = setTimeout(dessinerSf8, 30 * 60000);
 }
 
+// PL: warstwa „Repeatery SF7” (MeshCore Polska) — fioletowe kółka, karta jak dla SF8
+let coucheSf7 = null, minuteurSf7 = null;
+async function dessinerSf7() {
+  clearTimeout(minuteurSf7);
+  if (!etat.couches.sf7) { if (coucheSf7) { coucheSf7.remove(); coucheSf7 = null; } return; }
+  let r;
+  try { r = await api('/api/sf7'); } catch (e) { r = { ok: false, error: e.message }; }
+  if (!etat.couches.sf7) return;
+  if (!r || !r.ok) { if (typeof toast === 'function') toast('Repeatery SF7: ' + ((r && r.error) || 'brak danych')); minuteurSf7 = setTimeout(dessinerSf7, 120000); return; }
+  if (!rendSf8) rendSf8 = L.canvas({ pane: 'traces', padding: 0.3 });
+  const g = L.layerGroup();
+  const dzien = (t) => (t > 0 ? new Date(t * 1000).toLocaleDateString('pl-PL') : '–');
+  for (const n of r.nodes) {
+    L.circleMarker([n.lat, n.lon], { radius: 6, weight: 2, color: '#6d28d9', fillColor: '#a78bfa', fillOpacity: 0.95, renderer: rendSf8 })
+      .bindTooltip(`<b>${esc(n.name || 'repeater SF7')}</b> <small>SF7 · MeshCore Polska</small><br>${n.f ? String(n.f.toFixed(3)).replace('.', ',') + ' MHz' : '–'} · BW ${n.bw != null ? String(n.bw).replace('.', ',') : '–'} · SF7<br><small>ostatni advert ${dzien(n.la)} · klucz ${esc((n.id || '').slice(0, 8).toUpperCase())}</small>`, { className: 'info', direction: 'top' })
+      .on('click', () => { if (etat.modeProfil && typeof choisirPointProfil === 'function') choisirPointProfil({ lat: n.lat, lon: n.lon, nom: (n.name || 'RPT') + ' (SF7)', h: H_RPT }); else fichaSf8({ ...n, sf: 7 }); })
+      .addTo(g);
+  }
+  if (coucheSf7) coucheSf7.remove();
+  coucheSf7 = g.addTo(carte);
+  minuteurSf7 = setTimeout(dessinerSf7, 30 * 60000);
+}
+
 // ---- PL: warstwa „Pomiary w terenie” — pomiary Mappera SF6 jako kratki sześciokątne (jak w Mapperze) ----
 // Kolor = najlepszy SNR odpowiedzi w kratce (czerwony słabo → niebieski mocno), szara kratka = same pingi bez odpowiedzi.
 const MP = { dane: null, wczyt: null, warstwa: null, rend: null, minuter: null };
@@ -8528,17 +8551,18 @@ function panelRekordy() {
 
 // ---- PL: karta repeatera SF8: zasięg terenu i zasięg do innych repeaterów (zawsze liczone dla radia SF6) ----
 function fichaSf8(n) {
-  const nazwa = n.name || 'repeater SF8';
+  const SF = n.sf || 8;
+  const nazwa = n.name || 'repeater SF' + SF;
   $('#fiche').hidden = false;
   etat.selection = null;
   const dzien = (t) => (t > 0 ? new Date(t * 1000).toLocaleDateString('pl-PL') : '–');
   $('#fiche-contenu').innerHTML = `
     <h2>${esc(nazwa)}</h2>
-    <div class="ident">Repeater SF8 · MeshCore Polska · klucz ${esc((n.id || '').slice(0, 8).toUpperCase())}</div>
+    <div class="ident">Repeater SF${SF} · MeshCore Polska · klucz ${esc((n.id || '').slice(0, 8).toUpperCase())}</div>
     ${blocCoords(n.lat, n.lon, {})}
     <div class="grille">
       <div class="mesure"><span>Częstotliwość</span><b>${n.f ? String(n.f.toFixed(3)).replace('.', ',') + ' MHz' : '–'}</b></div>
-      <div class="mesure"><span>Pasmo / SF</span><b>BW ${n.bw != null ? String(n.bw).replace('.', ',') : '–'} · SF8</b></div>
+      <div class="mesure"><span>Pasmo / SF</span><b>BW ${n.bw != null ? String(n.bw).replace('.', ',') : '–'} · SF${SF}</b></div>
       <div class="mesure"><span>Ostatni advert</span><b>${dzien(n.la)}</b></div>
     </div>
     <p class="note">Zasięg liczymy dla radia <b>SF6</b> (sieć Południe): jak daleko sięgałby repeater postawiony w tym miejscu.</p>
