@@ -67,6 +67,12 @@
       // Début connu suivi d'un nom ou d'une valeur
       for (const p of prefixes) if (s.length > p.length + 1 && s.startsWith(p) && /^[\s:]*[A-Z0-9!«“"'(À-Ý]/.test(s.slice(p.length))) { r = exact.get(p) + s.slice(p.length); break; }
     }
+    // PL: tekst sklejony z kawałków „A · B · C” — tłumaczymy każdy kawałek osobno
+    if (r == null && s.includes(' · ')) {
+      const cz = s.split(' · ');
+      const tl = cz.map((c) => traduire(c, true));
+      if (tl.some((x, i) => x !== cz[i])) { r = tl.join(' · '); if (!interne) cz.forEach((c, i) => { if (tl[i] === c) zglosBrak(c); }); }
+    }
     if (r == null) { r = t; if (!interne) zglosBrak(s); }
     if (memo.size > 20000) memo.clear();
     memo.set(s, r);
