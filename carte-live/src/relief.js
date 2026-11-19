@@ -466,7 +466,8 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
   }
 
   function parametres(opts = {}) {
-    const preset = PARAMS_LORA[opts.preset] ? opts.preset : fournisseurs.presetCourant() || config.reseauPreset || 'LONG_FAST';
+    // PL: mapa tylko MeshCore → domyślnie parametry sieci Południe (SF6, 62,5 kHz), nie Meshtastic LONG_FAST
+    const preset = PARAMS_LORA[opts.preset] ? opts.preset : (String(process.env.CARTE_RESEAUX || '').toLowerCase() === 'meshcore' ? 'MESHCORE_FR' : null) || fournisseurs.presetCourant() || config.reseauPreset || 'LONG_FAST';
     const p = PARAMS_LORA[preset] || PARAMS_LORA.LONG_FAST;
     const bruit = -174 + 10 * Math.log10(p.bw * 1000) + 6;
     return {
