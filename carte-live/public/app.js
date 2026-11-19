@@ -695,26 +695,26 @@ async function chargerSanteCarte() {
   const p = $('#nb-sante');
   p.textContent = r.alertes.length || '✓';
   p.className = 'pastille' + (r.niveau === 'critique' ? ' critique' : r.niveau === 'attention' ? ' attention' : ' ok');
-  $('#resume-sante').textContent = r.alertes.length ? (() => { const t = window.tr ? window.tr(r.alertes[0].message) : r.alertes[0].message; return t.slice(0, 40) + (t.length > 40 ? '…' : ''); })() : `processeur ${fmt(e.cpuPct, 0, ' %')} · ${e.memMo ?? '–'} Mo`;
+  $('#resume-sante').textContent = r.alertes.length ? (() => { const t = window.tr ? window.tr(r.alertes[0].message) : r.alertes[0].message; return t.slice(0, 40) + (t.length > 40 ? '…' : ''); })() : `procesor ${fmt(e.cpuPct, 0, ' %')} · ${e.memMo ?? '–'} MB`;
   const m = (l, v, alerte) => `<div class="mesure"><span>${l}</span><b${alerte ? ' style="color:var(--attention)"' : ''}>${v}</b></div>`;
-  const dureeDepuis = (t) => { const s = Math.round((Date.now() - t) / 1000); return s < 3600 ? Math.round(s / 60) + ' min' : s < 86400 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' j'; };
+  const dureeDepuis = (t) => { const s = Math.round((Date.now() - t) / 1000); return s < 3600 ? Math.round(s / 60) + ' min' : s < 86400 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' dni'; };
   $('#sante-carte').innerHTML = `
     ${r.alertes.map((a) => `<div class="liste-alertes"><div class="alerte ${a.niveau}">${esc(a.message)}</div></div>`).join('')}
     <div class="grille">
-      ${m('Processeur', fmt(e.cpuPct, 0, ' %'), e.cpuPct > 80)}
-      ${m('Mémoire', `${e.memMo ?? '–'}${r.limiteMemMo ? ' / ' + r.limiteMemMo : ''} Mo`, r.limiteMemMo && e.memMo > r.limiteMemMo * 0.85)}
-      ${m('Réactivité (pire)', e.latenceP99 != null ? e.latenceP99 + ' ms' : '–', e.latenceP99 > 500)}
-      ${m('Messages MQTT', (e.mqttParMinute ?? '–') + ' / min')}
-      ${m('Base de données', r.base ? `${r.base.totalMo} Mo` : '–', r.base && r.base.totalMo > 2048)}
-      ${m('Disque libre', r.disque ? `${r.disque.libreGo} Go` : '–', r.disque && r.disque.libreGo / r.disque.totalGo < 0.1)}
-      ${m('Navigateurs connectés', r.clients ?? '–')}
-      ${m('En marche depuis', dureeDepuis(r.demarrage))}
+      ${m('Procesor', fmt(e.cpuPct, 0, ' %'), e.cpuPct > 80)}
+      ${m('Pamięć', `${e.memMo ?? '–'}${r.limiteMemMo ? ' / ' + r.limiteMemMo : ''} MB`, r.limiteMemMo && e.memMo > r.limiteMemMo * 0.85)}
+      ${m('Opóźnienie (najgorsze)', e.latenceP99 != null ? e.latenceP99 + ' ms' : '–', e.latenceP99 > 500)}
+      ${m('Wiadomości MQTT', (e.mqttParMinute ?? '–') + ' / min')}
+      ${m('Baza danych', r.base ? `${r.base.totalMo} MB` : '–', r.base && r.base.totalMo > 2048)}
+      ${m('Wolne miejsce na dysku', r.disque ? `${r.disque.libreGo} GB` : '–', r.disque && r.disque.libreGo / r.disque.totalGo < 0.1)}
+      ${m('Połączone przeglądarki', r.clients ?? '–')}
+      ${m('Działa od', dureeDepuis(r.demarrage))}
       ${m('Version', esc(r.version))}
     </div>
-    ${courbe(r.historique, 'latenceP99', 'Réactivité (retard maximal par minute)', ' ms', 0, 500) || ''}
-    ${courbe(r.historique, 'cpuPct', 'Processeur', ' %', 0) || ''}
-    ${courbe(r.historique, 'memMo', 'Mémoire', ' Mo', 0, r.limiteMemMo ? Math.round(r.limiteMemMo * 0.85) : null) || ''}
-    <p class="note">MQTT ${r.mqtt.connecte ? 'connecté' : '<b>déconnecté</b>'}${r.mqtt.reconnexions ? ` · ${r.mqtt.reconnexions} reconnexion(s)` : ''}${r.mqtt.horsPerimetreMc ? ` · ${r.mqtt.horsPerimetreMc} paquets MeshCore hors périmètre ignorés` : ''}${r.base && r.base.walMo ? ` · journal de la base ${r.base.walMo} Mo` : ''}. Courbes : 3 dernières heures, un point par minute.</p>`;
+    ${courbe(r.historique, 'latenceP99', 'Opóźnienie (największe w minucie)', ' ms', 0, 500) || ''}
+    ${courbe(r.historique, 'cpuPct', 'Procesor', ' %', 0) || ''}
+    ${courbe(r.historique, 'memMo', 'Pamięć', ' MB', 0, r.limiteMemMo ? Math.round(r.limiteMemMo * 0.85) : null) || ''}
+    <p class="note">MQTT ${r.mqtt.connecte ? 'połączony' : '<b>rozłączony</b>'}${r.mqtt.reconnexions ? ` · ponowne połączenia: ${r.mqtt.reconnexions}` : ''}${r.mqtt.horsPerimetreMc ? ` · pominięte pakiety MeshCore spoza strefy: ${r.mqtt.horsPerimetreMc}` : ''}${r.base && r.base.walMo ? ` · dziennik bazy (WAL) ${r.base.walMo} MB` : ''}. Wykresy: ostatnie 3 godziny, jeden punkt na minutę.</p>`;
 }
 
 // ---- Chemins mesurés (traceroutes automatiques) -----------------------------------------------------

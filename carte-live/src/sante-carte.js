@@ -53,14 +53,14 @@ function creerSanteCarte({ dossier, fichierBase, version, sources }) {
     const mqtt = sources.mqttEtat ? sources.mqttEtat() : {};
     const alertes = [];
     const ajout = (niveau, message) => alertes.push({ niveau, message });
-    if (e.latenceP99 > 2000) ajout('critique', `La carte se fige : jusqu’à ${(e.latenceP99 / 1000).toFixed(1)} s sans répondre (dernière minute)`);
-    else if (e.latenceP99 > 500) ajout('attention', `Réactivité dégradée : jusqu’à ${e.latenceP99} ms de retard (dernière minute)`);
-    if (limiteMem && e.memMo > (limiteMem / 1048576) * 0.85) ajout('attention', `Mémoire presque pleine : ${e.memMo} Mo sur ${Math.round(limiteMem / 1048576)} Mo autorisés`);
-    if (e.cpuPct > 80) ajout('attention', `Processeur très occupé : ${e.cpuPct} % d’un cœur`);
-    if (disque && disque.libreGo / disque.totalGo < 0.1) ajout('critique', `Disque presque plein : ${disque.libreGo} Go libres`);
-    if (base && base.totalMo > 2048) ajout('attention', `Base de données volumineuse : ${base.totalMo} Mo`);
-    if (!mqtt.connecte) ajout('critique', 'Broker MQTT déconnecté');
-    else if (mqtt.dernierMessage && Date.now() - mqtt.dernierMessage > 5 * 60000) ajout('attention', `Aucun message MQTT depuis ${Math.round((Date.now() - mqtt.dernierMessage) / 60000)} min`);
+    if (e.latenceP99 > 2000) ajout('critique', `Mapa się zawiesza: do ${(e.latenceP99 / 1000).toFixed(1)} s bez odpowiedzi (ostatnia minuta)`);
+    else if (e.latenceP99 > 500) ajout('attention', `Mapa reaguje wolniej: opóźnienie do ${e.latenceP99} ms (ostatnia minuta)`);
+    if (limiteMem && e.memMo > (limiteMem / 1048576) * 0.85) ajout('attention', `Pamięć prawie pełna: ${e.memMo} MB z dozwolonych ${Math.round(limiteMem / 1048576)} MB`);
+    if (e.cpuPct > 80) ajout('attention', `Procesor mocno obciążony: ${e.cpuPct} % jednego rdzenia`);
+    if (disque && disque.libreGo / disque.totalGo < 0.1) ajout('critique', `Dysk prawie pełny: wolne ${disque.libreGo} GB`);
+    if (base && base.totalMo > 2048) ajout('attention', `Duża baza danych: ${base.totalMo} MB`);
+    if (!mqtt.connecte) ajout('critique', 'Broker MQTT rozłączony');
+    else if (mqtt.dernierMessage && Date.now() - mqtt.dernierMessage > 5 * 60000) ajout('attention', `Brak wiadomości MQTT od ${Math.round((Date.now() - mqtt.dernierMessage) / 60000)} min`);
     return {
       version, demarrage: Date.now() - Math.round(process.uptime() * 1000),
       limiteMemMo: limiteMem ? Math.round(limiteMem / 1048576) : null,
