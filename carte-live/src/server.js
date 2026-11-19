@@ -664,7 +664,14 @@ app.post('/api/relief/france', (req, res) => {
 });
 app.get('/api/relief/etat', (req, res) => res.json({ ...R(req).etat(), emprise: R(req).emprise() }));
 app.get('/api/relief/sommets', (req, res) => {
-  res.json(R(req).sommets().map((s) => ({ id: s.id, nom: s.nom, lat: s.lat, lon: s.lon, alt: s.alt, source: s.source, widok: s.widok || undefined, dominance: s.dominance, dansZone: s.dansZone, couverturePct: s.couverturePct, couvertureKm2: s.couvertureKm2, rang: s.rang, rangPlan: s.rangPlan, acces: s.acces || null })));
+  // PL: duża strefa (~40 tys. punktów) – poza strefą tylko punkty z klasyfikacji, puste pola pomijane, współrzędne do 5 miejsc
+  const r5 = (x) => Math.round(x * 1e5) / 1e5;
+  const lista = R(req).sommets().filter((s) => s.dansZone || s.rang || s.rangPlan).map((s) => {
+    const o = { id: s.id, lat: r5(s.lat), lon: r5(s.lon), alt: s.alt, source: s.source, dominance: s.dominance, dansZone: s.dansZone };
+    for (const k of ['nom', 'widok', 'couverturePct', 'couvertureKm2', 'rang', 'rangPlan', 'acces', 'commune']) if (s[k] != null) o[k] = s[k];
+    return o;
+  });
+  res.set('Cache-Control', 'public, max-age=300').json(lista);
 });
 app.get('/api/relief/calibration', (req, res) => res.json(R(req).calibration()));
 app.get('/api/relief/classement', (req, res) => {
