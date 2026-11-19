@@ -2016,3 +2016,10 @@ body:not(.theme-clair) .mt-ik { background: rgba(255,255,255,.08); }
 }
 /* PL: warstwa federacji ukryta wszędzie */
 [data-couche="federation"] { display: none !important; }
+
+/* PL: punkty widokowe i okno współrzędnych GPS */
+.sommet.widok { font-size: 11px; }
+dialog.okno-gps { max-width: 420px; width: calc(100% - 32px); border-radius: 12px; }
+dialog.okno-gps h3 { margin: 0 0 10px; }
+dialog.okno-gps input { width: 100%; box-sizing: border-box; font-size: 16px; padding: 8px 10px; }
+dialog.okno-gps .blad-gps { color: #d9534f; margin: 6px 0 0; }

@@ -296,9 +296,11 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       const c = lireJson(fSommets);
       // PL: cache ważny tylko dla tego samego obszaru (po powiększeniu strefy szczyty pobierane od nowa)
       const tenSam = !c || !c.emprise || (Math.abs(c.emprise.nord - emprise.nord) < 1e-6 && Math.abs(c.emprise.ouest - emprise.ouest) < 1e-6);
-      if (c && Array.isArray(c.liste) && tenSam && (c.emprise || !konturStrefy()) && (!c.date || Date.now() - c.date < 90 * 86400000)) { etat.sommetsOsm = 'cache'; return c.liste; }
+      if (c && Array.isArray(c.liste) && c.liste.length && c.widoki && tenSam && (c.emprise || !konturStrefy()) && (!c.date || Date.now() - c.date < 90 * 86400000)) { etat.sommetsOsm = 'cache'; return c.liste; }
     } catch { /* pas de cache */ }
-    const q = `[out:json][timeout:60];node["natural"="peak"](${emprise.sud},${emprise.ouest},${emprise.nord},${emprise.est});out body;`;
+    // PL: szczyty + punkty widokowe (tourism=viewpoint, wieże widokowe) – duży obszar, dłuższy limit czasu
+    const bb = `${emprise.sud},${emprise.ouest},${emprise.nord},${emprise.est}`;
+    const q = `[out:json][timeout:240][maxsize:536870912];(node["natural"="peak"](${bb});node["tourism"="viewpoint"](${bb});way["man_made"="tower"]["tower:type"="observation"](${bb}););out center tags;`;
     let derniere = null;
     for (let tour = 0; tour < 3 && !arrete; tour++) {
       for (const url of SERVEURS_OVERPASS) {
@@ -307,12 +309,18 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
             method: 'POST',
             headers: { 'User-Agent': 'live-mesh-map-world/1.0 (+https://github.com/sauveteur71/live-mesh-map-world)', 'Content-Type': 'application/x-www-form-urlencoded' },
             body: 'data=' + encodeURIComponent(q),
-            signal: AbortSignal.timeout(90000),
+            signal: AbortSignal.timeout(300000),
           });
           if (!r.ok) throw new Error('HTTP ' + r.status);
           const j = await r.json();
-          const liste = j.elements.map((e) => ({ lat: e.lat, lon: e.lon, nom: e.tags && e.tags.name ? e.tags.name : null, ele: e.tags && e.tags.ele ? parseFloat(String(e.tags.ele).replace(',', '.')) : null }));
-          ecrireSur(fSommets, JSON.stringify({ date: Date.now(), emprise, liste }));
+          // PL: Overpass przy przekroczeniu czasu zwraca HTTP 200 z pustą listą i „remark” – to błąd, nie zapisujemy
+          if (!j.elements || !j.elements.length) throw new Error(j.remark || 'pusta odpowiedź');
+          const liste = j.elements.map((e) => {
+            const t = e.tags || {};
+            const widok = t.natural !== 'peak';
+            return { lat: e.lat ?? (e.center && e.center.lat), lon: e.lon ?? (e.center && e.center.lon), nom: t.name || null, ele: t.ele ? parseFloat(String(t.ele).replace(',', '.')) : null, ...(widok ? { widok: t.man_made === 'tower' || t['tower:type'] === 'observation' ? 'wieza' : 'punkt' } : {}) };
+          }).filter((p) => p.lat != null && p.lon != null);
+          ecrireSur(fSommets, JSON.stringify({ date: Date.now(), emprise, widoki: true, liste }));
           etat.sommetsOsm = 'ok';
           return liste;
         } catch (e) { derniere = e; }
@@ -322,7 +330,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       await new Promise((r) => setTimeout(r, 20000));
     }
     journal('[Relief] sommets OSM indisponibles (' + (derniere ? derniere.message : 'arrêt') + '), utilisation du cache');
-    try { const l = lireJson(fSommets).liste; etat.sommetsOsm = 'cache'; return l; } catch { etat.sommetsOsm = 'absent'; return []; }
+    try { const l = lireJson(fSommets).liste; if (!l.length) throw new Error('pusty'); etat.sommetsOsm = 'cache'; return l; } catch { etat.sommetsOsm = 'absent'; return []; }
   }
 
   // Commune de chaque point haut (API Géo de l'État), mise en cache sur disque
@@ -367,7 +375,9 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       const k = celle(p.lat, p.lon);
       if (k < 0) continue;
       const i = Math.floor(k / nLon), j = k % nLon;
-      liste.push({ lat: p.lat, lon: p.lon, nom: p.nom, alt: p.ele || Math.round(alt(p.lat, p.lon)), altMnt: Math.round(alt(p.lat, p.lon)), source: 'osm', dominance: Math.round(dominance(i, j, 12)) });
+      const dom = Math.round(dominance(i, j, 12));
+      if (!p.nom && !p.widok && dom < 20) continue; // PL: bezimienne garby bez znaczenia (inaczej dziesiątki tysięcy punktów)
+      liste.push({ lat: p.lat, lon: p.lon, nom: p.nom, alt: (p.ele && !Number.isNaN(p.ele) ? p.ele : null) || Math.round(alt(p.lat, p.lon)), altMnt: Math.round(alt(p.lat, p.lon)), source: 'osm', dominance: dom, ...(p.widok ? { widok: p.widok } : {}) });
     }
     // Bosses dominantes détectées dans le MNT (maximum local sur 1,5 km, au moins 40 m au-dessus des environs à 3 km)
     const R1 = 6;
@@ -390,7 +400,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     if (DROGI_DOJAZDOWE) acces.completer(liste.filter((x) => x.dansZone || distanceAuDepartement(x) < 10000)).catch((e) => journal('[Accès] erreur :', e.message));
     realisme.completer(liste.filter((x) => x.dansZone || distanceAuDepartement(x) < 10000)).catch((e) => journal('[Sites] erreur :', e.message));
     etat.sommets = liste.length;
-    journal(`[Relief] ${liste.length} points hauts (${osm.length} sommets OSM, ${liste.filter((s) => s.source === 'mnt').length} détectés dans le relief)`);
+    journal(`[Relief] ${liste.length} points hauts (${osm.length} sommets OSM, ${liste.filter((s) => s.widok).length} punktów widokowych, ${liste.filter((s) => s.source === 'mnt').length} détectés dans le relief)`);
   }
 
   // ---- Modèle de propagation ------------------------------------------------------
@@ -627,7 +637,9 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     const P = parametres(opts);
     try {
       // Sites candidats : points hauts dans le département ou à moins de 10 km
-      const candidats = sommets.filter((s) => s.dansZone || anneaux.length === 0 || distanceAuDepartement(s) < 10000);
+      let candidats = sommets.filter((s) => s.dansZone || anneaux.length === 0 || distanceAuDepartement(s) < 10000);
+      // PL: duża strefa – do klasyfikacji tylko najbardziej dominujące punkty (czas obliczeń)
+      if (candidats.length > 1500) candidats = candidats.slice().sort((x, y) => (y.dominance || 0) - (x.dominance || 0)).slice(0, 1500);
       const couvertures = [];
       for (const s of candidats) {
         couvertures.push({ s, ...couvertureZone(s, P) });

@@ -664,7 +664,7 @@ app.post('/api/relief/france', (req, res) => {
 });
 app.get('/api/relief/etat', (req, res) => res.json({ ...R(req).etat(), emprise: R(req).emprise() }));
 app.get('/api/relief/sommets', (req, res) => {
-  res.json(R(req).sommets().map((s) => ({ id: s.id, nom: s.nom, lat: s.lat, lon: s.lon, alt: s.alt, source: s.source, dominance: s.dominance, dansZone: s.dansZone, couverturePct: s.couverturePct, couvertureKm2: s.couvertureKm2, rang: s.rang, rangPlan: s.rangPlan, acces: s.acces || null })));
+  res.json(R(req).sommets().map((s) => ({ id: s.id, nom: s.nom, lat: s.lat, lon: s.lon, alt: s.alt, source: s.source, widok: s.widok || undefined, dominance: s.dominance, dansZone: s.dansZone, couverturePct: s.couverturePct, couvertureKm2: s.couvertureKm2, rang: s.rang, rangPlan: s.rangPlan, acces: s.acces || null })));
 });
 app.get('/api/relief/calibration', (req, res) => res.json(R(req).calibration()));
 app.get('/api/relief/classement', (req, res) => {

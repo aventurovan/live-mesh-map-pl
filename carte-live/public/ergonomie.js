@@ -438,7 +438,9 @@ function visiteGuidee(forcer) {
 function installerFab() {
   const f = $('#fab-plus');
   if (!f) return;
-  f.onclick = () => choisirPointPuis('Touchez la carte à l’endroit voulu : le menu des actions s’ouvrira.', (ll) => carte.fire('contextmenu', { latlng: ll, containerPoint: carte.latLngToContainerPoint(ll), layerPoint: carte.latLngToLayerPoint(ll), originalEvent: { preventDefault() {}, stopPropagation() {} } }));
+  const wskaz = () => choisirPointPuis('Touchez la carte à l’endroit voulu : le menu des actions s’ouvrira.', (ll) => carte.fire('contextmenu', { latlng: ll, containerPoint: carte.latLngToContainerPoint(ll), layerPoint: carte.latLngToLayerPoint(ll), originalEvent: { preventDefault() {}, stopPropagation() {} } }));
+  // PL: wybór – wskazać punkt na mapie albo wpisać współrzędne GPS
+  f.onclick = () => ouvrirMenu(f, 'Sprawdź punkt', [['👆 Wskaż na mapie', wskaz], ['🧭 Wpisz współrzędne GPS', () => oknoWspolrzednych()]]);
 }
 
 // ---- Favoris et fonctions récentes dans la recherche ⚙️🔎 ------------------------------------------------------

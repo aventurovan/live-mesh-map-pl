@@ -3269,7 +3269,8 @@ function avertissementSites(ouvert = false) {
 document.addEventListener('toggle', (e) => {
   if (e.target.classList && e.target.classList.contains('avertissement-sites') && !e.target.open) ecrireLs('relief_avertissement_vu', true);
 }, true);
-const nomSommet = (s) => s.nom || (s.commune ? `Point haut · ${s.commune}` : `Point haut ${s.alt} m`);
+const nomSommet = (s) => s.nom || (s.widok ? (s.widok === 'wieza' ? 'Wieża widokowa' : 'Punkt widokowy') : null) || (s.commune ? `Point haut · ${s.commune}` : `Point haut ${s.alt} m`);
+const zrodloSommet = (s) => (s.widok ? (s.widok === 'wieza' ? 'Wieża widokowa (OpenStreetMap)' : 'Punkt widokowy (OpenStreetMap)') : s.source === 'osm' ? 'Sommet OpenStreetMap' : 'Détecté dans le relief IGN');
 const couleurMarge = (m) => (m >= 10 ? 'var(--ok)' : m >= 0 ? 'var(--attention)' : 'var(--critique)');
 const hexMarge = (m) => (m >= 10 ? '#3ee6c4' : m >= 0 ? '#f4d35e' : '#ff5c6c');
 
@@ -3332,6 +3333,7 @@ async function chargerRelief(recadrer) {
 function iconeSommet(s) {
   if (s.rangPlan) return L.divIcon({ className: 'sommet plan', html: `<span>${s.rangPlan}</span>`, iconSize: [22, 22], iconAnchor: [11, 11] });
   const fort = s.rang && s.rang <= 15;
+  if (s.widok) return L.divIcon({ className: 'sommet widok' + (fort ? ' fort' : ''), html: '◉', iconSize: [12, 12], iconAnchor: [6, 6] });
   return L.divIcon({ className: 'sommet' + (fort ? ' fort' : '') + (s.source === 'mnt' ? ' mnt' : ''), html: '▲', iconSize: [12, 12], iconAnchor: [6, 8] });
 }
 function infoSommet(s) {
@@ -3339,7 +3341,7 @@ function infoSommet(s) {
     (s.couverturePct != null ? `<br>Couverture seule : ${fmt(s.couverturePct, 1, ' %')} du département (${s.couvertureKm2} km²)` : '') +
     (s.rangPlan ? `<br><b style="color:#f4c542">Site recommandé n° ${s.rangPlan}</b>` : s.rang && s.rang <= 15 ? `<br>Classement individuel : ${s.rang}ᵉ` : '') +
     (s.acces ? `<br>Accès : ${ACCES[s.acces.type].icone} ${ACCES[s.acces.type].nom}` : '') +
-    `<br><small>${s.source === 'osm' ? 'Sommet OpenStreetMap' : 'Détecté dans le relief IGN'}</small>`;
+    `<br><small>${zrodloSommet(s)}</small>`;
 }
 function dessinerSommets() {
   if (etat.coucheSommets) etat.coucheSommets.remove();
@@ -3394,7 +3396,7 @@ async function ficheSommet(s) {
   const r = await voirCouvertureSite(s);
   $('#fiche-contenu').innerHTML = `
     <h2>${esc(nomSommet(s))}</h2>
-    <div class="ident">${s.commune ? esc(s.commune) + ' · ' : ''}<span>${s.source === 'osm' ? 'Sommet OpenStreetMap' : 'Détecté dans le relief IGN'}</span>${s.rangPlan ? ` · <b style="color:#f4c542">site recommandé n° ${s.rangPlan}</b>` : ''}</div>
+    <div class="ident">${s.commune ? esc(s.commune) + ' · ' : ''}<span>${zrodloSommet(s)}</span>${s.rangPlan ? ` · <b style="color:#f4c542">site recommandé n° ${s.rangPlan}</b>` : ''}</div>
     ${blocCoords(s.lat, s.lon, { alt: s.alt })}
     <div class="acces-ligne">Accès : ${texteAcces(s.acces)}</div>
     <div class="grille">
@@ -4905,6 +4907,63 @@ function placerLieu(l) {
     .bindPopup(div, { className: 'popup-contexte', maxWidth: 340, minWidth: 280 })
     .openPopup();
 }
+// PL: współrzędne GPS w dowolnym popularnym zapisie → { lat, lon } albo null
+// 49.75, 19.0 · 49,75 19,0 · N49.75 E19.0 · 49.75N 19.0E · 49°45'12.3"N 19°00'05"E · 49 45.2 N 19 0.1 E
+function parsujWspolrzedne(tekst) {
+  const q = String(tekst || '').trim().toUpperCase().replace(/[″”"]/g, '"').replace(/[′’']/g, "'").replace(/º/g, '°');
+  if (!q) return null;
+  // Zapis dziesiętny z przecinkami jako separatorem dziesiętnym: „49,75 19,0” / „49,75; 19,0”
+  let m = q.match(/^([NS])?\s*(-?\d{1,2}(?:[.,]\d+)?)\s*°?\s*([NS])?\s*[,; ]\s*([EW])?\s*(-?\d{1,3}(?:[.,]\d+)?)\s*°?\s*([EW])?$/);
+  if (!m) m = q.match(/^([NS])?\s*(-?\d{1,2}(?:\.\d+)?)\s*°?\s*([NS])?\s*,\s*([EW])?\s*(-?\d{1,3}(?:\.\d+)?)\s*°?\s*([EW])?$/);
+  if (m) {
+    let lat = Number(m[2].replace(',', '.')), lon = Number(m[5].replace(',', '.'));
+    if ((m[1] || m[3]) === 'S') lat = -Math.abs(lat);
+    if ((m[4] || m[6]) === 'W') lon = -Math.abs(lon);
+    if (Math.abs(lat) <= 90 && Math.abs(lon) <= 180) return { lat, lon };
+  }
+  // Stopnie, minuty, sekundy (lub stopnie i minuty dziesiętne)
+  const czesc = String.raw`([NSEW])?\s*(\d{1,3})(?:\s*°\s*|\s+)(\d{1,2}(?:[.,]\d+)?)(?:\s*'\s*|\s+)?(?:(\d{1,2}(?:[.,]\d+)?)\s*"?)?\s*([NSEW])?`;
+  m = q.match(new RegExp('^' + czesc + String.raw`\s*[,; ]?\s*` + czesc + '$'));
+  if (m) {
+    const wart = (st, mi, se) => Number(st) + Number(String(mi).replace(',', '.')) / 60 + (se ? Number(String(se).replace(',', '.')) / 3600 : 0);
+    let a = wart(m[2], m[3], m[4]), b = wart(m[7], m[8], m[9]);
+    const ka = m[1] || m[5], kb = m[6] || m[10];
+    if (ka === 'E' || ka === 'W' || kb === 'N' || kb === 'S') { [a, b] = [b, a]; }
+    if (ka === 'S' || kb === 'S') a = -a;
+    if (ka === 'W' || kb === 'W') b = -b;
+    if (Math.abs(a) <= 90 && Math.abs(b) <= 180 && Number.isFinite(a) && Number.isFinite(b)) return { lat: a, lon: b };
+  }
+  return null;
+}
+// PL: punkt z GPS → znacznik i to samo menu akcji co po kliknięciu mapy (zasięg, profil, repeatery w zasięgu…)
+function sprawdzPunktGps(lat, lon) {
+  const ll = L.latLng(lat, lon);
+  if (marqueurRecherche) marqueurRecherche.remove();
+  marqueurRecherche = L.marker(ll, { icon: L.divIcon({ className: 'repere-lieu', html: '<span></span>', iconSize: [18, 18], iconAnchor: [9, 9] }), pane: 'traces', zIndexOffset: 1000 }).addTo(carte);
+  carte.flyTo(ll, Math.max(carte.getZoom(), 13), { duration: 0.6 });
+  carte.once('moveend', () => carte.fire('contextmenu', { latlng: ll, containerPoint: carte.latLngToContainerPoint(ll), layerPoint: carte.latLngToLayerPoint(ll), originalEvent: { preventDefault() {}, stopPropagation() {} } }));
+}
+function oknoWspolrzednych() {
+  const d = document.createElement('dialog');
+  d.className = 'okno-gps';
+  d.innerHTML = `<form method="dialog"><h3>Sprawdź punkt po współrzędnych</h3>
+    <input name="gps" type="text" inputmode="text" autocomplete="off" placeholder="np. 49.7550, 19.0020" aria-label="Współrzędne GPS">
+    <p class="note">Działa zapis dziesiętny (49.755, 19.002), z literami (N49.755 E19.002) i w stopniach, minutach, sekundach (49°45'18"N 19°00'07"E).</p>
+    <p class="blad-gps" hidden>Nie rozpoznaję tych współrzędnych.</p>
+    <div class="actions-prop"><button value="anuluj" type="button" data-x>Anuluj</button><button class="principal" value="ok">Pokaż</button></div></form>`;
+  document.body.appendChild(d);
+  const pole = d.querySelector('input'), blad = d.querySelector('.blad-gps');
+  d.querySelector('[data-x]').onclick = () => d.close();
+  d.querySelector('form').onsubmit = (e) => {
+    const g = parsujWspolrzedne(pole.value);
+    if (!g) { e.preventDefault(); blad.hidden = false; pole.focus(); return; }
+    setTimeout(() => sprawdzPunktGps(g.lat, g.lon), 50);
+  };
+  d.onclose = () => d.remove();
+  d.showModal();
+  pole.focus();
+}
+
 function brancherRecherche() {
   const champ = $('#recherche-lieu'), liste = $('#resultats-lieu');
   let minuterie = null, resultats = [], index = -1, demande = 0;
@@ -4957,12 +5016,9 @@ function brancherRecherche() {
       const d = DFCI.depuisDfci(q);
       if (d) { resultats = [{ type: 'DFCI', nom: d.code, detail: d.cote >= 1000 ? `carré de ${d.cote >= 20000 ? d.cote / 1000 + ' km' : d.cote === 2000 ? '2 km' : '1 km (zone)'}` : '', lat: d.lat, lon: d.lon, contour: d.contour, zoom: d.cote <= 1000 ? 15 : d.cote <= 2000 ? 14 : d.cote <= 20000 ? 11 : 9 }]; index = 0; afficher(); return; }
     }
-    // Coordonnées saisies directement : « 45.0473, 3.8852 »
-    const m = q.match(/^\s*(-?\d+(?:[.,]\d+)?)\s*[,; ]\s*(-?\d+(?:[.,]\d+)?)\s*$/);
-    if (m) {
-      const lat = Number(m[1].replace(',', '.')), lon = Number(m[2].replace(',', '.'));
-      if (Math.abs(lat) <= 90 && Math.abs(lon) <= 180) { resultats = [{ type: 'GPS', nom: `${lat.toFixed(5)}, ${lon.toFixed(5)}`, lat, lon, zoom: 15 }]; index = 0; afficher(); return; }
-    }
+    // Coordonnées saisies directement : « 45.0473, 3.8852 », « N49°45'12" E19°0'5" », « 49 45.2N 19 0.1E »
+    const g = parsujWspolrzedne(q);
+    if (g) { resultats = [{ type: 'GPS', nom: `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)}`, lat: g.lat, lon: g.lon, zoom: 14, go: () => sprawdzPunktGps(g.lat, g.lon) }]; index = 0; afficher(); return; }
     minuterie = setTimeout(() => chercher(q), 300);
   };
   champ.onkeydown = (e) => {
