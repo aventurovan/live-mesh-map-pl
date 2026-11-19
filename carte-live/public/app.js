@@ -3348,17 +3348,28 @@ function dessinerSommets() {
   etat.coucheSommets = null;
   if (!etat.couches.sommets || !etat.sommets.length) return;
   const g = L.layerGroup();
-  const proche = carte.getZoom() >= 10;
-  // De près, seulement ce qui est à l'écran (des milliers de marqueurs ralentissent beaucoup les téléphones)
-  const vue = proche ? carte.getBounds().pad(0.4) : null;
+  // PL: duża strefa (~40 tys. punktów) – im dalej, tym mniej: <9 tylko ranking, 9–10 ważne nazwane szczyty,
+  // 11 nazwane szczyty i punkty widokowe, ≥12 wszystko w widoku; zawsze najwyżej 300 znaczników
+  const z = carte.getZoom();
+  const vue = carte.getBounds().pad(z >= 12 ? 0.3 : 0.1);
+  const wazne = (s) => s.rangPlan || (s.rang && s.rang <= 15);
+  const pokaz = [];
   for (const s of etat.sommets) {
-    if (vue && !s.rangPlan && !vue.contains([s.lat, s.lon])) continue;
-    if (etat.zone && !s.dansZone && !s.rangPlan) continue;
-    if (!accesOk(s) && !s.rangPlan) continue;
-    // À petite échelle : seulement les sites remarquables
-    if (!proche && !s.rangPlan && !(s.rang && s.rang <= 15) && !(s.nom && s.dominance >= 120)) continue;
+    if (!wazne(s)) {
+      if (z < 9) continue;
+      if (!vue.contains([s.lat, s.lon])) continue;
+      if (etat.zone && !s.dansZone) continue;
+      if (!accesOk(s)) continue;
+      if (z <= 10 && !(s.nom && !s.widok && s.dominance >= 150)) continue;
+      if (z === 11 && !(s.nom && (s.widok || s.dominance >= 60))) continue;
+    }
+    pokaz.push(s);
+  }
+  const MAX = 300;
+  if (pokaz.length > MAX) pokaz.sort((x, y) => (wazne(y) ? 1e6 : 0) + (y.dominance || 0) + (y.nom ? 50 : 0) - ((wazne(x) ? 1e6 : 0) + (x.dominance || 0) + (x.nom ? 50 : 0)));
+  for (const s of pokaz.slice(0, MAX)) {
     L.marker([s.lat, s.lon], { icon: iconeSommet(s), pane: 'sommets', zIndexOffset: s.rangPlan ? 500 : 0 })
-      .bindTooltip(infoSommet(s), { className: 'info' })
+      .bindTooltip(() => infoSommet(s), { className: 'info' })
       .on('click', () => (etat.modeProfil ? choisirPointProfil({ lat: s.lat, lon: s.lon, nom: nomSommet(s), h: H_RPT }) : ficheSommet(s)))
       .addTo(g);
   }
