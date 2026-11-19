@@ -4473,6 +4473,19 @@ app.get('/api/mc/namierz', (req, res) => {
 app.get('/api/mc/najdluzsze', (req, res) => { if (!statystykiPl) return res.json({ lacza: [], trasy: [] }); try { res.json(statystykiPl.najdluzsze(Number(req.query.dni) || 30)); } catch (e) { res.status(500).json({ erreur: e.message }); } });
 app.get('/api/export/statystyki-historia.json', exporter(() => (statystykiPl ? statystykiPl.historia() : { dni: [] }), 'application/json'));
 let statystykiCache = { t: 0, v: null };
+// Strefa mapy dla strony statystyk: nazwa, opis z konturu (np. lista województw), prostokąt i repeatery z pozycją
+// (zaokrąglone do 0,01°, ok. 1 km – mapa publiczna i tak je pokazuje)
+let strefaOpis;
+function strefaInfo() {
+  if (strefaOpis === undefined) {
+    strefaOpis = null;
+    const nazwa = String(process.env.ZONE_KONTUR || '').replace(/[^a-z0-9-]/gi, '');
+    if (nazwa) try { const g = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'donnees-ref', `${nazwa}.geojson`), 'utf8')); strefaOpis = ((g.properties || (g.features && g.features[0].properties) || {}).nazwa) || null; } catch { /* brak konturu */ }
+  }
+  let rpt = [];
+  try { rpt = repeteursMc().map((n) => [+n.lat.toFixed(2), +n.lon.toFixed(2)]); } catch { /* baza niedostępna */ }
+  return { nazwa: config.zoneNom, opis: strefaOpis, bbox: config.zone, repeatery: rpt };
+}
 app.get('/api/export/statystyki.json', exporter(() => {
   if (!config.meshcore.actif) return { meshcore: false };
   if (Date.now() - statystykiCache.t < 60000 && statystykiCache.v) return statystykiCache.v;
@@ -4489,6 +4502,7 @@ app.get('/api/export/statystyki.json', exporter(() => {
       repeatery: a.topRelais.slice(0, 10).map((r) => ({ prefiks: r.prefixe, nb: r.nb, nazwa: r.candidats.length === 1 ? r.candidats[0].nom || null : null, cle: r.candidats.length === 1 ? r.candidats[0].cle : null, kandydaci: r.candidats.length, kandydaciNazwy: r.candidats.map((c) => c.nom || c.cle.slice(0, 8)) })),
     },
     ...(statystykiPl ? statystykiPl.biezace() : {}),
+    strefa: strefaInfo(),
   };
   statystykiCache = { t: Date.now(), v };
   return v;
