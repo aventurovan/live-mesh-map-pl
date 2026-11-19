@@ -550,7 +550,7 @@ document.addEventListener('click', (e) => {
   if (!cle) { ouvrirMenu(b, `${esc(b.dataset.mcNom)}`, [['🔎 Chercher ce nom', () => { const c = document.querySelector('#recherche-lieu'); if (c) { c.value = b.dataset.mcNom; c.dispatchEvent(new Event('input')); c.focus(); } }]]); return; }
   const items = [['📇 Fiche du nœud', () => mcOuvrirFiche(cle)]];
   if (etat.admin) items.push(['✉️ Message direct', () => { mc.destMessage = 'direct:' + cle; mcRendreMessages().then(() => { const t = $('#mc-texte'); if (t) t.focus(); }); }]);
-  if (n && n.lat != null) items.push(['📍 Voir sur la carte', () => carte.setView([n.lat, n.lon], Math.max(carte.getZoom(), 13))]);
+  if (n && n.lat != null) items.push(['📍 Pokaż na mapie', () => carte.setView([n.lat, n.lon], Math.max(carte.getZoom(), 13))]);
   ouvrirMenu(b, `${esc(mcNom(cle))} <small>${esc(cle.slice(0, 8))}</small>`, items);
 });
 

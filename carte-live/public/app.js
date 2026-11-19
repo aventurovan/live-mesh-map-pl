@@ -1684,9 +1684,9 @@ function barreCanauxHtml(reseau, filtre) {
   const avecMc = !!etat.config.meshcore && etat.config.reseaux !== 'meshtastic' && etat.vueReseau !== 'meshtastic';
   const mt = avecMt ? canauxMtConnus() : [], mcl = avecMc && typeof canauxMcConnus === 'function' ? canauxMcConnus() : [];
   mt.forEach((c, i) => el.push({ k: 'c:' + c.toLowerCase(), r: 'mt', v: 'c:' + c, nom: c, ic: '📢', o: i, coul: couleurCanal(c) }));
-  if (avecMt) el.push({ k: 'direct', r: 'mt', v: 'direct', nom: 'Directs', ic: '✉️', o: 50 });
+  if (avecMt) el.push({ k: 'direct', r: 'mt', v: 'direct', nom: 'Prywatne', ic: '✉️', o: 50 });
   mcl.forEach((c, i) => el.push({ k: 'mc:' + c.toLowerCase(), r: 'mc', v: 'c:' + c, nom: c, ic: '📢', o: 100 + i, coul: couleurCanal(c) }));
-  if (avecMc) el.push({ k: 'mcdirect', r: 'mc', v: 'direct', nom: 'Directs', ic: '✉️', o: 150 });
+  if (avecMc) el.push({ k: 'mcdirect', r: 'mc', v: 'direct', nom: 'Prywatne', ic: '✉️', o: 150 });
   // Pastilles de l'autre réseau : affichées seulement s'il y a les deux
   for (const x of el) x.seul = !(avecMt && avecMc);
   // Du nouveau d'abord (le plus récent en premier), puis l'ordre habituel
@@ -1763,7 +1763,7 @@ function lireEpingle(texte) {
 function texteMessageHtml(texte, qui, heureMsg) {
   const e = lireEpingle(texte);
   if (!e) return esc(texte);
-  return `${esc(texte)} <button type="button" class="mini epingle-msg" data-epingle="${e.lat},${e.lon}" ${e.trace ? `data-trace="${esc(JSON.stringify(e.trace))}" data-forme="${e.forme}"` : ''} data-qui="${esc(qui || '')}" data-heure="${heureMsg || ''}" title="Afficher la position sur la carte">📍 Voir sur la carte</button>`;
+  return `${esc(texte)} <button type="button" class="mini epingle-msg" data-epingle="${e.lat},${e.lon}" ${e.trace ? `data-trace="${esc(JSON.stringify(e.trace))}" data-forme="${e.forme}"` : ''} data-qui="${esc(qui || '')}" data-heure="${heureMsg || ''}" title="Afficher la position sur la carte">📍 Pokaż na mapie</button>`;
 }
 etat.coucheEpingles = null;
 const epinglesVues = new Map(); // "lat,lon" -> marqueur
@@ -2466,7 +2466,7 @@ function menuAuteur(num, ancre) {
     const f = $('#form-envoi');
     if (f && !f.hidden) { if (filtreMessages !== 'direct') choisirFiltreMessages('direct'); f.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); f.texte.focus(); }
   }]);
-  if (n && n.lat != null) items.push(['📍 Voir sur la carte', () => carte.setView([n.lat, n.lon], Math.max(carte.getZoom(), 13))]);
+  if (n && n.lat != null) items.push(['📍 Pokaż na mapie', () => carte.setView([n.lat, n.lon], Math.max(carte.getZoom(), 13))]);
   ouvrirMenu(ancre, `${esc(nomNoeud(num))} <small>${idHex(num)}</small>`, items);
 }
 document.addEventListener('click', (e) => {
