@@ -4303,7 +4303,9 @@ const fournisseursRelief = {
     return stockage.q.noeuds.all()
       .filter((n) => n.lat != null && (n.vu || n.dernier_vu || 0) >= limite && reseau.estSurveille(n))
       .map((n) => ({ num: n.num, nom: n.nom_long || n.nom_court || n.id, lat: n.lat, lon: n.lon, role: n.role, passerelle: !!n.est_passerelle, ...installations.radio(n.num) }))
-      .concat(federation ? federation.noeudsCalcul() : []); // relais des bulles voisines (près des limites du département)
+      .concat(federation ? federation.noeudsCalcul() : []) // relais des bulles voisines (près des limites du département)
+      // PL: sieć MeshCore – istniejące repeatery (słyszane w 24 h) też są „istniejącą siecią” dla rankingu i budżetu
+      .concat(String(process.env.CARTE_RESEAUX || '').toLowerCase() === 'meshcore' ? repeteursMc() : []);
   },
   // PL: zmierzone łącza RF między repeaterami MeshCore (oba z pozycją), do kalibracji łączy RPT ↔ RPT
   liensRpt: () => {
