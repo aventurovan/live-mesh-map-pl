@@ -779,15 +779,13 @@ async function miejscowosciStrefy(RR) {
   })().finally(() => { ludnoscWToku = null; });
   return ludnoscWToku;
 }
-app.get('/api/ludnosc-zasieg', async (req, res) => {
-  const RR = R(req);
-  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
-  let miejsca;
-  try { miejsca = await miejscowosciStrefy(RR); } catch (e) { return res.status(503).json({ erreur: e.message }); }
-  const o = optsRelief(req.query); o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR';
-  let r;
-  try { r = couvertureReseauCachee(RR, o, 'meshcore'); } catch (e) { return res.status(503).json({ erreur: e.message }); }
-  if (r.vide) return res.json({ vide: true });
+// Ludność w zasięgu: wspólne obliczenie dla /api/ludnosc-zasieg i publicznego eksportu dla meshcoresouth.pl
+async function obliczLudnosc(RR, o) {
+  if (!(await reliefPret(RR))) { const e = new Error(messageChargement(RR)); e.kod = 503; throw e; }
+  const miejsca = await miejscowosciStrefy(RR);
+  o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR';
+  const r = couvertureReseauCachee(RR, o, 'meshcore');
+  if (r.vide) return { vide: true };
   const suma = (l) => l.reduce((t, x) => t + x.population, 0);
   const wStrefie = [], dobry = [], graniczny = [], poza = [];
   for (const m of miejsca) {
@@ -800,14 +798,35 @@ app.get('/api/ludnosc-zasieg', async (req, res) => {
   for (const m of wStrefie) { const t = typy[m.typ] || (typy[m.typ] = { miejsc: 0, ludnosc: 0, wZasiegu: 0 }); t.miejsc++; t.ludnosc += m.population; }
   for (const m of [...dobry, ...graniczny]) typy[m.typ].wZasiegu += m.population;
   const top = (l, n) => l.slice().sort((a, b) => b.population - a.population).slice(0, n).map((m) => [m.nom, m.population]);
-  res.set('Cache-Control', 'no-store').json({
+  return {
     repeatery: r.noeuds.length, pctPowierzchni: r.pctZone,
     diag: { pobrane: miejsca.length, bezSiatki: miejsca.filter((m) => !RR.marginesW(r, m.lat, m.lon)).length, marges: !!r.marges, emprise: RR.emprise() },
     miejscowosci: wStrefie.length, ludnoscStrefy: suma(wStrefie),
     wZasiegu: suma(dobry) + suma(graniczny), dobryZasieg: suma(dobry), granicznyZasieg: suma(graniczny), pozaZasiegiem: suma(poza),
     pct: wStrefie.length ? +(((suma(dobry) + suma(graniczny)) / suma(wStrefie)) * 100).toFixed(1) : 0,
     typy, najwiekszeWZasiegu: top([...dobry, ...graniczny], 15), najwiekszePoza: top(poza, 15),
-  });
+  };
+}
+app.get('/api/ludnosc-zasieg', async (req, res) => {
+  try { res.set('Cache-Control', 'no-store').json(await obliczLudnosc(R(req), optsRelief(req.query))); }
+  catch (e) { res.status(503).json({ erreur: e.message }); }
+});
+// Publiczny eksport dla strony statystyk (CORS *, bez diagnostyki): liczony najwyżej raz na 30 min
+let ludnoscEksport = { t: 0, v: null, wToku: null };
+app.get('/api/export/ludnosc.json', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.set('Cache-Control', 'no-store');
+  if (ludnoscEksport.v && Date.now() - ludnoscEksport.t < 30 * 60000) return res.json(ludnoscEksport.v);
+  try {
+    if (!ludnoscEksport.wToku) ludnoscEksport.wToku = obliczLudnosc(relief, optsRelief({})).finally(() => { ludnoscEksport.wToku = null; });
+    const { diag, ...v } = await ludnoscEksport.wToku;
+    v.heure = new Date().toISOString();
+    ludnoscEksport = { t: Date.now(), v, wToku: null };
+    res.json(v);
+  } catch (e) {
+    if (ludnoscEksport.v) return res.json({ ...ludnoscEksport.v, nieaktualne: true });
+    res.status(503).json({ erreur: e.message });
+  }
 });
 // Couverture actuelle du réseau (relais et passerelles détectés) : ?reseau=meshcore pour les répéteurs MeshCore
 function couvertureReseauCachee(RR, o, reseauCle) {
