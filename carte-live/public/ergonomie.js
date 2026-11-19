@@ -124,7 +124,7 @@ function majGroupes() {
     const g = b.dataset.groupe;
     b.classList.toggle('actif', g === ergo.groupe);
     b.setAttribute('aria-selected', g === ergo.groupe ? 'true' : 'false');
-    b.hidden = (g === 'gerer' && !!window.BEZ_COMPANIONA) || g !== 'reglages' && !GROUPES[g].some((o) => ongletVisible(o) && (o !== 'meshcore' || g === 'reseau' || (g === 'messages' && etat.membre) || (g === 'gerer' && etat.gestion)));
+    b.hidden = (g === 'gerer' && !!window.BEZ_COMPANIONA) || g !== 'reglages' && !GROUPES[g].some((o) => ongletVisible(o) && (o !== 'meshcore' || g === 'reseau' || g === 'messages' || (g === 'gerer' && etat.gestion)));
     // Nouveaux messages : la pastille de l'onglet Messages remonte sur la rubrique
     if (g === 'messages') { const p = (bOnglet('messages') || document).querySelector('.pastille, .badge, span'); let c = b.querySelector('.pastille-groupe'); const n = p ? p.textContent.trim() : ''; if (n && n !== '0') { if (!c) { c = document.createElement('span'); c.className = 'pastille-groupe'; b.appendChild(c); } c.textContent = n; } else if (c) c.remove(); }
   });
@@ -201,7 +201,7 @@ const ikonaSvg = (k, r = 22) => `<svg class="ik" viewBox="0 0 24 24" width="${r}
 function tuilesAccueil() {
   const t = [
     { ic: 'siec', nom: 'Voir le réseau', aide: 'Qui est en ligne, alertes, relais', go: () => { const d = $('#pli-tableau'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } } },
-    { ic: 'wiadomosci', nom: 'Lire et écrire', aide: 'Messages des canaux', go: () => (etat.membre ? allerGroupe('messages') : $('#btn-admin').click()) },
+    { ic: 'wiadomosci', nom: 'Lire et écrire', aide: 'Messages des canaux', go: () => allerGroupe('messages') },
     { ic: 'zglos', nom: 'Signaler', aide: 'Route inondée, arbre, accident…', go: () => (etat.membre ? choisirPointPuis('Touchez la carte à l’endroit à signaler.', (ll) => formSignalement(ll.lat, ll.lng)) : $('#btn-admin').click()) },
     { ic: 'zasieg', nom: 'Étudier la couverture', aide: 'Où ça passe, où poser un relais', go: () => allerGroupe('couverture') },
   ];

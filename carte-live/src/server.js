@@ -2813,8 +2813,9 @@ app.get('/api/mc/qr', async (req, res) => {
   res.set('Cache-Control', 'no-store').json({ url, svg, titre });
 });
 app.get('/api/mc/messages', (req, res) => {
-  if (!estMembre(req)) return res.status(401).json({ erreur: 'Connexion requise' });
   const l = reseauMc.messages(Math.min(Number(req.query.limite) || 300, 2000));
+  // PL: bez logowania tylko otwarty kanał Public (nigdy wiadomości bezpośrednie ani inne kanały)
+  if (!estMembre(req)) return res.set('Cache-Control', 'no-store').json(l.filter((m) => m.genre === 'canal' && /^#?public$/i.test(String(m.canal || '').trim())));
   // Démonstration : canal Public et canaux « # » (ouverts à tous) seulement, jamais les messages directs
   res.json(req.demoLecture ? l.filter((m) => m.genre === 'canal' && (/^public$/i.test(m.canal || '') || /^#/.test(m.canal || ''))) : l);
 });

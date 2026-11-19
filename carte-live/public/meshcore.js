@@ -275,8 +275,8 @@ function mcHtmlLegende() {
     ${Object.entries(MC_ROLES).map(([k, r]) => `<div class="leg-ligne"><span class="pastille-leg mc ${k}" style="--mcc:${r.hex}"></span><span class="leg-nom">${r.nom} <small>${nb(k)}</small></span>${b(mc.roles[k], `data-mc-role="${k}"`, mc.roles[k] ? 'Affiché' : 'Masqué')}</div>`).join('')}
     <div class="leg-ligne"><span class="leg-nom">Liens vus depuis</span><select id="mc-fenetre" class="mini-select" title="Durée pendant laquelle un lien MeshCore reste affiché après sa dernière observation">${[[0.25, '15 min'], [0.5, '30 min'], [1, '1 h'], [3, '3 h'], [6, '6 h'], [24, '24 h']].map(([v, t]) => `<option value="${v}" ${mcFenetreHeures() === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
     <div class="leg-ligne"><span class="leg-nom">Liens</span>${b(mc.couches.rf, 'data-mc-couche="rf"', 'Mesurés')}${b(mc.couches.chemin, 'data-mc-couche="chemin"', 'Chemins')}${b(mc.couches.trace, 'data-mc-couche="trace"', 'Traces')}${b(mc.couches.voisinage, 'data-mc-couche="voisinage"', 'Voisins')}</div>
-    <div class="rang">◆ répéteur · ■ room server · ◯ companion · ▲ capteur · anneau = observateur</div>
-    <div class="rang">— mesuré (SNR) · - - chemin d’un paquet · ··· trace · -·- sąsiad (z pakietów, min. ${SASIEDZI_MIN} obserwacji)</div>`;
+    <div class="rang">◆ repeater · ■ room server · ◯ companion · ▲ czujnik · pierścień = obserwator</div>
+    <div class="rang">— zmierzone (SNR) · - - ścieżka pakietu · ··· trace · -·- sąsiad (z pakietów, min. ${SASIEDZI_MIN} obserwacji)</div>`;
 }
 function mcBrancherLegende(z) {
   z.querySelectorAll('[data-mc-role]').forEach((b) => (b.onclick = () => {
@@ -435,7 +435,6 @@ function canauxMcConnus() {
 }
 async function mcRendreMessages() {
   const z = $('#mc-contenu');
-  if (!etat.membre) { z.innerHTML = '<div class="vide">Connectez-vous pour lire les messages MeshCore.</div>'; return; }
   let l = [];
   try { l = await api('/api/mc/messages?limite=300'); } catch (e) { z.innerHTML = `<div class="vide">${esc(e.message)}</div>`; return; }
   if (mc.vue !== 'messages') return;
@@ -479,7 +478,7 @@ async function mcRendreMessages() {
       <div class="envoi-ligne"><textarea id="mc-texte" rows="2" maxlength="140" placeholder="${dest ? (enDirect ? 'Message direct' : 'Message sur ' + esc(kf.nom)) + ' (envoyé par ' + esc(c.nom || 'le companion') + ')…' : 'Choisissez un canal pour écrire'}" required></textarea><button type="submit" class="principal" ${dest ? '' : 'disabled'}>Envoyer</button></div>
       <div class="envoi-ligne"><button type="button" class="mini" id="mc-btn-position" title="Ajoute au message la position du centre de la carte ; clic droit sur la carte : n’importe quel point">📍 Joindre le centre de la carte</button></div>
       <div class="note" id="mc-retour-envoi">${esc(lectureSeule)}</div>
-    </form>` : `<p class="note">${etat.admin ? 'Reliez un companion (onglet Companion) pour envoyer des messages.' : 'L’envoi est réservé aux administrateurs.'}</p>`}
+    </form>` : `<p class="note">${etat.admin ? 'Reliez un companion (onglet Companion) pour envoyer des messages.' : !etat.membre ? 'Bez logowania widać tylko kanał Public. Pozostałe kanały i wysyłanie po zalogowaniu.' : 'L’envoi est réservé aux administrateurs.'}</p>`}
     <div id="mc-messages" class="flux">${vus.length ? vus.map(mcLigneMessage).join('') : `<div class="vide">${mcFiltreMsg ? 'Aucun message dans ce choix.' : 'Aucun message pour l’instant.'}</div>`}</div>`;
   mc.canauxVus = filtreCanaux;
   if (typeof brancherBarreCanaux === 'function') brancherBarreCanaux(z.querySelector('.filtre-messages'));
@@ -1921,6 +1920,7 @@ function mcRecevoir(m) {
     mcMajAlertes();
     if (etat.admin && mc.vue === 'companion') mcChargerEtat();
   } else if (m.genre === 'mc-noeuds') mcPlanifier();
+  else if (m.genre === 'mc-message' && !etat.membre && !m.direct && !m.confirmation) mcMessagesARafraichir();
   else if (m.genre === 'mc-message' && etat.membre) { if (m.sens === 'recu' && !mcEstDeMoi(m)) mcNoterMessageRecu(m); mcMessagesARafraichir(); }
 }
 // Messages MeshCore non lus (même réglage de sons que Meshtastic : bip par nom de canal, alerte des messages directs)
