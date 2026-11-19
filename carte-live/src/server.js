@@ -4475,6 +4475,19 @@ app.get('/api/export/statystyki-historia.json', exporter(() => (statystykiPl ? s
 let statystykiCache = { t: 0, v: null };
 // Strefa mapy dla strony statystyk: nazwa, opis z konturu (np. lista województw), prostokąt i repeatery z pozycją
 // (zaokrąglone do 0,01°, ok. 1 km – mapa publiczna i tak je pokazuje)
+// Najwyżej położone repeatery (wysokość terenu w miejscu repeatera z modelu terenu, bez masztu), słyszane w ostatnich 7 dniach
+function najwyzszeRpt() {
+  if (!relief || !relief.altitude) return null;
+  const lim = Date.now() - 7 * 86400000;
+  try {
+    return reseauMc.q.noeuds.all()
+      .filter((n) => n.lat != null && n.role === 'repeteur' && (n.dernier_vu || 0) >= lim)
+      .map((n) => ({ nazwa: n.nom || n.cle.slice(0, 8), cle: n.cle.slice(0, 16), m: relief.altitude(n.lat, n.lon) }))
+      .filter((x) => Number.isFinite(x.m))
+      .sort((a, b) => b.m - a.m).slice(0, 10)
+      .map((x) => ({ ...x, m: Math.round(x.m) }));
+  } catch { return null; }
+}
 let strefaOpis;
 function strefaInfo() {
   if (strefaOpis === undefined) {
@@ -4503,6 +4516,7 @@ app.get('/api/export/statystyki.json', exporter(() => {
     },
     ...(statystykiPl ? statystykiPl.biezace() : {}),
     strefa: strefaInfo(),
+    najwyzsze: najwyzszeRpt(),
   };
   statystykiCache = { t: Date.now(), v };
   return v;

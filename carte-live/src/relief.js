@@ -1465,6 +1465,8 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
 
   return {
     code: codeDep,
+    // PL: wysokość terenu w punkcie (m n.p.m., model terenu), NaN poza obszarem / gdy teren się wczytuje
+    altitude: (lat, lon) => (etat.mnt === 'pret' ? alt(lat, lon) : NaN),
     ombrageTuile,
     terrainTuile,
     arreter: () => { arrete = true; for (const m of minuteries) { clearTimeout(m); clearInterval(m); } try { acces.arreter(); } catch { /* déjà */ } },
