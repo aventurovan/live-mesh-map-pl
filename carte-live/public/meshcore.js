@@ -1989,8 +1989,7 @@ function demarrerMeshcore() {
   const ong = document.querySelector('.onglets button[data-onglet="meshcore"]');
   ong.addEventListener('click', () => mcRendrePanneau());
   const sv = document.querySelector('.sous-onglets-mc button[data-mc-vue="messages"]');
-  if (sv) sv.hidden = !etat.membre;
-  if (!etat.membre && mc.vue === 'messages') mc.vue = 'noeuds';
+  if (sv) sv.hidden = false; // PL: kanał Public widoczny także bez logowania
   const sg = document.querySelector('.sous-onglets-mc button[data-mc-vue="gestion"]');
   if (sg) sg.hidden = BEZ_COMPANIONA || !etat.gestion;
   if ((BEZ_COMPANIONA || !etat.gestion) && mc.vue === 'gestion') mc.vue = 'noeuds';
