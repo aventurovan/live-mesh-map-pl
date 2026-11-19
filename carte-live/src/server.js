@@ -4499,6 +4499,20 @@ function strefaInfo() {
   try { rpt = repeteursMc().map((n) => [+n.lat.toFixed(2), +n.lon.toFixed(2)]); } catch { /* baza niedostępna */ }
   return { nazwa: config.zoneNom, opis: strefaOpis, bbox: config.zone, repeatery: rpt };
 }
+// Alerty sieci MeshCore dla strony meshcoresouth.pl/alerty.php (CORS *): krytyczne i pozostałe problemy, po polsku.
+// Bez stanu companiona mapy i usług serwera (to sprawy tego serwera, nie sieci).
+const { tlumacz: tlumaczPl } = require('./tlumacz-pl');
+const TYPY_ALERTOW = { muet: 'Niesłyszany repeater', batterie: 'Bateria', emission: 'Czas nadawania', bruit: 'Szum / zakłócenia', 'sans-reponse': 'Brak odpowiedzi', avis: 'Firmware / ustawienia', version: 'Aktualizacje', capteur: 'Czujnik', releve: 'Czujnik bez odczytu' };
+app.get('/api/export/alerty.json', exporter(() => {
+  const l = alertesPubliques(alertesMc || []).filter((a) => !['companion', 'service'].includes(a.type));
+  const nazwa = (a) => a.nom || (a.noeud ? ((reseauMc.q.noeud.get(a.noeud) || {}).nom || a.noeud.slice(0, 8)) : null);
+  const alerty = l.map((a) => ({
+    poziom: a.niveau === 'critique' ? 'krytyczny' : 'uwaga', typ: a.type || 'inne', typNazwa: TYPY_ALERTOW[a.type] || null,
+    nazwa: nazwa(a), cle: a.noeud ? String(a.noeud).slice(0, 16) : null,
+    wiadomosc: tlumaczPl(a.message || ''), od: a.depuis ? new Date(a.depuis).toISOString() : null,
+  })).sort((a, b) => (a.poziom === 'krytyczny' ? 0 : 1) - (b.poziom === 'krytyczny' ? 0 : 1) || String(a.od).localeCompare(String(b.od)));
+  return { heure: new Date().toISOString(), krytyczne: alerty.filter((a) => a.poziom === 'krytyczny').length, uwaga: alerty.filter((a) => a.poziom !== 'krytyczny').length, alerty };
+}, 'application/json'));
 app.get('/api/export/statystyki.json', exporter(() => {
   if (!config.meshcore.actif) return { meshcore: false };
   if (Date.now() - statystykiCache.t < 60000 && statystykiCache.v) return statystykiCache.v;
