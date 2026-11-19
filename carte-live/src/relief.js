@@ -1013,7 +1013,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     const P = parametres({});
     const min = niveauMin(filtre);
     const W = Math.ceil(nbZone / 32);
-    const reseau = fournisseurs.noeudsReseau().filter((n) => celle(n.lat, n.lon) >= 0 && !n.voisin).slice(0, 250).map((n) => ({ ...n, h: n.h ?? 10 }));
+    const reseau = fournisseurs.noeudsReseau().filter((n) => celle(n.lat, n.lon) >= 0 && !n.voisin).map((n) => ({ ...n, h: n.h ?? 10 }));
     const bits = [];
     for (const n of reseau) { bits.push(bitsSite(n, P)); await pause(); }
     // Masques : couvert par au moins un relais (tous), par exactement un (seul)
@@ -1085,7 +1085,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     if (etat.mnt !== 'pret') throw new Error('Le modèle de terrain est en cours de chargement');
     const P = parametres({});
     const W = Math.ceil(nbZone / 32);
-    const reseau = fournisseurs.noeudsReseau().filter((n) => celle(n.lat, n.lon) >= 0).slice(0, 250).map((n) => ({ ...n, h: n.h ?? 10 }));
+    const reseau = fournisseurs.noeudsReseau().filter((n) => celle(n.lat, n.lon) >= 0).map((n) => ({ ...n, h: n.h ?? 10 }));
     const tous = new Uint32Array(W);
     for (const n of reseau) { const b = bitsSite(n, P); for (let w = 0; w < W; w++) tous[w] |= b[w]; await pause(); }
     const pop = (x) => { let n = 0; while (x) { x &= x - 1; n++; } return n; };
@@ -1115,7 +1115,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
   // Couverture actuelle du réseau : relais et passerelles détectés (entendus depuis 24 h) et positionnés dans la zone
   function couvertureReseau(opts = {}) {
     if (etat.mnt !== 'pret') throw new Error('Le modèle de terrain est en cours de chargement');
-    const noeuds = (opts.noeuds || fournisseurs.noeudsReseau()).filter((n) => celle(n.lat, n.lon) >= 0).slice(0, 250); // PL: wcześniej tylko 60 ostatnio słyszanych
+    const noeuds = (opts.noeuds || fournisseurs.noeudsReseau()).filter((n) => celle(n.lat, n.lon) >= 0); // PL: wszystkie aktywne (bez limitu; wcześniej 60, potem 250)
     if (!noeuds.length) return { noeuds: [], vide: true };
     // Hauteur, gain, câble et puissance : fiche d'installation du relais, sinon la hauteur supposée
     const r = couverturePngMulti(noeuds.map((n) => ({ lat: n.lat, lon: n.lon, h: n.h ?? opts.hn ?? 10, gain: n.gain, pertes: n.pertes, ptx: n.ptx })), opts);
@@ -1130,15 +1130,19 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     const P = parametres(opts);
     const N = nLat * nLon;
     const marges = new Float32Array(N).fill(-Infinity);
-    const nbCouvrants = new Uint8Array(N), seulPar = new Int16Array(N).fill(-1); // Int16: ponad 127 sitów
+    // PL: bez limitu liczby repeaterów: Uint16/Int32 zamiast Uint8/Int16, jedna tablica marginesu na site
+    // (czyszczona po każdym) i przegląd tylko komórek, których dotknął zasięg danego site'u, zamiast całej siatki
+    const nbCouvrants = new Uint16Array(N), seulPar = new Int32Array(N).fill(-1);
+    const m = new Float32Array(N).fill(-Infinity);
     const parSite = sites.map((site, idx) => {
-      const m = new Float32Array(N).fill(-Infinity);
       const Ps = Pinstallation(site.h != null ? parametres({ ...opts, hs: site.h }) : P, { ...site, h: site.h });
-      balayer(site, Ps, 1440, 150, (k, v) => { if (k >= 0 && v > m[k]) m[k] = v; });
+      const dotkniete = [];
+      balayer(site, Ps, 1440, 150, (k, v) => { if (k >= 0 && v > m[k]) { if (m[k] === -Infinity) dotkniete.push(k); m[k] = v; } });
       let couvert = 0, zone = 0;
-      for (let k = 0; k < N; k++) {
+      for (const k of dotkniete) {
         if (m[k] > marges[k]) marges[k] = m[k];
-        if (m[k] >= 0) { couvert++; if (masque[k]) zone++; nbCouvrants[k]++; seulPar[k] = nbCouvrants[k] === 1 ? idx : -1; }
+        if (m[k] >= 0) { couvert++; if (masque[k]) zone++; if (nbCouvrants[k] < 65535) nbCouvrants[k]++; seulPar[k] = nbCouvrants[k] === 1 ? idx : -1; }
+        m[k] = -Infinity;
       }
       return { km2: Math.round(couvert * aireCelleKm2), pctZone: +((zone / nbZone) * 100).toFixed(1) };
     });
