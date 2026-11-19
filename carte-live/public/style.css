@@ -2023,3 +2023,6 @@ dialog.okno-gps { max-width: 420px; width: calc(100% - 32px); border-radius: 12p
 dialog.okno-gps h3 { margin: 0 0 10px; }
 dialog.okno-gps input { width: 100%; box-sizing: border-box; font-size: 16px; padding: 8px 10px; }
 dialog.okno-gps .blad-gps { color: #d9534f; margin: 6px 0 0; }
+
+/* PL: przełącznik companion / repeatery w karcie punktu wysokiego */
+.przelacz-zasieg { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }

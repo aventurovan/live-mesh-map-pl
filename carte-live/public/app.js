@@ -129,7 +129,7 @@ function blocCoords(lat, lon, opts = {}) {
       <a href="https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lon.toFixed(6)}" target="_blank" rel="noopener">Google Maps</a>
       <a href="geo:${lat.toFixed(6)},${lon.toFixed(6)}">GPS du téléphone</a></div>
     ${opts.approx ? '<div class="note">Position publique arrondie (≈ 100 m) : connectez-vous pour la position exacte.</div>' : ''}
-    ${opts.couv ? `<div class="actions-prop"><button class="mini principal" data-couv-pt="${lat},${lon}" data-couv-nom="${esc(opts.couv.nom || '')}" data-couv-h="${opts.couv.h || H_RPT}" title="Couverture radio d’un relais posé ici (antenne à ${opts.couv.h || H_RPT} m)">📡 Couverture de ce site</button></div>` : ''}
+    ${opts.couv ? `<div class="actions-prop"><button class="mini principal" data-couv-pt="${lat},${lon}" data-couv-nom="${esc(opts.couv.nom || '')}" data-couv-h="${opts.couv.h || H_RPT}" data-etykieta="📱 Zasięg dla companionów" title="Gdzie companion przy ziemi (2 m) usłyszy repeater postawiony tutaj (antena ${opts.couv.h || H_RPT} m)">📱 Zasięg dla companionów</button><button class="mini" data-couv-pt="${lat},${lon}" data-couv-nom="${esc(opts.couv.nom || '')}" data-couv-h="${opts.couv.h || H_RPT}" data-couv-tryb="rpt" data-etykieta="📡 Zasięg do repeaterów" title="Gdzie repeater postawiony tutaj usłyszy inne repeatery na maszcie 10 m (do 150 km) + linie do repeaterów w zasięgu">📡 Zasięg do repeaterów</button></div>` : ''}
   </div>`;
 }
 // « Couverture de ce site » dans une liste de propositions : la vue précédente (plan, classement) reste disponible
@@ -138,14 +138,16 @@ document.addEventListener('click', async (e) => {
   if (b) {
     const [lat, lon] = b.dataset.couvPt.split(',').map(Number);
     const precedente = etat.coucheCouverture;
+    const rpt = b.dataset.couvTryb === 'rpt';
     b.disabled = true; b.textContent = 'Calcul…';
-    const r = await voirCouvertureSite({ lat, lon }, b.dataset.couvNom || 'Site', Number(b.dataset.couvH) || H_RPT, { cadrer: true });
-    b.disabled = false; b.textContent = '📡 Couverture de ce site';
+    const r = await voirCouvertureSite({ lat, lon }, (b.dataset.couvNom || 'Site') + (rpt ? ' → repeatery' : ''), Number(b.dataset.couvH) || H_RPT, rpt ? { cadrer: true, preset: 'MESHCORE_FR', tryb: 'rpt' } : { cadrer: true });
+    b.disabled = false; b.textContent = b.dataset.etykieta || '📡 Couverture de ce site';
+    b.parentNode.querySelectorAll('[data-couv-pt]').forEach((x) => x.classList.toggle('principal', x === b));
     document.querySelectorAll('.couv-pt-resultat').forEach((x) => x.remove());
     if (!r) return;
     const d = document.createElement('div');
     d.className = 'note couv-pt-resultat';
-    d.innerHTML = `<b>${r.surfaceKm2} km²</b> couverts par ce site seul, ${fmt(r.pctZone, 1, ' %')} du département (antenne ${Number(b.dataset.couvH) || H_RPT} m). ${precedente ? '<button class="mini" data-couv-retour>↩ Revoir la vue précédente</button>' : ''}`;
+    d.innerHTML = `${rpt ? 'Do repeaterów: ' : ''}<b>${r.surfaceKm2} km²</b> couverts par ce site seul, ${fmt(r.pctZone, 1, ' %')} du département (antenne ${Number(b.dataset.couvH) || H_RPT} m).${!rpt && r.ludnosc ? ` <b>${r.ludnosc.mieszkancy.toLocaleString('pl-PL')}</b> mieszkańców w zasięgu.` : ''} ${precedente ? '<button class="mini" data-couv-retour>↩ Revoir la vue précédente</button>' : ''}`;
     b.parentNode.after(d);
     const rb = d.querySelector('[data-couv-retour]');
     if (rb) rb.onclick = () => { if (etat.coucheCouverture) etat.coucheCouverture.remove(); precedente.addTo(carte); etat.coucheCouverture = precedente; d.remove(); };
@@ -3400,25 +3402,32 @@ async function voirCouvertureSite(p, titre, hauteur, opts = {}) {
 }
 
 // Fiche d'un point haut : coordonnées, couverture, actions
-async function ficheSommet(s) {
+async function ficheSommet(s, tryb) {
+  tryb = tryb || etat.trybSommet || 'comp';
+  etat.trybSommet = tryb;
+  const rpt = tryb === 'rpt';
   $('#fiche').hidden = false;
   etat.selection = null;
   $('#fiche-contenu').innerHTML = '<div class="vide">Calcul de la couverture…</div>';
-  const r = await voirCouvertureSite(s);
+  const r = rpt ? await voirCouvertureSite(s, nomSommet(s) + ' → repeatery', 10, { preset: 'MESHCORE_FR', tryb: 'rpt' }) : await voirCouvertureSite(s);
   $('#fiche-contenu').innerHTML = `
     <h2>${esc(nomSommet(s))}</h2>
     <div class="ident">${s.commune ? esc(s.commune) + ' · ' : ''}<span>${zrodloSommet(s)}</span>${s.rangPlan ? ` · <b style="color:#f4c542">site recommandé n° ${s.rangPlan}</b>` : ''}</div>
     ${blocCoords(s.lat, s.lon, { alt: s.alt })}
+    <div class="przelacz-zasieg" role="group" aria-label="Rodzaj zasięgu"><button type="button" class="pilule ${rpt ? '' : 'on'}" data-tryb-sommet="comp" title="Repeater postawiony tutaj, companion przy ziemi (2 m)">📱 Dla companionów</button><button type="button" class="pilule ${rpt ? 'on' : ''}" data-tryb-sommet="rpt" title="Repeater postawiony tutaj, inne repeatery na maszcie 10 m (do 150 km)">📡 Do repeaterów</button></div>
     <div class="acces-ligne">Accès : ${texteAcces(s.acces)}</div>
     <div class="grille">
       <div class="mesure"><span>Domine les environs de</span><b>${s.dominance != null ? s.dominance + ' m' : '–'}</b></div>
       <div class="mesure"><span>Surface couverte</span><b>${r ? r.surfaceKm2 + ' km²' : '–'}</b></div>
       <div class="mesure"><span>Part du département</span><b>${r ? fmt(r.pctZone, 1, ' %') : '–'}</b></div>
+      ${!rpt && r && r.ludnosc ? `<div class="mesure" title="${esc(r.ludnosc.najwieksze.map(([n, p]) => `${n} (${p.toLocaleString('pl-PL')})`).join(', '))}"><span>Mieszkańcy w zasięgu</span><b>${r.ludnosc.mieszkancy.toLocaleString('pl-PL')}</b></div>` : ''}
       ${s.rang ? `<div class="mesure"><span>Classement individuel</span><b>${s.rang}ᵉ</b></div>` : ''}
     </div>
     ${avertissementSites()}
     <div class="actions-prop"><button id="sommet-couvrir">Couvrir ce point (4 points hauts)</button><button id="sommet-ajout-couv" class="principal">${etat.sitesCouv && etat.sitesCouv.length ? `＋ Ajouter à la couverture totale (${etat.sitesCouv.length + 1} sites)` : '＋ Ajouter un site (couverture totale)'}</button></div>
-    <p class="note">Couverture calculée avec une antenne à ${$('#relief-hs') ? $('#relief-hs').value : H_RPT} m (réglable dans l'onglet Couverture).</p>`;
+    ${!rpt && r && r.ludnosc && r.ludnosc.najwieksze.length ? `<p class="note">W zasięgu m.in.: ${r.ludnosc.najwieksze.map(([n, p]) => `${esc(n)} (${p.toLocaleString('pl-PL')})`).join(', ')}.</p>` : ''}
+    <p class="note">${rpt ? 'Zasięg do innych repeaterów: odbiornik na maszcie 10 m z anteną 5 dBi, do 150 km; linie pokazują repeatery w zasięgu.' : `Couverture calculée avec une antenne à ${$('#relief-hs') ? $('#relief-hs').value : H_RPT} m (réglable dans l'onglet Couverture).`}</p>`;
+  $('#fiche-contenu').querySelectorAll('[data-tryb-sommet]').forEach((b) => (b.onclick = () => { if (b.dataset.trybSommet !== tryb) ficheSommet(s, b.dataset.trybSommet); }));
   $('#sommet-couvrir').onclick = () => couvrirPoint(L.latLng(s.lat, s.lon));
   $('#sommet-ajout-couv').onclick = () => {
     const h = Number($('#relief-hs') ? $('#relief-hs').value : H_RPT) || H_RPT;
@@ -4312,17 +4321,19 @@ async function planBudget(o) {
   z.innerHTML = `<h2>Gdzie zamontować RPT: ${r.sites.length}</h2>
     <div class="grille">
       <div class="mesure"><span>Pokrycie strefy</span><b>${fmt(r.departPct, 1, ' %')} → ${fmt(r.finalPct, 1, ' %')}</b></div>
+      ${pop.totale ? `<div class="mesure"><span>Mieszkańcy w zasięgu</span><b>${pct(pop.depart)} → ${pct(pop.finale)}</b></div><div class="mesure"><span>Nowi mieszkańcy</span><b>+${(pop.finale - pop.depart).toLocaleString('pl-PL')}</b></div>` : ''}
     </div>
     ${r.sites.length < Number(r.n) ? `<div class="alerte attention">Seulement ${r.sites.length} site(s) utile(s) avec ces critères : les suivants n’apporteraient presque rien${r.filtreAcces !== 'tous' ? ' (ou élargissez l’accès exigé)' : ''}.</div>` : ''}
     ${r.sites.map((x) => `<div class="proposition etape-relier nouveau">
       <div class="entete-prop"><span class="lettre">${x.rang}</span><b>${esc(nomSommet(x))}</b></div>
-      <div class="meta-longue">+${x.gainKm2} km² (cumul ${fmt(x.totalPct, 1, ' %')})</div>
+      <div class="meta-longue">+${x.gainKm2} km² (cumul ${fmt(x.totalPct, 1, ' %')})${x.habitantsGagnes ? ` · <b>+${x.habitantsGagnes.toLocaleString('pl-PL')}</b> mieszkańców` : ''}</div>
+      ${x.communesGagnees && x.communesGagnees.length ? `<div class="meta-longue">Nowe miejscowości w zasięgu: ${x.communesGagnees.map(esc).join(', ')}${x.nbCommunesGagnees > x.communesGagnees.length ? ` i ${x.nbCommunesGagnees - x.communesGagnees.length} innych` : ''}</div>` : ''}
       <div class="meta-longue">${x.alt} m${x.commune ? ' · ' + esc(x.commune) : ''}</div>
       <div class="meta-longue">Site : ${texteRealisme(x.realisme)}</div>
       ${blocCoords(x.lat, x.lon, { alt: x.alt, couv: { nom: `${x.rang} · ${nomSommet(x)}`, h: H_RPT } })}
     </div>`).join('') || '<div class="vide">Aucun site ne répond à ces critères.</div>'}
     <div class="actions-prop"><button id="budget-gpx">Télécharger les sites (GPX)</button>${r.sites.length >= 2 ? '<button id="budget-couv">Couverture détaillée</button>' : ''}</div>
-    <p class="note">Ordre de pose conseillé : chaque relais est celui qui apporte le plus de surface nouvelle${r.realiste ? ' (sites en zone protégée écartés, préférence aux châteaux d’eau, pylônes et au secteur proche)' : ''}. Habitants : population des communes dont le bourg passe en zone couverte (${pop.communes} communes, ${pop.totale.toLocaleString('fr-FR')} habitants). Coût : relais ${r.couts.secteur} € (secteur) ou ${r.couts.solaire} € (solaire), + ${r.couts.mat} € de mât s’il n’y a pas de support existant ; hors main-d’œuvre et convention avec le propriétaire.</p>`;
+    <p class="note">Kolejność montażu: każdy kolejny repeater to ten, który daje najwięcej nowego zasięgu ponad istniejącą sieć${r.realiste ? ' (z pominięciem obszarów chronionych, z preferencją dla istniejących masztów i dostępnego prądu)' : ''}. Mieszkańcy: miejscowości z OpenStreetMap, których centrum wchodzi w zasięg companiona (${pop.communes.toLocaleString('pl-PL')} miejscowości, ${pop.totale.toLocaleString('pl-PL')} mieszkańców w strefie).</p>`;
   $('#budget-gpx').onclick = () => telechargerGpx('plan-budget.gpx', r.sites.map((x) => ({ lat: x.lat, lon: x.lon, alt: x.alt, nom: `${x.rang} - ${nomSommet(x)}`, desc: `+${x.gainKm2} km², +${x.habitantsGagnes} hab., ${x.alimentation}, ~${x.cout} €` })));
   const bc = $('#budget-couv'); if (bc) bc.onclick = () => couvertureMulti(r.sites.map((x) => ({ lat: x.lat, lon: x.lon, h: (r.parametres && r.parametres.hs) || H_RPT, nom: nomSommet(x) })));
 }

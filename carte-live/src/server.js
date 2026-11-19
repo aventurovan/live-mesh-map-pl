@@ -736,12 +736,15 @@ app.get('/api/relief/couverture', async (req, res) => {
     // Visiteurs non connectés (carte publique) : 20 nouveaux calculs par quart d'heure au plus
     if (!estMembre(req) && limiterCalcul(req.ip)) return res.status(429).json({ erreur: 'Trop de calculs de couverture : réessayez dans quelques minutes' });
     r = RR.couverturePng({ lat, lon }, o);
+    // PL: mieszkańcy w zasięgu (companion przy ziemi; w trybie RPT nie ma sensu)
+    if (req.query.tryb !== 'rpt' && String(process.env.CARTE_RESEAUX || '').toLowerCase() === 'meshcore') { try { r.ludnosc = ludnoscWZasiegu(RR, r, miejscowosciGotowe(RR)); } catch { /* bez ludności */ } }
+    delete r.marges;
     r.id = crypto.randomBytes(6).toString('hex');
     cacheCouverture.set(cle, r);
     cacheCouverture.set(r.id, r);
     if (cacheCouverture.size > 60) cacheCouverture.delete(cacheCouverture.keys().next().value);
   }
-  res.json({ image: `/api/relief/couverture/${r.id}.png`, emprise: RR.emprise(), departement: RR.etat().departement, surfaceKm2: r.surfaceKm2, surfaceZoneKm2: r.surfaceZoneKm2, pctZone: r.pctZone, sol: r.sol, env: r.env, rayonKm: r.rayonKm });
+  res.json({ image: `/api/relief/couverture/${r.id}.png`, emprise: RR.emprise(), departement: RR.etat().departement, surfaceKm2: r.surfaceKm2, surfaceZoneKm2: r.surfaceZoneKm2, pctZone: r.pctZone, sol: r.sol, env: r.env, rayonKm: r.rayonKm, ludnosc: r.ludnosc || null });
 });
 // Couverture cumulée : ?pts=lat,lon[,hauteur];lat,lon[,hauteur];… (2 à 10 sites)
 app.get('/api/relief/couverture-multi', async (req, res) => {
@@ -813,6 +816,27 @@ async function obliczLudnosc(RR, o) {
     pct: wStrefie.length ? +(((suma(dobry) + suma(graniczny)) / suma(wStrefie)) * 100).toFixed(1) : 0,
     typy, najwiekszeWZasiegu: top([...dobry, ...graniczny], 15), najwiekszePoza: top(poza, 15),
   };
+}
+// PL: lista miejscowości tylko jeśli już jest na dysku (inaczej pobranie w tle, wynik przy następnym razie)
+function miejscowosciGotowe(RR) {
+  const f = path.join(path.dirname(config.fichierBase), 'ludnosc-strefa.json');
+  try { const c = lireJson(f); if (Array.isArray(c.miejsca) && c.miejsca.length) return c.miejsca; } catch { /* brak */ }
+  miejscowosciStrefy(RR).catch(() => {});
+  return null;
+}
+// PL: mieszkańcy w zasięgu wyniku z siatką marginesów (m ≥ 0), z podziałem na dobry zasięg (≥ 10 dB)
+function ludnoscWZasiegu(RR, r, miejsca) {
+  if (!r || !r.marges || !miejsca) return null;
+  let razem = 0, dobry = 0, n = 0;
+  const lista = [];
+  for (const m of miejsca) {
+    const w = RR.marginesW(r, m.lat, m.lon);
+    if (!w || !w.wStrefie || !(w.m >= 0)) continue;
+    razem += m.population; n++; if (w.m >= 10) dobry += m.population;
+    lista.push(m);
+  }
+  lista.sort((a, b) => b.population - a.population);
+  return { mieszkancy: razem, dobry, miejscowosci: n, najwieksze: lista.slice(0, 6).map((m) => [m.nom, m.population]) };
 }
 app.get('/api/ludnosc-zasieg', async (req, res) => {
   try { res.set('Cache-Control', 'no-store').json(await obliczLudnosc(R(req), optsRelief(req.query))); }
@@ -929,7 +953,9 @@ async function communesDepartement(code) {
 app.get('/api/relief/budget', async (req, res) => {
   const RR = R(req);
   let communes = [];
-  try { communes = await communesDepartement(RR.code); } catch (e) { journal('[Budget] communes :', e.message); }
+  // PL: mieszkańcy z pełnej listy miejscowości strefy (OpenStreetMap), nie z kwadratu 1° wokół kodu
+  if (String(process.env.CARTE_RESEAUX || '').toLowerCase() === 'meshcore') { try { communes = await miejscowosciStrefy(RR); } catch (e) { journal('[Budget] miejscowości:', e.message); } }
+  else try { communes = await communesDepartement(RR.code); } catch (e) { journal('[Budget] communes :', e.message); }
   const filtre = (DROGI_DOJAZDOWE ? ['voiture', '4x4', 'pied'] : []).includes(req.query.acces) ? req.query.acces : null;
   const couts = {};
   for (const k of ['secteur', 'solaire', 'mat']) if (req.query[k] !== undefined && Number.isFinite(Number(req.query[k]))) couts[k] = Math.min(Math.max(Number(req.query[k]), 0), 10000);

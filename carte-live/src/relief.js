@@ -615,7 +615,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       if (m >= 0) { couvert++; if (masque[i * nLon + j]) couvertZone++; }
       if (c) { rgba[o] = c[0]; rgba[o + 1] = c[1]; rgba[o + 2] = c[2]; rgba[o + 3] = c[3]; }
     }
-    return {
+    const wynik = {
       image: png(nLon, nLat, rgba),
       surfaceKm2: Math.round(couvert * aireCelleKm2),
       surfaceZoneKm2: Math.round(couvertZone * aireCelleKm2),
@@ -624,6 +624,9 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       env: P.env,
       rayonKm: P.rayonMax / 1000,
     };
+    // PL: siatka marginesów do policzenia mieszkańców (serwer usuwa ją po użyciu – nie trzymamy 18 MB w pamięci podręcznej)
+    Object.defineProperty(wynik, 'marges', { value: marges, enumerable: false, configurable: true });
+    return wynik;
   }
 
   // ---- Classement des sites ----------------------------------------------------------
