@@ -604,7 +604,7 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       if (m >= 0) { couvert++; if (masque[i * nLon + j]) couvertZone++; }
       if (c) { rgba[o] = c[0]; rgba[o + 1] = c[1]; rgba[o + 2] = c[2]; rgba[o + 3] = c[3]; }
     }
-    return {
+    const wynikMulti = {
       image: png(nLon, nLat, rgba),
       surfaceKm2: Math.round(couvert * aireCelleKm2),
       surfaceZoneKm2: Math.round(couvertZone * aireCelleKm2),
@@ -1119,7 +1119,9 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     if (!noeuds.length) return { noeuds: [], vide: true };
     // Hauteur, gain, câble et puissance : fiche d'installation du relais, sinon la hauteur supposée
     const r = couverturePngMulti(noeuds.map((n) => ({ lat: n.lat, lon: n.lon, h: n.h ?? opts.hn ?? 10, gain: n.gain, pertes: n.pertes, ptx: n.ptx })), opts);
-    return { ...r, noeuds: noeuds.map((n, i) => ({ num: n.num, nom: n.nom, lat: n.lat, lon: n.lon, hauteur: n.h ?? opts.hn ?? 10, fiche: n.h != null || n.gain != null, ...r.sites[i] })), sites: undefined, surfaceDepartementKm2: Math.round(nbZone * aireCelleKm2) };
+    const w = { ...r, noeuds: noeuds.map((n, i) => ({ num: n.num, nom: n.nom, lat: n.lat, lon: n.lon, hauteur: n.h ?? opts.hn ?? 10, fiche: n.h != null || n.gain != null, ...r.sites[i] })), sites: undefined, surfaceDepartementKm2: Math.round(nbZone * aireCelleKm2) };
+    Object.defineProperty(w, 'marges', { value: r.marges, enumerable: false });
+    return w;
   }
 
   // Couverture cumulée de plusieurs sites (2 à 10) : image commune (meilleure marge par cellule),
@@ -1162,6 +1164,9 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
       sites: sites.map((st, i) => ({ ...parSite[i], propreKm2: Math.round(propre[i] * aireCelleKm2), sol: Number.isNaN(alt(st.lat, st.lon)) ? null : Math.round(alt(st.lat, st.lon)) })),
       env: P.env, rayonKm: P.rayonMax / 1000,
     };
+    // PL: siatka marginesów (dB) – niewidoczna w JSON, do liczenia ludności w zasięgu
+    Object.defineProperty(wynikMulti, 'marges', { value: marges, enumerable: false });
+    return wynikMulti;
   }
 
   // Classement filtré par accès (calcul rapide : les couvertures sont déjà en mémoire)
@@ -1496,6 +1501,8 @@ function creerRelief(config, journal, fournisseurs, options = {}) {
     parametry: (opts = {}) => parametres(opts),
     couverturePngMulti,
     couvertureReseau,
+    // PL: margines (dB) w punkcie z wyniku couvertureReseau / couverturePngMulti; null poza siatką; wStrefie = komórka w konturze strefy
+    marginesW: (r, lat, lon) => { const k = celle(lat, lon); if (k < 0 || !r || !r.marges) return null; return { m: r.marges[k], wStrefie: !!masque[k] }; },
     simuler,
     planDepartement,
     planZone,

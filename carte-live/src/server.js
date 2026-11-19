@@ -754,6 +754,60 @@ app.get('/api/relief/couverture-multi', async (req, res) => {
   }
   res.json({ image: `/api/relief/couverture/${r.id}.png`, emprise: RR.emprise(), departement: RR.etat().departement, surfaceKm2: r.surfaceKm2, surfaceZoneKm2: r.surfaceZoneKm2, pctZone: r.pctZone, sites: r.sites, env: r.env, rayonKm: r.rayonKm });
 });
+// PL: ludność w zasięgu repeaterów MeshCore (model terenu, ta sama mapa co warstwa „Zasięg”)
+// Miejscowości z OpenStreetMap (place=city|town|village|hamlet z tagiem population) w prostokącie strefy, zapis w /data
+let ludnoscWToku = null;
+async function miejscowosciStrefy(RR) {
+  const f = path.join(path.dirname(config.fichierBase), 'ludnosc-strefa.json');
+  const e = RR.emprise();
+  const bb = [e.sud, e.ouest, e.nord, e.est].map((x) => +x.toFixed(3));
+  try { const c = lireJson(f); if (JSON.stringify(c.bbox) === JSON.stringify(bb)) return c.miejsca; } catch { /* do pobrania */ }
+  if (!ludnoscWToku) ludnoscWToku = (async () => {
+    const q = `[out:json][timeout:240];node["place"~"^(city|town|village|hamlet)$"]["population"](${bb.join(',')});out body;`;
+    let ost = null;
+    for (const url of ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter']) {
+      try {
+        const rep = await fetch(url, { method: 'POST', headers: { 'User-Agent': 'live-mesh-map-pl/1.0', 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q), signal: AbortSignal.timeout(280000) });
+        if (!rep.ok) throw new Error('HTTP ' + rep.status);
+        const j = await rep.json();
+        const miejsca = j.elements.map((x) => ({ nom: x.tags.name || '?', typ: x.tags.place, lat: x.lat, lon: x.lon, population: parseInt(String(x.tags.population).replace(/[^\d]/g, ''), 10) || 0 })).filter((x) => x.population > 0);
+        ecrireSur(f, JSON.stringify({ bbox: bb, data: Date.now(), miejsca }));
+        return miejsca;
+      } catch (err) { ost = err; }
+    }
+    throw new Error('Overpass: ' + (ost ? ost.message : 'niedostępny'));
+  })().finally(() => { ludnoscWToku = null; });
+  return ludnoscWToku;
+}
+app.get('/api/ludnosc-zasieg', async (req, res) => {
+  const RR = R(req);
+  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
+  let miejsca;
+  try { miejsca = await miejscowosciStrefy(RR); } catch (e) { return res.status(503).json({ erreur: e.message }); }
+  const o = optsRelief(req.query); o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR';
+  let r;
+  try { r = couvertureReseauCachee(RR, o, 'meshcore'); } catch (e) { return res.status(503).json({ erreur: e.message }); }
+  if (r.vide) return res.json({ vide: true });
+  const suma = (l) => l.reduce((t, x) => t + x.population, 0);
+  const wStrefie = [], dobry = [], graniczny = [], poza = [];
+  for (const m of miejsca) {
+    const w = RR.marginesW(r, m.lat, m.lon);
+    if (!w || !w.wStrefie) continue;
+    wStrefie.push(m);
+    if (w.m >= 10) dobry.push(m); else if (w.m >= 0) graniczny.push(m); else poza.push(m);
+  }
+  const typy = {};
+  for (const m of wStrefie) { const t = typy[m.typ] || (typy[m.typ] = { miejsc: 0, ludnosc: 0, wZasiegu: 0 }); t.miejsc++; t.ludnosc += m.population; }
+  for (const m of [...dobry, ...graniczny]) typy[m.typ].wZasiegu += m.population;
+  const top = (l, n) => l.slice().sort((a, b) => b.population - a.population).slice(0, n).map((m) => [m.nom, m.population]);
+  res.set('Cache-Control', 'no-store').json({
+    repeatery: r.noeuds.length, pctPowierzchni: r.pctZone,
+    miejscowosci: wStrefie.length, ludnoscStrefy: suma(wStrefie),
+    wZasiegu: suma(dobry) + suma(graniczny), dobryZasieg: suma(dobry), granicznyZasieg: suma(graniczny), pozaZasiegiem: suma(poza),
+    pct: wStrefie.length ? +(((suma(dobry) + suma(graniczny)) / suma(wStrefie)) * 100).toFixed(1) : 0,
+    typy, najwiekszeWZasiegu: top([...dobry, ...graniczny], 15), najwiekszePoza: top(poza, 15),
+  });
+});
 // Couverture actuelle du réseau (relais et passerelles détectés) : ?reseau=meshcore pour les répéteurs MeshCore
 function couvertureReseauCachee(RR, o, reseauCle) {
   const versionFiches = Object.values(installations.toutes()).reduce((m, f) => Math.max(m, f.maj || 0), 0);
