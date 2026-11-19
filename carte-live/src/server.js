@@ -802,6 +802,7 @@ app.get('/api/ludnosc-zasieg', async (req, res) => {
   const top = (l, n) => l.slice().sort((a, b) => b.population - a.population).slice(0, n).map((m) => [m.nom, m.population]);
   res.set('Cache-Control', 'no-store').json({
     repeatery: r.noeuds.length, pctPowierzchni: r.pctZone,
+    diag: { pobrane: miejsca.length, bezSiatki: miejsca.filter((m) => !RR.marginesW(r, m.lat, m.lon)).length, marges: !!r.marges, emprise: RR.emprise() },
     miejscowosci: wStrefie.length, ludnoscStrefy: suma(wStrefie),
     wZasiegu: suma(dobry) + suma(graniczny), dobryZasieg: suma(dobry), granicznyZasieg: suma(graniczny), pozaZasiegiem: suma(poza),
     pct: wStrefie.length ? +(((suma(dobry) + suma(graniczny)) / suma(wStrefie)) * 100).toFixed(1) : 0,
