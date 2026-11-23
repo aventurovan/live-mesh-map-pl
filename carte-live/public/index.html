@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="pl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,6 +13,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="apple-touch-icon" href="/icone-192.png">
+  <!-- PL: aplikacja na ekranie początkowym iPhone'a (pełny ekran, własna nazwa) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Mapa MeshCore">
 </head>
 <body>
   <script>/* PL: motyw od razu (bez mignięcia ciemnego), domyślnie jasny */ try { if (JSON.parse(localStorage.getItem('mcs_theme_clair') ?? 'true')) document.body.classList.add('theme-clair'); } catch (e) { document.body.classList.add('theme-clair'); }</script>
@@ -117,7 +122,7 @@
         <div class="titre-outils">Affichage</div>
         <button id="outil-theme" class="bascule" title="Interface claire à fort contraste, lisible en plein soleil">☀️ Thème clair (plein soleil)</button>
         <button id="outil-affichage" class="bascule" title="Niveau d’affichage (simple, opérateur, expert), grand texte, visite guidée">🎚️ Niveau d’affichage, grand texte…</button>
-        <button id="outil-installer" class="bascule" hidden title="Ajouter la carte sur l'écran d'accueil (plein écran, ouverture même sans réseau)">📲 Installer l'application</button>
+        <button id="outil-installer" class="bascule" hidden title="Dodaj mapę do ekranu początkowego (pełny ekran, otwiera się także bez sieci)">📲 Zainstaluj aplikację</button>
         <small id="note-outils" class="note"></small>
       </div>
     </details>

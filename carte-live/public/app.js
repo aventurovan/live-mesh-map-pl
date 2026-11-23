@@ -6588,7 +6588,14 @@ function brancherInterface() {
   appliquerTheme(lireLs('mcs_theme_clair', true)); // PL: domyślnie jasny motyw w stylu meshcoresouth.pl
   { const b = $('#outil-theme'); if (b) b.onclick = () => appliquerTheme(!document.body.classList.contains('theme-clair')); }
   { const b = $('#btn-motyw'); if (b) b.onclick = () => appliquerTheme(!document.body.classList.contains('theme-clair')); }
-  { const b = $('#outil-installer'); if (b) b.onclick = async () => { if (!invitationInstall) return; invitationInstall.prompt(); await invitationInstall.userChoice.catch(() => null); invitationInstall = null; b.hidden = true; }; }
+  { const b = $('#outil-installer'); if (b) {
+    // PL: iPhone/iPad (Safari) nie ma okna instalacji – pokazujemy przycisk z instrukcją
+    if (jestIos() && !jestZainstalowana()) b.hidden = false;
+    b.onclick = async () => {
+      if (!invitationInstall) { if (jestIos()) instrukcjaIos(); return; }
+      invitationInstall.prompt(); await invitationInstall.userChoice.catch(() => null); invitationInstall = null; b.hidden = true;
+    };
+  } }
   $('#replier').onclick = () => { $('#panneau').classList.add('replie'); $('#deplier').hidden = false; document.body.classList.add('panneau-replie'); };
   $('#deplier').onclick = () => { $('#panneau').classList.remove('replie'); $('#deplier').hidden = true; document.body.classList.remove('panneau-replie'); };
   installerDetachement();
@@ -7247,6 +7254,19 @@ function appliquerTheme(clair) {
 }
 // Installer l'appli (Android, Chrome, Edge) : bouton dans Outils quand le navigateur le propose
 let invitationInstall = null;
+function jestIos() { return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+function jestZainstalowana() { return (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; }
+function instrukcjaIos() {
+  const d = document.createElement('dialog');
+  d.className = 'okno-gps';
+  d.innerHTML = `<form method="dialog"><h3>Zainstaluj mapę na iPhonie</h3>
+    <ol style="padding-left:20px;line-height:1.6"><li>Otwórz tę stronę w <b>Safari</b>.</li><li>Stuknij <b>Udostępnij</b> (kwadrat ze strzałką w górę).</li><li>Wybierz <b>Do ekranu początkowego</b>, potem <b>Dodaj</b>.</li></ol>
+    <p class="note">Mapa otworzy się na pełnym ekranie jak zwykła aplikacja, a ostatnio oglądany obszar będzie widoczny także bez sieci.</p>
+    <div class="actions-prop"><button class="principal" value="ok">OK</button></div></form>`;
+  document.body.appendChild(d);
+  d.onclose = () => d.remove();
+  d.showModal();
+}
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); invitationInstall = e; const b = $('#outil-installer'); if (b) b.hidden = false; });
 
 // Restauration d'une sauvegarde complète (.tar.gz) : envoi avec avancement, puis redémarrage de la carte
