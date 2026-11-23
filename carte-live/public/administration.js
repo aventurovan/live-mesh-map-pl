@@ -213,21 +213,35 @@ async function ficheV28() {
     ${r.noeuds.length ? `<h3>Relais déjà en 2.8</h3>${r.noeuds.map((x) => `<div class="proposition"><div class="entete-prop"><b>${esc(x.nom)}</b><span class="marge">${esc(x.firmware || '')}</span></div>${x.problemes.length ? x.problemes.map((p) => `<div class="meta-longue" style="color:var(--${p.niveau === 'critique' ? 'critique' : 'attention'})">⚠ ${esc(p.texte)}</div>`).join('') : '<div class="note">✔ rien à signaler</div>'}<div class="actions-prop"><button class="mini" data-editer="${x.num}">✏️ Modifier ses réglages</button></div></div>`).join('')}` : ''}
     <h3>Nœuds renumérotés</h3>
     ${r.renumerotations.length ? r.renumerotations.map((x) => `<div class="proposition"><div>${ligneN(x.ancien)} → ${ligneN(x.nouveau)}</div>
-      <div class="note">Même clé publique. Ancien numéro vu pour la dernière fois ${ilYa(x.ancien.dernierVu)} ; nouveau apparu ${ilYa(x.nouveau.premierVu)}${x.nouveau.firmware ? ' (' + esc(x.nouveau.firmware) + ')' : ''}.</div>
+      <div class="note">Même clé publique${x.certain ? ' ; le nouveau numéro découle de cette clé (règle 2.8) : renumérotation certaine' : ''}. Ancien numéro vu pour la dernière fois ${ilYa(x.ancien.dernierVu)} ; nouveau apparu ${ilYa(x.nouveau.premierVu)}${x.nouveau.firmware ? ' (' + esc(x.nouveau.firmware) + ')' : ''}.</div>
       ${etat.admin ? `<div class="actions-prop"><button class="mini principal" data-fusion="${x.ancien.num}:${x.nouveau.num}">Fusionner l’historique</button></div>` : ''}</div>`).join('') : '<div class="vide">Aucun : la carte repère un nœud renuméroté grâce à sa clé publique (fiche NodeInfo) dès qu’elle a reçu la fiche de l’ancien et du nouveau numéro.</div>'}
-    <p class="note">La fusion rattache au nouveau numéro l’historique de l’ancien (positions, télémétrie, paquets, liaisons, traceroutes), sa fiche d’installation, son état d’administration, ses favoris et les secteurs des gestionnaires. L’ancien numéro disparaît de la carte.</p>
+    ${(r.probables || []).length ? `<h3>Nœuds probablement réinitialisés</h3>${r.probables.map((x) => `<div class="proposition"><div>${ligneN(x.ancien)} → ${ligneN(x.nouveau)}</div>
+      <div class="note">${esc(x.raison)}${x.nouveau.materiel ? ' · ' + esc(x.nouveau.materiel) : ''}. Ancien vu pour la dernière fois ${ilYa(x.ancien.dernierVu)} ; nouveau apparu ${ilYa(x.nouveau.premierVu)}. Les clés diffèrent : vérifiez que c’est bien le même appareil avant de fusionner.</div>
+      ${etat.admin ? `<div class="actions-prop"><button class="mini" data-fusion="${x.ancien.num}:${x.nouveau.num}" data-force="1">Fusionner quand même</button></div>` : ''}</div>`).join('')}` : ''}
+    <p class="note">La fusion rattache au nouveau numéro l’historique de l’ancien (positions, télémétrie, paquets, liaisons, traceroutes), sa fiche d’installation, son état d’administration, ses favoris, ses équipes, son responsable et les secteurs des gestionnaires. L’ancien numéro disparaît de la carte. Les 20 dernières fusions peuvent être annulées.</p>
     ${r.doublons.length ? `<h3>Clés publiques en double</h3>${r.doublons.map((x) => `<div class="proposition"><div>${ligneN(x.ancien)} et ${ligneN(x.nouveau)}</div><div class="meta-longue" style="color:var(--attention)">Les deux sont actifs avec la même clé (configuration clonée, ${x.chevauchementH} h en même temps) : les messages directs et l’administration à distance peuvent partir vers le mauvais. Régénérez la clé de l’un des deux (appli › Sécurité › Régénérer la clé privée), puis remettez la clé d’administration.</div></div>`).join('')}` : ''}
-    ${r.historique.length ? `<h3>Fusions faites</h3>${r.historique.map((h) => `<div class="note">${new Date(h.heure).toLocaleString('fr-FR')} · ${esc(h.nom || '')} ${esc(h.idAncien)} → ${esc(h.idNouveau)} par ${esc(h.par || '?')}</div>`).join('')}` : ''}
+    ${r.historique.length ? `<h3>Fusions faites</h3>${r.historique.map((h) => `<div class="note">${new Date(h.heure).toLocaleString('fr-FR')} · ${esc(h.nom || '')} ${esc(h.idAncien)} → ${esc(h.idNouveau)} par ${esc(h.par || '?')}${h.force ? ' · forcée' : ''}${h.annule ? ` · <b>annulée</b> le ${new Date(h.annule.heure).toLocaleString('fr-FR')}` : ''}${h.annulable && etat.admin ? ` <button class="mini" data-annuler="${h.heure}:${h.ancien}:${h.nouveau}">↩ Annuler</button>` : ''}</div>`).join('')}` : ''}
     <p class="erreur" id="v28-retour"></p>`;
   z.querySelectorAll('[data-editer]').forEach((b) => (b.onclick = () => editeurReglages(Number(b.dataset.editer))));
   z.querySelectorAll('[data-fusion]').forEach((b) => (b.onclick = async () => {
     const [a, n] = b.dataset.fusion.split(':').map(Number);
-    if (!(await confirmer(`Fusionner ${nomNoeud(a)} dans ${nomNoeud(n)} ? L’historique de l’ancien numéro passe au nouveau ; c’est définitif.`))) return;
+    const force = b.dataset.force === '1';
+    if (!(await confirmer(`Fusionner ${nomNoeud(a)} dans ${nomNoeud(n)} ? L’historique de l’ancien numéro passe au nouveau${force ? ' alors que leurs clés diffèrent' : ''}. Vous pourrez annuler la fusion tant que l’ancien numéro n’est pas réentendu.`))) return;
     try {
-      const h = await postJson('/api/admin-noeuds/fusion', { ancien: a, nouveau: n });
+      const h = await postJson('/api/admin-noeuds/fusion', { ancien: a, nouveau: n, force });
       $('#v28-retour').textContent = `Fusionné : ${Object.entries(h.lignes).map(([k, v]) => `${v} ${k}`).join(', ')}.`;
       setTimeout(ficheV28, 1500);
-      chargerNoeuds().catch(() => {});
+      chargerNoeuds(true).catch(() => {});
+    } catch (e) { $('#v28-retour').textContent = e.message; }
+  }));
+  z.querySelectorAll('[data-annuler]').forEach((b) => (b.onclick = async () => {
+    const [heure, a, n] = b.dataset.annuler.split(':').map(Number);
+    if (!(await confirmer('Annuler cette fusion ? L’ancien numéro revient sur la carte avec l’historique qu’il avait au moment de la fusion.'))) return;
+    try {
+      const h = await postJson('/api/admin-noeuds/fusion/annuler', { heure, ancien: a, nouveau: n });
+      $('#v28-retour').textContent = `Fusion annulée : ${h.annule.lignes} lignes rendues à ${h.idAncien}.`;
+      setTimeout(ficheV28, 1500);
+      chargerNoeuds(true).catch(() => {});
     } catch (e) { $('#v28-retour').textContent = e.message; }
   }));
 }
@@ -744,6 +758,9 @@ async function ouvrirBroker() {
         <label style="grid-column: 1 / -1">Brokers supplémentaires écoutés en même temps (5 au plus, un par ligne) <textarea name="brokers" rows="3" spellcheck="false" autocomplete="off" placeholder="mqtts://nom:motdepasse@broker-voisin:8883|msh/EU_868">${esc(m.brokersReglage || '')}</textarea></label>
       </div>
       <p class="note">Brokers supplémentaires : une ligne par broker, « adresse » ou « adresse|racine » (racine vide = celle du broker principal). Chacun est écouté pour Meshtastic et pour MeshCore ; un paquet reçu par plusieurs brokers n’est compté qu’une fois. Identifiant et mot de passe dans l’adresse ; un mot de passe affiché <span class="mono">***</span> reste celui déjà enregistré. Ligne effacée = broker retiré.</p>
+      <p class="note"><b>Pour voir des nœuds MeshCore</b></p>
+      <p class="note">MeshCore n’a pas de serveur public mondial. Ajoutez ici le serveur MQTT d’une communauté de votre région (elle vous donne l’adresse, l’identifiant et le mot de passe). Les serveurs LetsMesh exigent un jeton signé par une radio MeshCore : ils ne conviennent pas.</p>
+      <p class="note">Exemple : <span class="mono">mqtts://nom:motdepasse@serveur:8883|meshcore</span></p>
       <div class="actions-prop"><button type="button" id="broker-tester">🔌 Tester ces réglages (10 s)</button><button type="submit" class="principal">Enregistrer et redémarrer</button></div>
       <div id="broker-test"></div>
       <p class="note">Le test se connecte avec ces réglages <b>sans toucher</b> à la connexion actuelle, s’abonne à la racine et compte les messages reçus pendant 10 s. Mot de passe vide = celui déjà enregistré.</p>
@@ -783,7 +800,7 @@ async function rendreSauvegardes() {
   z.innerHTML = `<p class="note">Chaque nuit vers 3 h 30, la carte sauvegarde ses réglages : comptes, réglages généraux, fiches d’installation des relais, modules radio, configurations lues des nœuds, mots de passe d’administration MeshCore, traceroutes. Les 14 dernières sont gardées sur le NAS. Les données radio (paquets, liens) ne sont pas sauvegardées : elles se reconstituent toutes seules.</p>
     <p class="note"><b>Fichier sensible</b> (clés des canaux, mots de passe d’administration MeshCore) : gardez la copie téléchargée en lieu sûr.</p>
     <div class="actions-prop"><button id="sv-maintenant" class="principal">Sauvegarder maintenant</button></div>
-    <div class="liste">${l.map((x) => `<div class="ligne"><span class="titre">${esc(x.nom.replace('sauvegarde-', '').replace('.json', ''))}<small>${Math.round(x.taille / 1024)} ko · ${new Date(x.date).toLocaleString('fr-FR')}</small></span><span class="meta"><a class="bouton-lien" href="/api/sauvegardes/${encodeURIComponent(x.nom)}">Télécharger</a></span></div>`).join('') || '<div class="vide">Aucune sauvegarde pour l’instant.</div>'}</div>
+    <div class="liste">${l.map((x) => `<div class="ligne" style="grid-template-columns:1fr auto"><span class="titre"><b>${esc(new Date(x.date).toLocaleString(document.documentElement.lang || 'fr-FR', { dateStyle: 'full', timeStyle: 'short' }))}</b><small>${Math.round(x.taille / 1024)} ko</small></span><span class="meta"><a class="bouton-lien" href="/api/sauvegardes/${encodeURIComponent(x.nom)}">Télécharger</a></span></div>`).join('') || '<div class="vide">Aucune sauvegarde pour l’instant.</div>'}</div>
     <h4>Restaurer</h4>
     <p class="note">Choisissez un fichier de sauvegarde téléchargé : les réglages et les comptes sont remplacés (l’état actuel est d’abord mis de côté), puis la carte redémarre.</p>
     <input type="file" id="sv-fichier" accept=".json,application/json"><button id="sv-restaurer" disabled>Restaurer ce fichier</button>
@@ -833,6 +850,41 @@ const ACTIONS_AUDIT = [
   [/radio\/(connecter|deconnecter|modules|scanner|agents)/, 'Module radio'], [/reglages|mqtt|config/, 'Réglages'],
 ];
 const libelleAudit = (a) => { for (const [re, l] of ACTIONS_AUDIT) if (re.test(a)) return `${l} <small class="mono">${esc(a)}</small>`; return esc(a); };
+// ---- Fréquentation : visiteurs par jour, pays, pages, provenance (aucune adresse IP gardée) ----------------------
+let joursFrequentation = 30;
+async function rendreFrequentation(jours) {
+  if (jours) joursFrequentation = jours;
+  const z = $('#pan-frequentation');
+  let f;
+  try { f = await api('/api/frequentation?jours=' + joursFrequentation); } catch (e) { z.innerHTML = `<div class="vide">${esc(e.message)}</div>`; return; }
+  const nb = (n) => Number(n || 0).toLocaleString('fr-FR');
+  let noms = null;
+  try { noms = new Intl.DisplayNames(['fr'], { type: 'region' }); } catch { /* navigateur ancien */ }
+  const drapeau = (c) => (/^[A-Z]{2}$/.test(c) ? String.fromCodePoint(...[...c].map((x) => 0x1f1e6 + x.charCodeAt(0) - 65)) : '');
+  const nomPays = (c) => (c === 'LAN' ? '🏠 Réseau local' : c === 'VPN' ? '🔒 VPN (Tailscale…)' : c === '?' ? '❔ Inconnu' : `${drapeau(c)} ${(noms && noms.of(c)) || c}`);
+  const max = Math.max(1, ...f.parJour.map((x) => x.visiteurs));
+  const totPays = Math.max(1, f.pays.reduce((s, x) => s + x.visiteurs, 0));
+  const ligneBarre = (libelle, n, total, extra = '') => `<tr><td>${libelle}</td><td class="barre-cellule"><span class="barre-freq" style="width:${Math.max(2, Math.round((n / total) * 100))}%"></span></td><td class="nombre">${nb(n)}</td>${extra}</tr>`;
+  z.innerHTML = `<div class="ligne-champs"><label>Période <select id="freq-jours">${[7, 30, 90, 365].map((j) => `<option value="${j}" ${j === f.jours ? 'selected' : ''}>${j} derniers jours</option>`).join('')}</select></label><button class="mini" id="freq-maj">↻ Actualiser</button></div>
+    ${f.actif ? '' : '<div class="alerte info-lecture">Le comptage est arrêté (Réglages avancés › Services › Statistiques de fréquentation).</div>'}
+    <div class="cartes-freq">
+      <div class="carte-freq"><b>${nb(f.enLigne)}</b><span>en ligne maintenant</span></div>
+      <div class="carte-freq"><b>${nb(f.aujourdhui.visiteurs)}</b><span>visiteurs aujourd’hui</span><small>${nb(f.aujourdhui.visites)} pages ouvertes</small></div>
+      <div class="carte-freq"><b>${nb(f.total.visiteurs)}</b><span>visiteurs sur ${f.jours} jours</span><small>${nb(f.total.visites)} pages ouvertes</small></div>
+      <div class="carte-freq"><b>${nb(f.pays.filter((x) => /^[A-Z]{2}$/.test(x.pays)).length)}</b><span>pays</span></div>
+    </div>
+    <h3>Visiteurs par jour</h3>
+    <div class="histo-freq" role="img" aria-label="Visiteurs par jour">${f.parJour.map((x) => `<div class="colonne-freq" title="${new Date(x.jour + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })} : ${nb(x.visiteurs)} visiteurs, ${nb(x.visites)} pages"><span style="height:${Math.round((x.visiteurs / max) * 100)}%"></span></div>`).join('')}</div>
+    <div class="axe-freq"><span>${new Date(f.parJour[0].jour + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}</span><span>aujourd’hui</span></div>
+    <div class="grille-freq">
+      <div><h3>Pays</h3><table class="voisins tableau-freq"><tbody>${f.pays.map((x) => ligneBarre(nomPays(x.pays), x.visiteurs, totPays)).join('') || '<tr><td class="vide">Pas encore de visite.</td></tr>'}</tbody></table></div>
+      <div><h3>Pages ouvertes</h3><table class="voisins tableau-freq"><tbody>${f.pages.map((x) => ligneBarre(esc(x.page), x.visites, Math.max(1, f.total.visites))).join('') || '<tr><td class="vide">—</td></tr>'}</tbody></table>
+        <h3>Venus de</h3><table class="voisins tableau-freq"><tbody>${f.provenances.map((x) => ligneBarre(`<a href="https://${esc(x.provenance)}" target="_blank" rel="noopener noreferrer">${esc(x.provenance)}</a>`, x.visites, Math.max(1, f.provenances[0].visites))).join('') || '<tr><td class="vide">Accès directs seulement (favori, adresse tapée, appli).</td></tr>'}</tbody></table></div>
+    </div>
+    <p class="note">Un visiteur est compté une fois par jour ; les robots (moteurs de recherche, aperçus de liens) sont ignorés. Aucune adresse IP n’est enregistrée et aucun cookie n’est posé : seuls des totaux par jour sont gardés, 400 jours. Pays : base IP to Country Lite de <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP</a> (CC BY 4.0), consultée sur le serveur${f.geo.etat === 'prête' ? '' : ` — <b>${esc(f.geo.etat)}</b>${f.geo.etat === 'absente' ? ' (téléchargement automatique dans les minutes qui suivent le démarrage)' : ''}`}.</p>`;
+  $('#freq-jours').onchange = (e) => rendreFrequentation(Number(e.target.value));
+  $('#freq-maj').onclick = () => rendreFrequentation();
+}
 async function rendreJournal(filtre) {
   const z = $('#pan-journal');
   let l;
@@ -862,16 +914,16 @@ async function rendreComptes() {
   z.innerHTML = `
     <table class="voisins comptes"><thead><tr><th>Identifiant</th><th>Indicatif</th><th>Rôle</th><th>Statut</th><th>Dernière connexion</th><th></th></tr></thead><tbody>
     ${liste.map((c) => `<tr data-id="${c.id}">
-      <td><b>${esc(c.identifiant)}</b>${c.email ? `<br><small>${esc(c.email)}</small>` : ''}</td><td>${esc(c.indicatif || '–')}</td>
+      <td><b>${esc(c.identifiant)}</b> <button class="mini" data-fiche title="Modifier l’identifiant, l’indicatif ou l’e-mail de ce compte">✏️</button>${c.email ? `<br><small>${esc(c.email)}</small>` : ''}</td><td>${esc(c.indicatif || '–')}</td>
       <td><select data-role>${['membre', 'gestionnaire', 'admin'].map((r) => `<option value="${r}" ${c.role === r ? 'selected' : ''}>${ROLES_COMPTE[r]}</option>`).join('')}</select>${c.role === 'gestionnaire' ? `<br><button class="mini" data-secteur>Secteur : ${(c.noeuds || []).length} nœud(s)…</button>` : ''}</td>
-      <td><span class="badge ${c.statut === 'actif' ? 'actif' : c.statut === 'en_attente' ? 'attente' : 'inactif'}">${STATUTS[c.statut] || c.statut}</span>${c.deuxFacteurs ? ' <span class="badge actif" title="Double authentification activée">2FA</span>' : ''}</td>
+      <td><span class="badge ${c.statut === 'actif' ? 'actif' : c.statut === 'en_attente' ? 'attente' : 'inactif'}">${STATUTS[c.statut] || c.statut}</span>${c.deuxFacteurs ? ' <span class="badge actif" title="Double authentification activée">2FA</span>' : ''}${c.reinitDemande ? `<br><span class="badge attente" title="Demande faite le ${new Date(c.reinitDemande).toLocaleString()}">🔑 mot de passe oublié</span>` : ''}</td>
       <td>${c.derniere ? ilYa(c.derniere) : 'jamais'}</td>
-      <td class="actions-ligne">${c.statut === 'en_attente' ? '<button data-statut="actif" class="principal">Valider</button>' : c.statut === 'actif' ? '<button data-statut="desactive">Désactiver</button>' : '<button data-statut="actif">Réactiver</button>'}${c.deuxFacteurs ? '<button data-retirer-2fa title="Téléphone perdu : retirer la double authentification de ce compte">Retirer 2FA</button>' : ''}<button data-deco title="Fermer toutes les sessions ouvertes de ce compte">Déconnecter</button><button data-suppr title="Supprimer">✕</button></td>
+      <td class="actions-ligne">${c.statut === 'en_attente' ? '<button data-statut="actif" class="principal">Valider</button>' : c.statut === 'actif' ? '<button data-statut="desactive">Désactiver</button>' : '<button data-statut="actif">Réactiver</button>'}<button data-lien-mdp class="${c.reinitDemande ? 'principal' : ''}" title="Mot de passe oublié : créer un lien (24 h, usage unique) pour que cette personne choisisse un nouveau mot de passe">🔑 Lien</button>${c.deuxFacteurs ? '<button data-retirer-2fa title="Téléphone perdu : retirer la double authentification de ce compte">Retirer 2FA</button>' : ''}<button data-deco title="Fermer toutes les sessions ouvertes de ce compte">Déconnecter</button><button data-suppr title="Supprimer">✕</button></td>
     </tr>`).join('')}
     </tbody></table>
     <h3>Ajouter un compte</h3>
     <form id="form-ajout-compte" class="parametres compact">
-      <label>Identifiant <input name="identifiant" required minlength="3"></label>
+      <label>Identifiant <input name="identifiant" required minlength="3" maxlength="32" placeholder="pseudo ou NOM Prénom"></label>
       <label>Indicatif <input name="indicatif"></label>
       <label>Mot de passe provisoire <input name="motDePasse" type="password" required minlength="8" autocomplete="new-password"></label>
       <label>Rôle <select name="role"><option value="membre">Membre</option><option value="gestionnaire">Gestionnaire de secteur</option><option value="admin">Administrateur</option></select></label>
@@ -882,6 +934,18 @@ async function rendreComptes() {
     <p class="note">Un <b>membre</b> voit les messages texte et les positions exactes. Un <b>gestionnaire de secteur</b> programme à distance, remplit la fiche d’installation et teste (traceroute) les seuls nœuds de son secteur, Meshtastic ou MeshCore. Un <b>administrateur</b> gère en plus les comptes, les réglages, les modules et tous les nœuds.</p>`;
   const retour = (t) => ($('#retour-comptes').textContent = t);
   const action = async (fn) => { try { await fn(); rendreComptes(); } catch (e) { retour(e.message); } };
+  // Enregistre toutes les fiches ouvertes d'un coup (plusieurs noms changés avant de cliquer : aucun n'est perdu)
+  async function enregistrerFiches() {
+    const erreurs = [];
+    for (const tr of z.querySelectorAll('tr[data-id]')) {
+      const ident = tr.querySelector('.fiche-ident');
+      if (!ident) continue;
+      try { await postJson(`/api/comptes/${tr.dataset.id}`, { identifiant: ident.value, email: tr.querySelector('.fiche-email').value, indicatif: tr.querySelector('.fiche-ind').value }); }
+      catch (e) { erreurs.push(`${ident.value} : ${e.message}`); }
+    }
+    await rendreComptes();
+    if (erreurs.length) retour(erreurs.join(' · '));
+  }
   z.querySelectorAll('tr[data-id]').forEach((tr) => {
     const id = tr.dataset.id;
     tr.querySelector('[data-role]').onchange = (e) => action(() => postJson(`/api/comptes/${id}`, { role: e.target.value }));
@@ -891,6 +955,33 @@ async function rendreComptes() {
     const b2f = tr.querySelector('[data-retirer-2fa]');
     if (b2f) b2f.onclick = async () => { if ((await confirmer('Retirer la double authentification de ce compte ?'))) action(() => postJson(`/api/comptes/${id}`, { retirerDeuxFacteurs: true })); };
     tr.querySelector('[data-deco]').onclick = () => action(() => postJson(`/api/comptes/${id}`, { deconnecter: true }));
+    // Fiche du compte : identifiant (ex. « DELAGE Fabrice »), indicatif, e-mail
+    tr.querySelector('[data-fiche]').onclick = () => {
+      const c = liste.find((x) => String(x.id) === String(id)) || {};
+      const td = tr.querySelector('td'), td2 = td.nextElementSibling;
+      td.innerHTML = `<input class="fiche-ident" value="${esc(c.identifiant)}" maxlength="32" title="Identifiant de connexion : pseudo ou NOM Prénom"><input class="fiche-email" type="email" value="${esc(c.email || '')}" placeholder="e-mail" maxlength="120">`;
+      td2.innerHTML = `<input class="fiche-ind" value="${esc(c.indicatif || '')}" placeholder="F4ABC" maxlength="16"><div class="actions-fiche"><button class="mini bouton-enregistrer" data-ok>✔ Enregistrer</button><button class="mini" data-annuler>Annuler</button></div>`;
+      td.querySelector('.fiche-ident').focus();
+      td2.querySelector('[data-annuler]').onclick = () => rendreComptes();
+      td2.querySelector('[data-ok]').onclick = enregistrerFiches;
+      // Entrée enregistre, Échap annule
+      for (const ch of tr.querySelectorAll('.fiche-ident, .fiche-email, .fiche-ind')) ch.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); enregistrerFiches(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); rendreComptes(); } };
+    };
+    // Mot de passe oublié : lien à usage unique (24 h), que l'administrateur transmet lui-même
+    tr.querySelector('[data-lien-mdp]').onclick = async () => {
+      try {
+        const r = await postJson(`/api/comptes/${id}`, { lienReinit: true });
+        const lien = location.origin + '/?reinit=' + r.jeton, c = liste.find((x) => String(x.id) === String(id)) || {};
+        let boite = z.querySelector('.lien-mdp');
+        if (!boite) { boite = document.createElement('div'); boite.className = ['lien-mdp', 'alerte', 'info-lecture'].join(' '); z.prepend(boite); }
+        boite.innerHTML = `<b>🔑 Lien de nouveau mot de passe pour ${esc(c.identifiant || '')}</b><br><small>Valable 24 h, une seule fois. Transmettez-le à cette personne (SMS, e-mail, messagerie) ; elle y choisira son nouveau mot de passe.</small>
+          <div class="ligne-lien"><input class="mono" readonly value="${esc(lien)}"><button class="mini principal">Copier</button></div>`;
+        const champ = boite.querySelector('input'), bc = boite.querySelector('button');
+        bc.onclick = async () => { try { await navigator.clipboard.writeText(lien); bc.textContent = '✔ Copié'; } catch { champ.select(); document.execCommand('copy'); bc.textContent = '✔ Copié'; } };
+        champ.onfocus = () => champ.select();
+        boite.scrollIntoView({ block: 'nearest' });
+      } catch (e) { alert(e.message); }
+    };
     const bsec = tr.querySelector('[data-secteur]');
     if (bsec) bsec.onclick = () => editerSecteur(liste.find((c) => String(c.id) === id), () => rendreComptes());
   });
@@ -957,6 +1048,17 @@ async function rendreFrance() {
   try { r = await api('/api/relief/france'); } catch (e) { z.innerHTML = `<div class="vide">${esc(e.message)}</div>`; return; }
   const p = r.precharge;
   const duree = p.debut ? Math.round(((p.fin || Date.now()) - p.debut) / 60000) : 0;
+  const progres = p.enCours ? `<div class="alerte info-lecture"><span class="sablier"></span> Préparation en cours : ${p.faits}/${p.total} carrés · ${p.courant ? 'carré ' + esc(p.courant) : ''}${p.etape ? ' : ' + esc(p.etape) : ''} · ${duree} min. Elle continue même si vous fermez cette page.</div>` : p.fin ? `<p class="note">Dernière préparation : ${p.faits}/${p.total} carrés en ${duree} min${p.erreurs.length ? `, ${p.erreurs.length} erreur(s) : ${p.erreurs.slice(0, 5).map((x) => esc(x.code + ' ' + x.erreur)).join(' ; ')}` : ''}.</p>` : '';
+  if (r.monde) {
+    z.innerHTML = `<h3>🗺️ Relief de la carte</h3>
+    <label>Calculs de couverture de la carte publique <select id="fr-couv">
+      <option value="departement" ${r.couverture === 'departement' ? 'selected' : ''}>Zone de la carte seulement (léger)</option>
+      <option value="france" ${r.couverture === 'france' ? 'selected' : ''}>N’importe où dans le monde (relief chargé à la demande)</option></select></label>
+    <p class="note">Avec « n’importe où dans le monde », chaque visiteur peut calculer la couverture, les emplacements de relais et la couverture d’un point sur n’importe quel carré de 1°. Le premier calcul d’un carré télécharge son relief Copernicus (30 m) et ses points hauts (quelques minutes), sauf s’il a été préparé ci-dessous.</p>
+    <div class="actions-prop">${p.enCours ? '<button class="mini" id="fr-stop">⏹ Arrêter la préparation</button>' : '<button class="mini principal" id="fr-go" title="Télécharge le relief de la zone de la carte et de ses 8 carrés voisins ; la carte publique passe ensuite d’elle-même en « n’importe où dans le monde »">⬇ Télécharger la zone et les carrés voisins</button>'}<span class="note">Relief prêt sur le serveur : <b>${r.surDisque}</b> / ${r.total} carrés</span></div>
+    ${progres}
+    <p class="note">La préparation télécharge le relief Copernicus (30 m), les points hauts, les voies d’accès et les sites (OpenStreetMap) de la zone de la carte et de ses 8 carrés voisins (3 × 3 carrés de 1°). Comptez quelques minutes par carré. Les carrés déjà prêts sont sautés. Pour une autre zone, changez la zone de la carte dans Gérer › Réglages.</p>`;
+  } else
   z.innerHTML = `<h3>🗺️ Carte publique et relief</h3>
     <label>Calculs de couverture de la carte publique <select id="fr-couv">
       <option value="departement" ${r.couverture === 'departement' ? 'selected' : ''}>Département de la carte seulement (léger)</option>
@@ -968,12 +1070,51 @@ async function rendreFrance() {
     <details class="note"><summary>Pour le mainteneur du projet : exporter le paquet « relief France »</summary>
       <p>Inutile pour faire marcher votre carte. Ce bouton rassemble en un seul fichier (tar.gz) le relief de tous les départements déjà prêts sur ce serveur, pour le publier sur GitHub comme paquet « relief-france » : c’est ce paquet que les autres cartes téléchargent avec le bouton ci-dessus.</p>
       <div class="actions-prop"><a class="mini bouton-lien" href="/api/relief/france/paquet" download>📦 Exporter le paquet (tar.gz)</a></div></details>`;
-  z.insertAdjacentHTML('beforeend', '<div id="bloc-fond-hl"></div>');
+  z.insertAdjacentHTML('beforeend', '<div id="bloc-cache-relief"></div><div id="bloc-fond-hl"></div>');
+  rendreCacheRelief();
   rendreFondHorsLigne();
   $('#fr-couv').onchange = async (e) => { try { await postJson('/api/relief/france', { couverture: e.target.value }); } catch (x) { alert(x.message); } rendreFrance(); };
   const go = $('#fr-go'); if (go) go.onclick = async () => { try { await postJson('/api/relief/france', { precharger: true, activer: true }); } catch (x) { alert(x.message); } setTimeout(rendreFrance, 800); };
   const st = $('#fr-stop'); if (st) st.onclick = async () => { try { await postJson('/api/relief/france', { precharger: false }); } catch (x) { alert(x.message); } setTimeout(rendreFrance, 800); };
   if (p.enCours) { clearTimeout(etat.minuterieFrance); etat.minuterieFrance = setTimeout(() => { if ($('#bloc-france')) rendreFrance(); }, 15000); }
+}
+// Relief téléchargé sur le serveur : espace occupé, purge (tout, par zone, par ancienneté), plafond, relief mondial
+const tailleDisque = (o) => (o >= 1e9 ? fmt(o / 1e9, 1, ' Go') : o >= 1e6 ? fmt(o / 1e6, 0, ' Mo') : fmt(o / 1e3, 0, ' ko'));
+async function rendreCacheRelief(message) {
+  const z = $('#bloc-cache-relief');
+  if (!z) return;
+  let r;
+  try { r = await api('/api/relief/cache'); } catch (e) { z.innerHTML = `<div class="vide">${esc(e.message)}</div>`; return; }
+  const g = r.grossier || {};
+  const etatG = g.statut === 'pret' ? `✔ prêt (${tailleDisque(g.octets || 0)})` : g.enCours || g.statut === 'chargement' ? `<span class="sablier"></span> téléchargement ${g.progression || 0} %` : g.statut === 'erreur' ? `échec : ${esc(g.erreur || '?')} (nouvel essai toutes les heures)` : 'pas encore téléchargé';
+  const ligneZone = (x) => `<tr><td><b>${esc(x.code)}</b>${x.nom ? ` <small>${esc(x.nom)}</small>` : ''}</td><td class="num">${tailleDisque(x.octets)}</td><td>${x.derniere ? ilYa(x.derniere) : '–'}</td>
+    <td>${x.verrou ? '<span class="sablier"></span> en chargement' : x.recente ? 'utilisée à l’instant' : x.enMemoire ? 'ouverte' : ''}</td>
+    <td><button class="mini" data-purger-zone="${esc(x.code)}" ${x.verrou || x.recente ? 'disabled' : ''}>🗑 Supprimer</button></td></tr>`;
+  z.innerHTML = `<h3>💾 Relief téléchargé sur ce serveur</h3>
+    <p class="note">Espace occupé : <b>${tailleDisque(r.totalOctets)}</b> · ${r.nbZones} zone(s) téléchargée(s) : ${tailleDisque(r.zonesOctets)} · zone de la carte : ${tailleDisque(r.principale.octets)}${g.octets ? ` · relief mondial : ${tailleDisque(g.octets)}` : ''}. Une zone supprimée se retélécharge toute seule au prochain calcul.</p>
+    ${message ? `<div class="alerte info-lecture">${esc(message)}</div>` : ''}
+    <label class="case"><input type="checkbox" id="cr-grossier" ${g.actif ? 'checked' : ''}> Relief approximatif du monde entier pendant les chargements</label>
+    <p class="note">Un relief grossier de toute la Terre (≈ ${fmt(g.resolutionKm || 9.3, 0, ' km')}, ${esc(g.source || 'NOAA ETOPO1')}, ≈ 19 Mo, téléchargé une seule fois) : pendant que le relief précis d’une zone se télécharge, la couverture s’affiche déjà, marquée « approximative », puis se recalcule sur le relief précis. État : ${etatG}.</p>
+    <div class="actions-prop">${g.actif && g.statut !== 'pret' && !g.enCours ? '<button class="mini" id="cr-dl-grossier">⬇ Télécharger le relief mondial maintenant</button>' : ''}${g.octets ? '<button class="mini" id="cr-suppr-grossier">🗑 Supprimer le relief mondial</button>' : ''}</div>
+    <div class="parametres compact"><label>Garder au plus (Go) <input id="cr-plafond" type="number" min="0" max="10000" step="0.5" value="${r.plafondGo || 0}"></label><button class="mini" id="cr-plafond-ok">Enregistrer</button></div>
+    <p class="note">0 = sans limite. Au-delà, les zones les moins récemment utilisées sont supprimées d’elles-mêmes (jamais la zone de la carte, ni une zone en cours d’utilisation).</p>
+    <div class="actions-prop"><label>Zones inutilisées depuis <input id="cr-jours" type="number" min="1" max="3650" step="1" value="30" class="mini-h"> jours</label><button class="mini" id="cr-vieilles">🧹 Purger</button><button class="mini" id="cr-tout" ${r.nbZones ? '' : 'disabled'}>🗑 Tout purger</button></div>
+    ${r.zones.length ? `<details class="note"><summary>Détail des ${r.zones.length} zone(s)</summary><table class="voisins"><thead><tr><th>Zone</th><th class="num">Taille</th><th>Dernière utilisation</th><th></th><th></th></tr></thead><tbody>${r.zones.map(ligneZone).join('')}</tbody></table></details>` : ''}`;
+  const envoyer = async (corps, question) => {
+    if (question && !confirm(question)) return;
+    let rep;
+    try { rep = await postJson('/api/relief/cache', corps); } catch (e) { alert(e.message); return; }
+    const p = rep.purge;
+    rendreCacheRelief(p ? `${p.supprimees.length} élément(s) supprimé(s), ${tailleDisque(p.octetsLiberes)} libérés${p.refusees.length ? ` · ${p.refusees.length} zone(s) gardée(s) car en cours d’utilisation (${p.refusees.map((x) => x.code).join(', ')})` : ''}.` : 'Réglage enregistré.');
+  };
+  $('#cr-grossier').onchange = (e) => envoyer({ grossier: e.target.checked });
+  const dl = $('#cr-dl-grossier'); if (dl) dl.onclick = () => envoyer({ telechargerGrossier: true });
+  const sg = $('#cr-suppr-grossier'); if (sg) sg.onclick = () => envoyer({ purger: { grossier: true } }, 'Supprimer le relief approximatif du monde entier ? L’option sera décochée en même temps (sinon il serait retéléchargé dans l’heure, ≈ 19 Mo).');
+  $('#cr-plafond-ok').onclick = () => envoyer({ plafondGo: Number($('#cr-plafond').value) || 0 });
+  $('#cr-vieilles').onclick = () => { const j = Math.max(1, Number($('#cr-jours').value) || 30); envoyer({ purger: { joursInactifs: j } }, `Supprimer le relief des zones inutilisées depuis ${j} jours ?`); };
+  $('#cr-tout').onclick = () => envoyer({ purger: { tout: true } }, `Supprimer le relief des ${r.nbZones} zone(s) téléchargée(s) (${tailleDisque(r.zonesOctets)}) ? La zone de la carte et le relief mondial sont gardés.`);
+  z.querySelectorAll('[data-purger-zone]').forEach((b) => (b.onclick = () => envoyer({ purger: { codes: [b.dataset.purgerZone] } }, `Supprimer le relief de la zone ${b.dataset.purgerZone} ?`)));
+  if (g.enCours) { clearTimeout(etat.minuterieCacheRelief); etat.minuterieCacheRelief = setTimeout(() => { if ($('#bloc-cache-relief')) rendreCacheRelief(); }, 5000); }
 }
 // Fond de carte hors ligne : carte vectorielle OpenStreetMap du département gardée sur le serveur (Raspberry Pi
 // autonome, coupure d'internet), et relief ombré calculé sur place
@@ -1176,45 +1317,300 @@ async function rendrePasserelle(complet) {
 }
 
 // ---- Registre des relais : sites, autorisations, visites, matériel, firmware --------------------------
-async function ficheRegistreRelais() {
+// Recherche libre (nom, site, commune, propriétaire, notes…), filtre par département d'après la position
+// retransmise, et modification groupée de l'autorisation du site (cases à cocher).
+// « memo » : état à retrouver en revenant d'une fiche de nœud (recherche, département, cases cochées).
+async function ficheRegistreRelais(memo) {
   $('#fiche').hidden = false; etat.selection = null;
   $('#fiche-contenu').innerHTML = '<div class="liste-signalements"><h3>🗂️ Registre des relais</h3><p class="note">Chargement…</p></div>';
   let inst = {};
   try { inst = await api('/api/installations'); } catch (e) { $('#fiche-contenu').innerHTML = `<div class="liste-signalements"><h3>🗂️ Registre des relais</h3><p class="erreur">${esc(e.message)}</p></div>`; return; }
+  // Département de chaque nœud : calculé par le serveur (contours nationaux), pas dans le navigateur
+  const idx = await indexDepartementsNoeuds().catch(() => null);
   // Relais et passerelles de la zone de la carte (département et voisins), plus tout nœud qui a une fiche d'installation
   const relais = [...etat.noeuds.values()].filter((n) => ((n.infrastructure || n.passerelle) && dansZone(n)) || inst[n.num]).sort((a, b) => (a.nomLong || a.nomCourt || '').localeCompare(b.nomLong || b.nomCourt || ''));
   const jours = (d) => (d ? Math.floor((Date.now() - Date.parse(d)) / 86400000) : null);
+  const reg = { q: (memo && memo.q) || '', dep: (memo && memo.dep) || '', coches: new Set((memo && memo.coches) || []) };
+  const depDe = (n) => (idx && idx.parNoeud ? idx.parNoeud[String(n.num >>> 0)] || null : null);
+  const nomDep = (c) => { const d = idx && (idx.departements || []).find((x) => x.code === c); return (d && d.nom) || ''; };
+  const peutCocher = relais.some((n) => gerable(n.num));
+  // Texte où l'on cherche, accents et majuscules mis de côté : gardé par nœud (la frappe ne le recalcule pas)
+  const texteCache = new Map();
+  const texteCherchable = (n) => {
+    let t = texteCache.get(n.num);
+    if (t == null) {
+      const f = inst[n.num] || {}, c = depDe(n);
+      t = sansAccent([n.nomLong, n.nomCourt, n.id, n.num, n.roleFr, n.materiel, n.firmware, f.site, f.proprietaire, f.contact, f.notes, f.aFaire,
+        LIB_AUTORISATION[f.autorisation], LIB_ZONE_PROTEGEE[f.zoneProtegee], LIB_ALIM[f.alimentation], c, nomDep(c)]
+        .filter((x) => x != null && x !== '').join(' '));
+      texteCache.set(n.num, t);
+    }
+    return t;
+  };
+  let mots = [], affiches = [];
+  const garder = (n) => {
+    const c = depDe(n);
+    if (reg.dep === 'sans' ? c != null : reg.dep && c !== reg.dep) return false;
+    return mots.every((m) => texteCherchable(n).includes(m));
+  };
   const ligne = (n) => {
     const f = inst[n.num] || {};
     const aut = f.autorisation;
     const autCls = !aut ? 'inconnu' : ['ecrite', 'convention', 'non-necessaire'].includes(aut) ? 'ok' : aut === 'aucune' ? 'ko' : 'attention';
     const jv = jours(f.derniereVisite);
     const visCls = jv == null ? 'inconnu' : jv > 365 ? 'ko' : jv > 180 ? 'attention' : 'ok';
+    const c = depDe(n);
     return `<tr data-num="${n.num}" class="cliquable">
-      <td><b>${esc(n.nomLong || n.nomCourt || n.id)}</b><br><small>${esc(n.roleFr || '')}${n.materiel ? ' · ' + esc(n.materiel) : ''}</small></td>
+      ${peutCocher ? `<td class="col-case">${gerable(n.num) ? `<input type="checkbox" data-case="${n.num}" ${reg.coches.has(n.num) ? 'checked' : ''} aria-label="Cocher ce relais">` : ''}</td>` : ''}
+      <td><b>${esc(n.nomLong || n.nomCourt || n.id)}</b><br><small>${esc(n.roleFr || '')}${n.materiel ? ' · ' + esc(n.materiel) : ''}${c ? ' · ' + esc(c) : ''}</small></td>
       <td>${esc(f.site || '—')}${f.zoneProtegee && f.zoneProtegee !== 'aucune' ? `<br><small class="ko">⚠ ${esc(LIB_ZONE_PROTEGEE[f.zoneProtegee])}</small>` : ''}</td>
       <td class="etat-${autCls}">${esc(LIB_AUTORISATION[aut] || 'Non renseignée')}${f.dateAutorisation ? `<br><small>${esc(f.dateAutorisation)}</small>` : ''}</td>
       <td class="etat-${visCls}">${f.derniereVisite ? esc(f.derniereVisite) : 'Jamais notée'}${jv != null ? `<br><small>${ilYa(Date.parse(f.derniereVisite))}</small>` : ''}</td>
       <td>${esc(LIB_ALIM[f.alimentation] || '—')}${f.batterieAh ? `<br><small>${f.batterieAh} Ah${f.panneauW ? ' · ' + f.panneauW + ' W' : ''}</small>` : ''}</td>
       <td>${esc(n.firmware || '—')}<br><small>${n.dernierVu ? ilYa(n.dernierVu) : ''}</small></td></tr>`;
   };
-  const sansAut = relais.filter((n) => !inst[n.num] || !['ecrite', 'convention', 'non-necessaire'].includes(inst[n.num].autorisation)).length;
-  const aVisiter = relais.filter((n) => { const j = jours((inst[n.num] || {}).derniereVisite); return j == null || j > 365; }).length;
+  // Choix du département : seulement s'il y a de quoi choisir
+  const nbParDep = {};
+  for (const n of relais) { const c = depDe(n); if (c) nbParDep[c] = (nbParDep[c] || 0) + 1; }
+  const codes = Object.keys(nbParDep).sort();
+  const sansDep = relais.filter((n) => depDe(n) == null).length;
+  const optionsDep = idx && (codes.length > 1 || (codes.length === 1 && sansDep))
+    ? `<option value="">Tous les départements</option>${codes.map((c) => `<option value="${esc(c)}" ${reg.dep === c ? 'selected' : ''}>${esc(c)}${nomDep(c) ? ' · ' + esc(nomDep(c)) : ''} (${nbParDep[c]})</option>`).join('')}${sansDep ? `<option value="sans" ${reg.dep === 'sans' ? 'selected' : ''}>Sans département, position inconnue ou hors de France (${sansDep})</option>` : ''}`
+    : '';
+  const colonnes = peutCocher ? 7 : 6;
   $('#fiche-contenu').innerHTML = `<div class="liste-signalements registre-relais"><h3>🗂️ Registre des relais</h3>
-    <p>${relais.length} relais et passerelles. ${sansAut ? `<b class="ko">${sansAut} sans autorisation écrite enregistrée</b> · ` : ''}${aVisiter ? `<b class="attention">${aVisiter} sans visite depuis plus d’un an</b>` : ''}</p>
+    <div class="registre-filtres">
+      <input type="search" id="reg-recherche" placeholder="Chercher : nom, site, commune…" aria-label="Chercher dans le registre des relais" autocomplete="off" maxlength="60" value="${esc(reg.q)}">
+      ${optionsDep ? `<label>Département <select id="reg-dep">${optionsDep}</select></label>` : ''}
+    </div>
+    <p id="reg-compte"></p>
     ${avertissementSites()}
-    <div class="table-defile"><table><thead><tr><th>Relais</th><th>Site</th><th>Autorisation</th><th>Dernière visite</th><th>Énergie</th><th>Firmware · vu</th></tr></thead>
-    <tbody>${relais.map(ligne).join('') || '<tr><td colspan="6">Aucun relais connu.</td></tr>'}</tbody></table></div>
+    ${peutCocher ? `<div class="registre-groupe" id="reg-groupe" hidden>
+      <b id="reg-coches"></b>
+      <label>Autorisation du site <select id="reg-aut">${Object.entries(LIB_AUTORISATION).map(([k, v]) => `<option value="${esc(k)}" ${k === 'non-necessaire' ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
+      <button type="button" class="principal" id="reg-appliquer">Appliquer aux relais cochés</button>
+      <button type="button" class="mini" id="reg-vider">Tout décocher</button>
+    </div>` : ''}
+    <p id="reg-retour" class="note"></p>
+    <div class="table-defile"><table><thead><tr>${peutCocher ? '<th class="col-case"><input type="checkbox" id="reg-tous" title="Cocher tous les relais affichés" aria-label="Cocher tous les relais affichés"></th>' : ''}<th>Relais</th><th>Site</th><th>Autorisation</th><th>Dernière visite</th><th>Énergie</th><th>Firmware · vu</th></tr></thead>
+    <tbody id="reg-corps"></tbody></table></div>
     <div class="actions-prop"><button type="button" class="mini" id="registre-csv">⬇ Exporter le registre (CSV)</button></div>
-    <p class="note">Cliquez sur un relais pour ouvrir sa fiche et compléter la rubrique « Installation » (site, autorisation, zone protégée, dernière visite). ${etat.admin ? 'Le propriétaire du site et le contact figurent dans l’export.' : 'Le propriétaire du site et le contact ne sont visibles que des administrateurs.'}</p></div>`;
-  document.querySelectorAll('.registre-relais tr[data-num]').forEach((tr) => (tr.onclick = () => ouvrirFiche(Number(tr.dataset.num))));
+    <p class="note">Cliquez sur un relais pour ouvrir sa fiche et compléter la rubrique « Installation » (site, autorisation, zone protégée, dernière visite) ; en fermant la fiche vous revenez ici, avec la même recherche. L’export reprend les relais affichés. ${etat.admin ? 'Le propriétaire du site et le contact figurent dans l’export.' : 'Le propriétaire du site et le contact ne sont visibles que des administrateurs.'}</p>
+    ${idx ? '<p class="note">Le département vient de la position que le nœud a retransmise : un relais proche d’une limite, ou qui floute sa position, peut être rangé dans le département voisin. Un relais qui ne donne pas sa position ne peut pas être rangé du tout.</p>' : ''}
+    ${peutCocher ? '<p class="note">Les cases servent à mettre la même autorisation à plusieurs relais d’un coup : cochez-les, choisissez l’autorisation, puis « Appliquer ». Le reste de chaque fiche est gardé.</p>' : ''}</div>`;
+  function majGroupe() {
+    const g = $('#reg-groupe');
+    if (!g) return;
+    const k = reg.coches.size;
+    g.hidden = !k;
+    const masques = [...reg.coches].filter((num) => !affiches.some((x) => x.num === num)).length;
+    $('#reg-coches').textContent = masques ? `${k} relais coché(s), dont ${masques} hors de la recherche qui ne seront pas modifiés` : `${k} relais coché(s)`;
+    const tous = $('#reg-tous');
+    if (tous) { const cochables = affiches.filter((x) => gerable(x.num)); tous.checked = cochables.length > 0 && cochables.every((x) => reg.coches.has(x.num)); }
+  }
+  function brancherLignes() {
+    $('#reg-corps').querySelectorAll('tr[data-num]').forEach((tr) => {
+      const num = Number(tr.dataset.num);
+      tr.onclick = (e) => {
+        if (e.target.closest('.col-case')) return; // cocher une case n'ouvre pas la fiche
+        etat.retourFicheDemande = { ecran: 'registre', q: reg.q, dep: reg.dep, coches: [...reg.coches] };
+        ouvrirFiche(num);
+      };
+      const c = tr.querySelector('input[type="checkbox"]');
+      if (c) c.onchange = () => { if (c.checked) reg.coches.add(num); else reg.coches.delete(num); majGroupe(); };
+    });
+  }
+  function rendre() {
+    mots = sansAccent(reg.q).split(/\s+/).filter(Boolean);
+    affiches = relais.filter(garder);
+    const sansAut = affiches.filter((n) => !inst[n.num] || !['ecrite', 'convention', 'non-necessaire'].includes(inst[n.num].autorisation)).length;
+    const aVisiter = affiches.filter((n) => { const j = jours((inst[n.num] || {}).derniereVisite); return j == null || j > 365; }).length;
+    const filtre = mots.length > 0 || !!reg.dep;
+    const tete = filtre ? `${affiches.length} relais affichés sur ${relais.length}.` : `${affiches.length} relais et passerelles.`;
+    $('#reg-compte').innerHTML = `${esc(tete)} ${sansAut ? `<b class="ko">${sansAut} sans autorisation écrite enregistrée</b> · ` : ''}${aVisiter ? `<b class="attention">${aVisiter} sans visite depuis plus d’un an</b>` : ''}`;
+    $('#reg-corps').innerHTML = affiches.map(ligne).join('') || `<tr><td colspan="${colonnes}">${relais.length ? 'Aucun relais ne correspond à cette recherche.' : 'Aucun relais connu.'}</td></tr>`;
+    brancherLignes();
+    majGroupe();
+  }
+  const champ = $('#reg-recherche');
+  champ.oninput = () => { reg.q = champ.value; rendre(); };
+  champ.onkeydown = (e) => { if (e.key === 'Escape') { champ.value = ''; reg.q = ''; rendre(); } };
+  { const sd = $('#reg-dep'); if (sd) sd.onchange = () => { reg.dep = sd.value; rendre(); }; }
+  { const tous = $('#reg-tous'); if (tous) tous.onchange = () => { for (const n of affiches) if (gerable(n.num)) { if (tous.checked) reg.coches.add(n.num); else reg.coches.delete(n.num); } rendre(); }; }
+  { const v = $('#reg-vider'); if (v) v.onclick = () => { reg.coches.clear(); rendre(); }; }
+  // Modification groupée : même route que la fiche entière, un appel et une ligne de journal par relais
+  { const b = $('#reg-appliquer'); if (b) b.onclick = async () => {
+    const retour = $('#reg-retour');
+    const choisis = [...reg.coches], cibles = choisis.filter((num) => affiches.some((x) => x.num === num));
+    const masques = choisis.length - cibles.length;
+    retour.className = 'note';
+    if (!cibles.length) { retour.textContent = 'Aucun relais coché parmi ceux qui sont affichés.'; return; }
+    const v = $('#reg-aut').value;
+    const texte = masques
+      ? `Enregistrer « ${LIB_AUTORISATION[v]} » comme autorisation du site de ${cibles.length} relais ? ${masques} relais coché(s) hors de la recherche ne seront pas modifiés. Le reste de chaque fiche d’installation est gardé.`
+      : `Enregistrer « ${LIB_AUTORISATION[v]} » comme autorisation du site de ${cibles.length} relais ? Le reste de chaque fiche d’installation est gardé.`;
+    if (!(await confirmer(texte, { ok: 'Enregistrer' }))) return;
+    b.disabled = true;
+    retour.textContent = 'Enregistrement…';
+    let faits = 0;
+    const rates = [];
+    for (const num of cibles) {
+      const n = etat.noeuds.get(num);
+      try {
+        await postJson(`/api/noeuds/${num}/autorisation`, { autorisation: v });
+        inst[num] = { ...(inst[num] || {}), autorisation: v };
+        texteCache.delete(num);
+        reg.coches.delete(num); // les relais en échec restent cochés : on peut réessayer
+        faits++;
+      } catch (e) { rates.push(`${(n && (n.nomLong || n.nomCourt)) || num} : ${e.message}`); }
+    }
+    b.disabled = false;
+    rendre();
+    const r = $('#reg-retour');
+    r.className = 'note';
+    r.classList.add(rates.length ? 'erreur' : 'ok');
+    r.innerHTML = `${faits ? esc(`✔ ${faits} relais mis à jour.`) : ''}${rates.length ? ` <b class="ko">${esc(`✗ ${rates.length} relais non modifié(s) :`)}</b> ${esc(rates.join(' ; '))}` : ''}`;
+  }; }
   $('#registre-csv').onclick = () => {
     // Un nom de nœud vient de la radio : s'il commence comme une formule (= + - @), le tableur ne doit pas l'exécuter
     const c = (x) => { const t = String(x ?? ''); return `"${(typeof x !== 'number' && /^[=+\-@\t\r]/.test(t) ? "'" + t : t).replace(/"/g, '""')}"`; };
-    const entete = ['Nom', 'Identifiant', 'Rôle', 'Matériel', 'Firmware', 'Latitude', 'Longitude', 'Dernier paquet', 'Site', 'Propriétaire du site', 'Contact', 'Autorisation', 'Date autorisation', 'Zone protégée', 'Mise en service', 'Dernière visite', 'Alimentation', 'Batterie (Ah)', 'Panneau (W)', 'Antenne', 'Hauteur (m)', 'Gain (dBi)', 'Pertes câble (dB)', 'Notes'];
-    const lignes = relais.map((n) => { const f = inst[n.num] || {}; return [n.nomLong || n.nomCourt, n.id, n.roleFr, n.materiel, n.firmware, n.lat, n.lon, n.dernierVu ? new Date(n.dernierVu).toISOString() : '', f.site, f.proprietaire, f.contact, LIB_AUTORISATION[f.autorisation] || '', f.dateAutorisation, LIB_ZONE_PROTEGEE[f.zoneProtegee] || '', f.miseEnService, f.derniereVisite, LIB_ALIM[f.alimentation] || '', f.batterieAh, f.panneauW, f.antenne, f.hauteur, f.gain, f.pertesCable, f.notes].map(c).join(';'); });
-    telechargerTexte(`registre-relais-${new Date().toISOString().slice(0, 10)}.csv`, '\ufeff' + [entete.map(c).join(';'), ...lignes].join('\r\n'));
+    const entete = ['Nom', 'Identifiant', 'Rôle', 'Matériel', 'Firmware', 'Latitude', 'Longitude', 'Département', 'Dernier paquet', 'Site', 'Propriétaire du site', 'Contact', 'Autorisation', 'Date autorisation', 'Zone protégée', 'Mise en service', 'Dernière visite', 'Alimentation', 'Batterie (Ah)', 'Panneau (W)', 'Antenne', 'Hauteur (m)', 'Gain (dBi)', 'Pertes câble (dB)', 'Notes'];
+    const lignes = affiches.map((n) => { const f = inst[n.num] || {}; return [n.nomLong || n.nomCourt, n.id, n.roleFr, n.materiel, n.firmware, n.lat, n.lon, depDe(n), n.dernierVu ? new Date(n.dernierVu).toISOString() : '', f.site, f.proprietaire, f.contact, LIB_AUTORISATION[f.autorisation] || '', f.dateAutorisation, LIB_ZONE_PROTEGEE[f.zoneProtegee] || '', f.miseEnService, f.derniereVisite, LIB_ALIM[f.alimentation] || '', f.batterieAh, f.panneauW, f.antenne, f.hauteur, f.gain, f.pertesCable, f.notes].map(c).join(';'); });
+    telechargerTexte(`registre-relais-${new Date().toISOString().slice(0, 10)}.csv`, '﻿' + [entete.map(c).join(';'), ...lignes].join('\r\n'));
   };
+  rendre();
+  if (reg.q) champ.focus();
+}
+
+// ---- Nœuds d'un département, d'après la position qu'ils ont retransmise -------------------------
+// Recherche par position et non par nom : tous les nœuds dont la position reçue tombe dans le département.
+// Un nœud qui ne donne pas sa position ne peut pas être rangé : il est compté à part, jamais effacé en silence.
+// Meshtastic (position retransmise) et MeshCore (position de la dernière annonce) suivent la même règle ; la liste
+// part du réseau affiché sur la carte (etat.vueReseau) et un sélecteur permet d'en changer sans toucher à la carte.
+async function ficheNoeudsDepartement(code, memo) {
+  const ND_RESEAUX = ['meshtastic', 'meshcore', 'les-deux'];
+  const titre = '🧭 Nœuds d’un département';
+  $('#fiche').hidden = false; etat.selection = null;
+  if (typeof mc !== 'undefined') mc.selection = null;
+  $('#fiche-contenu').innerHTML = `<div class="liste-signalements"><h3>${titre}</h3><p class="note">Chargement…</p></div>`;
+  const idx = await indexDepartementsNoeuds().catch(() => null);
+  if (!idx) { $('#fiche-contenu').innerHTML = `<div class="liste-signalements"><h3>${titre}</h3><p class="erreur">Liste indisponible : il faut être connecté à la carte.</p></div>`; return; }
+  // Réseaux listables : MeshCore seulement si la carte le suit (serveur et navigateur) ; carte limitée à un réseau : pas de choix
+  const avecMc = !!(idx.mc && typeof mc !== 'undefined' && mc.actif);
+  const seul = etat.config && etat.config.reseaux && etat.config.reseaux !== 'les-deux' ? etat.config.reseaux : null;
+  let reseau = (memo && memo.reseau) || etat.vueReseau;
+  if (!ND_RESEAUX.includes(reseau)) reseau = 'les-deux'; // réseau affiché inconnu : on montre les deux
+  if (!avecMc) reseau = 'meshtastic';
+  else if (seul && ND_RESEAUX.includes(seul)) reseau = seul;
+  const choixReseau = avecMc && !seul;
+  const idxMc = avecMc ? { parNoeud: idx.mc.parNoeud || {}, sansPosition: idx.mc.sansPosition || [], horsDepartements: idx.mc.horsDepartements || [] } : { parNoeud: {}, sansPosition: [], horsDepartements: [] };
+  const deps = idx.departements || [];
+  const sansPos = idx.sansPosition || [], hors = idx.horsDepartements || [];
+  const vue = { reseau, quoi: '', q: (memo && memo.q) || '' };
+  const voitMt = () => vue.reseau !== 'meshcore', voitMc = () => vue.reseau !== 'meshtastic';
+  const nbDep = (d) => (voitMt() ? d.nb || 0 : 0) + (voitMc() ? d.nbMc || 0 : 0);
+  const nbSans = () => (voitMt() ? sansPos.length : 0) + (voitMc() ? idxMc.sansPosition.length : 0);
+  const nbHors = () => (voitMt() ? hors.length : 0) + (voitMc() ? idxMc.horsDepartements.length : 0);
+  const premier = () => (deps.filter((d) => nbDep(d) > 0).sort((a, b) => nbDep(b) - nbDep(a))[0] || {}).code || (nbSans() ? 'sans' : 'hors');
+  vue.quoi = String(code || (memo && memo.code) || premier()).toUpperCase();
+  if (vue.quoi === 'SANS') vue.quoi = 'sans';
+  if (vue.quoi === 'HORS') vue.quoi = 'hors';
+  const nomDe = (c) => { const d = deps.find((x) => x.code === c); return (d && d.nom) || ''; };
+  // Liste des choix selon le réseau listé : un département sans nœud de ce réseau n'y figure pas (sauf celui affiché)
+  const options = () => `${deps.slice().sort((a, b) => a.code.localeCompare(b.code)).filter((d) => nbDep(d) > 0 || d.code === vue.quoi).map((d) => `<option value="${esc(d.code)}" ${vue.quoi === d.code ? 'selected' : ''}>${esc(d.code)}${d.nom ? ' · ' + esc(d.nom) : ''} (${nbDep(d)})</option>`).join('')}`
+    + (nbSans() || vue.quoi === 'sans' ? `<option value="sans" ${vue.quoi === 'sans' ? 'selected' : ''}>Sans position reçue (${nbSans()})</option>` : '')
+    + (nbHors() || vue.quoi === 'hors' ? `<option value="hors" ${vue.quoi === 'hors' ? 'selected' : ''}>Position connue, hors de France (${nbHors()})</option>` : '');
+  const rien = !(deps.length || sansPos.length || hors.length || idxMc.sansPosition.length || idxMc.horsDepartements.length);
+  const boutonReseau = (r, lib, aide) => `<button type="button" data-nd-reseau="${r}" aria-pressed="${vue.reseau === r}" title="${aide}">${lib}</button>`;
+  $('#fiche-contenu').innerHTML = `<div class="liste-signalements noeuds-departement"><h3>${titre}</h3>
+    ${!rien ? `${choixReseau ? `<div class="nd-reseau" role="group" aria-label="Réseau listé"><span>Réseau</span>
+      ${boutonReseau('meshtastic', 'Meshtastic', 'Lister seulement les nœuds Meshtastic')}${boutonReseau('meshcore', 'MeshCore', 'Lister seulement les nœuds MeshCore')}${boutonReseau('les-deux', 'Les deux', 'Lister les nœuds des deux réseaux')}</div>` : ''}
+    <div class="registre-filtres">
+      <label>Afficher <select id="nd-dep"></select></label>
+      <input type="search" id="nd-recherche" placeholder="Filtrer : nom, identifiant, rôle…" aria-label="Filtrer la liste des nœuds" autocomplete="off" maxlength="60" value="${esc(vue.q)}">
+    </div>
+    <p id="nd-compte"></p>
+    <div class="table-defile"><table><thead><tr>${avecMc ? '<th>Réseau</th>' : ''}<th>Nœud</th><th>Identifiant du nœud</th><th>Rôle</th><th>Position</th><th>Dernier paquet</th></tr></thead><tbody id="nd-corps"></tbody></table></div>
+    <div class="actions-prop"><button type="button" class="mini" id="nd-csv">⬇ Exporter la liste (CSV)</button></div>` : '<p class="note">Aucun nœud connu pour l’instant.</p>'}
+    <p class="note">Le département est celui qui contient la position retransmise par le nœud (contours officiels, calcul fait sur le serveur). Une position floutée ou imprécise peut ranger un nœud près d’une limite dans le département voisin : à vérifier au cas par cas.</p>
+    ${avecMc ? '<p class="note">Pour un nœud MeshCore, la position est celle de sa dernière annonce (advert). Un nœud qui annonce 0, 0 n’a pas de position.</p>' : ''}
+    <p class="note" id="nd-note-sans" hidden></p>
+    ${idx.monde ? '<p class="note" id="nd-note-monde"></p>' : ''}
+    <p class="note">Cliquez sur un nœud pour ouvrir sa fiche ; en la fermant vous revenez ici.</p></div>`;
+  if (rien) return;
+  // Numéros (Meshtastic) et clés (MeshCore) rangés par département une fois pour toutes : une frappe dans le filtre ne relit pas tout l'index
+  const parDep = {}, parDepMc = {};
+  for (const [num, c] of Object.entries(idx.parNoeud || {})) (parDep[c] = parDep[c] || []).push(Number(num));
+  for (const [cle, c] of Object.entries(idxMc.parNoeud)) (parDepMc[c] = parDepMc[c] || []).push(cle);
+  let liste = [];
+  const champ = $('#nd-recherche');
+  const texteDe = (x) => (x.r === 'mc' ? [x.n.nom, x.n.id, x.n.cle, x.n.roleFr, 'meshcore']
+    : [x.n.nomLong, x.n.nomCourt, x.n.id, x.n.num, x.n.roleFr, x.n.materiel, x.n.firmware, 'meshtastic']).filter(Boolean).join(' ');
+  function rendre() {
+    $('#nd-dep').innerHTML = options();
+    const nums = !voitMt() ? [] : vue.quoi === 'sans' ? sansPos : vue.quoi === 'hors' ? hors : parDep[vue.quoi] || [];
+    const cles = !voitMc() ? [] : vue.quoi === 'sans' ? idxMc.sansPosition : vue.quoi === 'hors' ? idxMc.horsDepartements : parDepMc[vue.quoi] || [];
+    const mots = sansAccent(vue.q).split(/\s+/).filter(Boolean);
+    let inconnus = 0;
+    const tous = [
+      ...nums.map((num) => { const n = etat.noeuds.get(Number(num) >>> 0); if (!n) inconnus++; return n ? { r: 'mt', n } : null; }),
+      ...cles.map((cle) => { const n = mc.noeuds.get(cle); if (!n) inconnus++; return n ? { r: 'mc', n } : null; }),
+    ].filter(Boolean);
+    liste = tous.filter((x) => mots.every((m) => sansAccent(texteDe(x)).includes(m)))
+      .sort((a, b) => (b.n.dernierVu || 0) - (a.n.dernierVu || 0));
+    const total = nums.length + cles.length;
+    const tete = vue.quoi === 'sans' ? `${liste.length} nœud(s) sans position reçue.`
+      : vue.quoi === 'hors' ? `${liste.length} nœud(s) positionnés hors de France.`
+      : nomDe(vue.quoi) ? `${liste.length} nœud(s) dans le département ${vue.quoi} · ${nomDe(vue.quoi)}.` : `${liste.length} nœud(s) dans le département ${vue.quoi}.`;
+    const detail = vue.reseau === 'les-deux' && avecMc ? ` <small>${esc(`Meshtastic : ${liste.filter((x) => x.r === 'mt').length} · MeshCore : ${liste.filter((x) => x.r === 'mc').length}`)}</small>` : '';
+    $('#nd-compte').innerHTML = `${esc(tete)}${detail}${mots.length ? ` <span>${esc(`Recherche en cours : ${total} au total.`)}</span>` : ''}${inconnus ? ` <small>${esc(`${inconnus} nœud(s) purgés depuis le calcul ne sont plus affichés.`)}</small>` : ''}`;
+    const cols = avecMc ? 6 : 5;
+    $('#nd-corps').innerHTML = liste.map(({ r, n }) => r === 'mc'
+      ? `<tr data-mc="${esc(n.cle)}" class="cliquable">
+      ${avecMc ? '<td><span class="tag-reseau mc" title="MeshCore">MC</span></td>' : ''}
+      <td><b>${esc(n.nom || n.id)}</b>${n.observateur ? ' <small>observateur</small>' : ''}</td>
+      <td><small>${esc(n.id)}</small></td>
+      <td>${esc(n.roleFr || '')}</td>
+      <td>${n.lat != null && n.lon != null ? `${Number(n.lat).toFixed(4)}, ${Number(n.lon).toFixed(4)}` : 'inconnue'}</td>
+      <td>${n.dernierVu ? ilYa(n.dernierVu) : '—'}</td></tr>`
+      : `<tr data-num="${n.num}" class="cliquable">
+      ${avecMc ? '<td><span class="tag-reseau mt" title="Meshtastic">MT</span></td>' : ''}
+      <td><b>${esc(n.nomLong || n.nomCourt || n.id)}</b>${n.passerelle ? ' <small>passerelle</small>' : ''}</td>
+      <td><small>${esc(n.id)}</small></td>
+      <td>${esc(n.roleFr || '')}</td>
+      <td>${n.lat != null ? `${n.lat.toFixed(4)}, ${n.lon.toFixed(4)}` : 'inconnue'}</td>
+      <td>${n.dernierVu ? ilYa(n.dernierVu) : '—'}</td></tr>`).join('') || `<tr><td colspan="${cols}">Aucun nœud ne correspond.</td></tr>`;
+    const memoire = () => ({ ecran: 'departement', code: vue.quoi, q: vue.q, reseau: vue.reseau });
+    $('#nd-corps').querySelectorAll('tr[data-num]').forEach((tr) => (tr.onclick = () => {
+      etat.retourFicheDemande = memoire();
+      ouvrirFiche(Number(tr.dataset.num));
+    }));
+    $('#nd-corps').querySelectorAll('tr[data-mc]').forEach((tr) => (tr.onclick = () => {
+      etat.retourFicheDemande = memoire();
+      mcOuvrirFiche(tr.dataset.mc);
+    }));
+    // Notes qui dépendent du réseau listé
+    const ns = $('#nd-note-sans'), k = nbSans();
+    ns.hidden = !k || vue.quoi === 'sans';
+    ns.textContent = k ? `${k} nœud(s) n’ont envoyé aucune position : ils ne peuvent être rangés dans aucun département. Choisissez « Sans position reçue » pour les voir.` : '';
+    const nm = $('#nd-note-monde');
+    if (nm) nm.textContent = `Les départements n’existent qu’en France. Sur cette carte du monde, ${nbHors()} nœud(s) positionné(s) sont hors de France : ils sont comptés à part, rien n’est deviné.`;
+    document.querySelectorAll('[data-nd-reseau]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ndReseau === vue.reseau)));
+  }
+  document.querySelectorAll('[data-nd-reseau]').forEach((b) => (b.onclick = () => { vue.reseau = b.dataset.ndReseau; rendre(); }));
+  $('#nd-dep').onchange = (e) => { vue.quoi = e.target.value; rendre(); };
+  champ.oninput = () => { vue.q = champ.value; rendre(); };
+  champ.onkeydown = (e) => { if (e.key === 'Escape') { champ.value = ''; vue.q = ''; rendre(); } };
+  $('#nd-csv').onclick = () => {
+    const c = (x) => { const t = String(x ?? ''); return `"${(typeof x !== 'number' && /^[=+\-@\t\r]/.test(t) ? "'" + t : t).replace(/"/g, '""')}"`; };
+    const entete = ['Réseau', 'Nom', 'Nom court', 'Identifiant', 'Numéro', 'Rôle', 'Matériel', 'Firmware', 'Latitude', 'Longitude', 'Département', 'Dernier paquet'];
+    const lignes = liste.map(({ r, n }) => (r === 'mc'
+      ? ['MeshCore', n.nom, '', n.cle, '', n.roleFr, '', '', n.lat, n.lon, idxMc.parNoeud[n.cle] || '', n.dernierVu ? new Date(n.dernierVu).toISOString() : '']
+      : ['Meshtastic', n.nomLong, n.nomCourt, n.id, n.num, n.roleFr, n.materiel, n.firmware, n.lat, n.lon, (idx.parNoeud || {})[String(n.num >>> 0)] || '', n.dernierVu ? new Date(n.dernierVu).toISOString() : '']).map(c).join(';'));
+    telechargerTexte(`noeuds-${vue.quoi}-${new Date().toISOString().slice(0, 10)}.csv`, '﻿' + [entete.map(c).join(';'), ...lignes].join('\r\n'));
+  };
+  rendre();
+  if (vue.q) champ.focus();
 }
 async function ficheAutresPresets() {
   $('#fiche').hidden = false;

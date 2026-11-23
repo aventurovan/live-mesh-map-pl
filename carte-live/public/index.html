@@ -109,6 +109,8 @@
         <button id="outil-portee" class="bascule" title="Écouter un nœud en direct : qui l’entend, avec quel signal, par quels relais, et s’il remonte sur MQTT">📶 Test de portée d’un nœud</button>
         <button id="outil-terrain" class="bascule" title="Mapper SF6: pomiary zasięgu w terenie, kratki pomiarów na mapie">📍 Mode terrain</button>
         <div class="titre-outils">Partager</div>
+        <button id="outil-urgence" class="bascule" hidden title="Configuration de crise pour tous les comptes connectés : bandeau, carte simplifiée, journal horodaté exportable">🚨 Mode urgence</button>
+        <button id="outil-secteurs" class="bascule" hidden title="Prévenir quand un membre d’une équipe sort d’un secteur dessiné sur la carte (ou y entre)">🗺️ Secteurs d’alerte</button>
         <button id="outil-signalements" class="bascule seul-membre" hidden title="Événements signalés sur la carte et diffusés en LoRa">🚩 Signalements</button>
         <button id="outil-rapport" class="bascule seul-membre" hidden title="État du réseau sur 7 jours, imprimable en PDF ; archivé chaque lundi">📄 Rapport hebdomadaire</button>
         <button id="outil-partager" class="bascule" title="Carte publique à intégrer dans un site, exports GeoJSON / GPX, Grafana, Home Assistant">📤 Carte publique et exports</button>
@@ -274,6 +276,11 @@
     </section>
 
     <section data-vue="messages" class="vue">
+      <div class="recherche recherche-messages" role="search">
+        <input type="search" id="recherche-messages" placeholder="Chercher un mot, un nom ou un indicatif…" aria-label="Chercher dans les messages (Meshtastic et MeshCore)" title="Cherche dans le texte des messages et dans le nom ou l’identifiant de l’expéditeur, sans tenir compte des majuscules ni des accents" autocomplete="off" enterkeyhint="search" maxlength="80">
+        <button type="button" class="mini" id="effacer-recherche-messages" title="Effacer la recherche" aria-label="Effacer la recherche" hidden>✕</button>
+      </div>
+      <div id="resultats-recherche" class="flux" aria-live="polite" hidden></div>
       <div id="filtre-messages" class="filtre-messages"></div>
       <form id="form-envoi" class="envoi" hidden>
         <div class="envoi-ligne">
@@ -293,6 +300,7 @@
       <nav class="sous-onglets-mc">
         <button data-mc-vue="noeuds">Nœuds</button><button data-mc-vue="paquets">Paquets</button><button data-mc-vue="analyse">Analyse</button><button data-mc-vue="messages">Messages</button><button data-mc-vue="gestion" hidden title="Administrer les répéteurs et room servers MeshCore : réglages, statut, voisins, CLI">Programmer</button><button data-mc-vue="companion" title="Companion MeshCore relié à la carte, réglages MeshCore">Module MeshCore</button>
       </nav>
+      <div id="mc-sans-source" class="mc-sans-source" hidden></div>
       <div id="mc-contenu"></div>
     </section>
   </aside>
@@ -370,6 +378,21 @@
       <label id="champ-code" hidden>Code de l’application d’authentification <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123456"></label>
       <p class="erreur"></p>
       <div class="actions"><button type="submit" class="principal">Se connecter</button></div>
+      <button type="button" class="lien-discret" id="btn-oubli">Mot de passe oublié ?</button>
+    </form>
+    <form id="form-oubli" data-pan="oubli" hidden>
+      <h3>Mot de passe oublié</h3>
+      <p class="note" id="note-oubli"></p>
+      <label>Identifiant, indicatif ou e-mail <input name="identifiant" autocomplete="username" required maxlength="120"></label>
+      <p class="erreur"></p>
+      <div class="actions"><button type="button" class="retour-connexion">← Retour</button><button type="submit" class="principal">Demander un nouveau mot de passe</button></div>
+    </form>
+    <form id="form-reinit" data-pan="reinit" hidden>
+      <h3>Choisir un nouveau mot de passe</h3>
+      <label>Nouveau mot de passe <input name="nouveau" type="password" autocomplete="new-password" required minlength="8"></label>
+      <label>Confirmer <input name="confirmation" type="password" autocomplete="new-password" required minlength="8"></label>
+      <p class="erreur"></p>
+      <div class="actions"><button type="submit" class="principal">Enregistrer</button></div>
     </form>
     <form id="form-inscription" data-pan="inscription" hidden>
       <p class="note" id="note-inscription"></p>
@@ -389,7 +412,7 @@
     <nav class="onglets-dlg"><button data-pp="bord" class="actif">Tableau de bord</button><button data-pp="regles">🔗 Liaisons (canaux)</button><button data-pp="noire">Liste noire</button><button data-pp="reglages">Réglages</button></nav>
     <div id="pp-contenu"></div>
   </dialog>
-  <dialog id="dlg-chercher" class="dlg-chercher">
+  <dialog id="dlg-chercher" class="dlg-chercher" data-fermer-dehors="toujours">
     <button class="fermer" id="fermer-chercher" title="Fermer (Échap)">×</button>
     <input id="chercher-reglage" type="search" placeholder="Chercher un réglage ou une fonction : MQTT, mot de passe, IATA, équipes…" autocomplete="off" aria-label="Chercher un réglage">
     <div id="resultats-reglage" role="listbox"></div>
@@ -404,6 +427,7 @@
       <button data-dlg="sauvegardes" class="seul-admin">Sauvegardes</button>
       <button data-dlg="archive" class="seul-admin">Archive PostgreSQL</button>
       <button data-dlg="journal" class="seul-admin">Journal</button>
+      <button data-dlg="frequentation" class="seul-admin">Fréquentation</button>
     </nav>
     <section data-pan="moncompte" id="pan-moncompte"></section>
     <section data-pan="comptes" id="pan-comptes" hidden></section>
@@ -411,6 +435,7 @@
     <section data-pan="sauvegardes" id="pan-sauvegardes" hidden></section>
     <section data-pan="archive" id="pan-archive" hidden></section>
     <section data-pan="journal" id="pan-journal" hidden></section>
+    <section data-pan="frequentation" id="pan-frequentation" hidden></section>
   </dialog>
 
   <dialog id="dlg-installation" class="large">
@@ -454,6 +479,7 @@
   <script src="/animations.js"></script>
   <script src="/meshcore.js"></script>
   <script src="/ergonomie.js"></script>
+  <script src="/crise.js"></script>
   <script src="/uklad.js"></script>
 </body>
 </html>

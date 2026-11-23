@@ -56,7 +56,9 @@ const etat = {
   coucheLiens: null,
   alertes: [],
   stats: null,
-  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: false, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false, sf7: false, mapper: false, rekordy: false, slady: false },
+  // Une clé par bouton « bascule » de la barre des couches : sans elle, le choix de l'utilisateur n'est pas
+  // relu au chargement (il est filtré par « k in etat.couches ») et le réglage CARTE_COUCHES_MASQUEES l'ignore.
+  couches: { rf: true, voisinage: true, traceroute: true, inactifs: false, animations: true, sommets: true, federation: false, releves: true, routiers: false, dfci: false, radar: false, feux: false, sf8: false, sf7: false, mapper: false, rekordy: false, slady: false, aprs: false, rivieres: false, lorawan: false },
   filtresPorts: new Set([...Object.keys(PORTS), 'pki']),
   selection: null,
   trajet: null,
@@ -187,7 +189,8 @@ function chargerAdministration() {
   if (!chargementAdministration) {
     chargementAdministration = new Promise((ok, ko) => {
       const s = document.createElement('script');
-      s.src = '/administration.js';
+      const v = (/[?&]v=([\w.-]+)/.exec((document.querySelector('script[src*="/app.js"]') || {}).src || '') || [])[1];
+      s.src = '/administration.js' + (v ? '?v=' + v : '?t=' + Date.now()); // versionné : jamais l'ancien après une mise à jour
       s.onload = ok;
       s.onerror = () => { chargementAdministration = null; ko(new Error('Écran indisponible : vérifiez la connexion à la carte')); };
       document.head.appendChild(s);
@@ -216,7 +219,9 @@ function rendreSauvegardes(...a) { return administration('rendreSauvegardes', a)
 function rendreJournal(...a) { return administration('rendreJournal', a); }
 function rendreComptes(...a) { return administration('rendreComptes', a); }
 function rendreReglages(...a) { return administration('rendreReglages', a); }
-for (const n of ['ficheRegistreRelais', 'ficheAutresPresets', 'ouvrirBroker', 'ouvrirPasserelle', 'ficheMaj', 'editeurReglages', 'ficheFrance', 'ficheModeles', 'ficheV28', 'formulaireAction', 'rapportVerif', 'rendreSauvegardes', 'rendreJournal', 'rendreComptes', 'rendreReglages']) window[n].relais = true;
+function rendreFrequentation(...a) { return administration('rendreFrequentation', a); }
+function ficheNoeudsDepartement(...a) { return administration('ficheNoeudsDepartement', a); }
+for (const n of ['rendreFrequentation', 'ficheNoeudsDepartement', 'ficheRegistreRelais', 'ficheAutresPresets', 'ouvrirBroker', 'ouvrirPasserelle', 'ficheMaj', 'editeurReglages', 'ficheFrance', 'ficheModeles', 'ficheV28', 'formulaireAction', 'rapportVerif', 'rendreSauvegardes', 'rendreJournal', 'rendreComptes', 'rendreReglages']) window[n].relais = true;
 
 // ---- Carte -----------------------------------------------------------------
 let carte;
@@ -589,6 +594,9 @@ function afficherVersion(v) {
   el.href = v.url;
   el.classList.toggle('maj', !!v.majDisponible);
   el.textContent = v.majDisponible ? `v${v.version} · v${v.derniere} disponible` : `v${v.version}${v.derniere ? ' · à jour' : ''}`;
+  // Opened in the Android app: its version next to the map's (to compare phone and tablet)
+  const appli = /CarteLiveAndroid\/([\w.-]+)/.exec(navigator.userAgent);
+  if (appli) el.textContent += ` · appli ${appli[1]}`;
   el.title = v.majDisponible ? `Nouvelle version v${v.derniere} publiée sur GitHub : cliquez pour ${etat.admin ? 'mettre à jour' : 'voir les nouveautés'}` : v.derniere ? `Version installée v${v.version} — c'est la dernière publiée sur GitHub` : `Version installée v${v.version}`;
   // Administrateur : fenêtre de mise à jour en un clic. Sinon (pas connecté, ou mode consultation) : on explique comment
   // mettre à jour au lieu de partir sur GitHub ; les nouveautés restent accessibles par un lien.
@@ -686,6 +694,8 @@ document.querySelectorAll('details.pli-alertes').forEach((d) => {
 }
 
 // ---- Santé de la carte (processeur, mémoire, réactivité, disque, base, MQTT) ---------------------------
+// Nom d'une tâche du registre de santé : une route HTTP (« GET /api/liens ») reste telle quelle, le reste est traduit
+const nomTacheSante = (n) => (/^(GET|POST|PUT|PATCH|DELETE) /.test(n) ? `<span translate="no">${esc(n)}</span>` : esc(tr(n)));
 async function chargerSanteCarte() {
   if (!etat.membre) return;
   let r;
@@ -704,6 +714,7 @@ async function chargerSanteCarte() {
       ${m('Procesor', fmt(e.cpuPct, 0, ' %'), e.cpuPct > 80)}
       ${m('Pamięć', `${e.memMo ?? '–'}${r.limiteMemMo ? ' / ' + r.limiteMemMo : ''} MB`, r.limiteMemMo && e.memMo > r.limiteMemMo * 0.85)}
       ${m('Opóźnienie (najgorsze)', e.latenceP99 != null ? e.latenceP99 + ' ms' : '–', e.latenceP99 > 500)}
+      ${m('Najdłuższe zawieszenie (minuta)', e.latenceMax != null ? (e.latenceMax >= 1000 ? fmt(e.latenceMax / 1000, 1, ' s') : e.latenceMax + ' ms') : '–', e.latenceMax > 1500)}
       ${m('Wiadomości MQTT', (e.mqttParMinute ?? '–') + ' / min')}
       ${m('Baza danych', r.base ? `${r.base.totalMo} MB` : '–', r.base && r.base.totalMo > 2048)}
       ${m('Wolne miejsce na dysku', r.disque ? `${r.disque.libreGo} GB` : '–', r.disque && r.disque.libreGo / r.disque.totalGo < 0.1)}
@@ -712,6 +723,16 @@ async function chargerSanteCarte() {
       ${m('Version', esc(r.version))}
     </div>
     ${courbe(r.historique, 'latenceP99', 'Opóźnienie (największe w minucie)', ' ms', 0, 500) || ''}
+    ${courbe(r.historique.map((x) => ({ heure: x.heure, gel: x.latenceMax != null ? x.latenceMax / 1000 : null })), 'gel', 'Zawieszenia (największe opóźnienie w minucie)', ' s', 1, 1.5) || ''}
+    ${(r.gels || []).length ? `<h4>Ostatnie zawieszenia (ponad 1,5 s bez odpowiedzi)</h4>
+      <table class="voisins tableau-taches"><thead><tr><th>Godzina</th><th>Czas</th><th>Najdłuższe zadanie w tej minucie</th></tr></thead><tbody>
+      ${r.gels.slice(0, 8).map((g) => `<tr><td>${new Date(g.heure).toLocaleTimeString(window.LOCALE || 'pl-PL', { hour: '2-digit', minute: '2-digit' })}</td><td><b>${fmt(g.ms / 1000, 1, ' s')}</b></td><td>${g.tache ? `${nomTacheSante(g.tache.nom)} · ${g.tache.ms} ms${g.tache.n > 1 ? ` · ${`${g.tache.n} razy`}` : ''}` : '–'}</td></tr>`).join('')}
+      </tbody></table>` : ''}
+    ${(r.taches || []).length ? `<h4>Najwolniejsze zadania (ostatnia godzina)</h4>
+      <table class="voisins tableau-taches"><thead><tr><th>Zadanie</th><th>Najdłużej</th><th>Średnio</th><th>Uruchomienia</th></tr></thead><tbody>
+      ${r.taches.slice(0, 10).map((t) => `<tr><td>${nomTacheSante(t.nom)}</td><td><b${t.maxMs > 500 ? ' style="color:var(--attention)"' : ''}>${t.maxMs >= 1000 ? fmt(t.maxMs / 1000, 1, ' s') : t.maxMs + ' ms'}</b></td><td>${fmt(t.moyMs, t.moyMs < 10 ? 1 : 0, ' ms')}</td><td>${t.n}</td></tr>`).join('')}
+      </tbody></table>
+      <p class="note">Czas, w którym mapa nie może robić nic innego. Zadanie, które często przekracza 500 ms, zawiesza mapę dla wszystkich odwiedzających.</p>` : ''}
     ${courbe(r.historique, 'cpuPct', 'Procesor', ' %', 0) || ''}
     ${courbe(r.historique, 'memMo', 'Pamięć', ' MB', 0, r.limiteMemMo ? Math.round(r.limiteMemMo * 0.85) : null) || ''}
     <p class="note">MQTT ${r.mqtt.connecte ? 'połączony' : '<b>rozłączony</b>'}${r.mqtt.reconnexions ? ` · ponowne połączenia: ${r.mqtt.reconnexions}` : ''}${r.mqtt.horsPerimetreMc ? ` · pominięte pakiety MeshCore spoza strefy: ${r.mqtt.horsPerimetreMc}` : ''}${r.base && r.base.walMo ? ` · dziennik bazy (WAL) ${r.base.walMo} MB` : ''}. Wykresy: ostatnie 3 godziny, jeden punkt na minutę.</p>`;
@@ -831,9 +852,32 @@ function porteeRecevoir(m) {
   if (m.de === portee.num) { portee.recs.push({ passerelle: m.passerelle, snr: m.snr, rssi: m.rssi, sauts: m.sauts, relais: m.relais, port: m.port, heure: m.heure || Date.now() }); rendrePortee(); }
   else if (m.relais === portee.num) { portee.relaye.push({ de: m.de, passerelle: m.passerelle, heure: m.heure || Date.now() }); rendrePortee(); }
 }
+// Propositions de nœuds au fil de la frappe, pour la boîte « nœud à écouter ».
+// Nœuds Meshtastic seulement : c'est ce que l'écoute en direct sait suivre (porteeRecevoir compare des numéros
+// Meshtastic, et /api/noeuds/<num> relit leur historique) ; les nœuds MeshCore n'ont pas de numéro de ce genre.
+// L'index normalisé (sans accents, en minuscules) est construit une fois par ouverture de la boîte, pas à chaque
+// touche ; au plus 8 propositions, les noms qui commencent par ce qui est tapé d'abord.
+function proposerNoeudsMt(limite = 8) {
+  let index = null;
+  return (q) => {
+    const s = sansAccent(String(q || '')).trim().replace(/^!/, '');
+    if (!s) return [];
+    if (!index) index = [...etat.noeuds.values()].map((n) => ({ num: n.num, id: n.id, nom: n.nomLong || n.nomCourt || n.id, court: n.nomCourt || '',
+      debut: sansAccent(`${n.nomCourt || ''}|${n.nomLong || ''}|${String(n.id || '').replace('!', '')}`), tout: sansAccent(`${n.id} ${n.nomCourt || ''} ${n.nomLong || ''}`) }));
+    const debuts = [], dedans = [];
+    for (const x of index) {
+      if (x.debut.split('|').some((p) => p.startsWith(s))) { if (debuts.length < limite) debuts.push(x); }
+      else if (x.tout.includes(s) && dedans.length < limite) dedans.push(x);
+      if (debuts.length >= limite) break;
+    }
+    return [...debuts, ...dedans].slice(0, limite)
+      .map((x) => ({ valeur: x.id, libelle: x.nom, detail: x.id + (x.court && x.court !== x.nom ? ' · ' + x.court : '') }));
+  };
+}
 async function testPortee(num) {
   if (num == null) {
-    const t = (await saisir('Identifiant du nœud à écouter (!xxxxxxxx, ou son nom) :'));
+    // Le champ reste libre : on peut écouter un nœud que la carte ne connaît pas encore (c'est tout l'intérêt)
+    const t = (await saisir('Identifiant du nœud à écouter (!xxxxxxxx, ou son nom) :', '', { suggestions: proposerNoeudsMt() }));
     if (!t) return;
     const s = t.trim().toLowerCase();
     const n = [...etat.noeuds.values()].find((x) => x.id.toLowerCase() === (s.startsWith('!') ? s : '!' + s) || (x.nomLong || '').toLowerCase().includes(s) || (x.nomCourt || '').toLowerCase() === s);
@@ -1840,6 +1884,7 @@ const CATALOGUE_REGLAGES = [
   ['Serveur MQTT (broker)', 'Compte › Réglages', 'mqtt url broker adresse serveur connexion', 'admin', () => ouvrirDlg('reglages', '[name=mqttUrl]')],
   ['Réglages avancés', 'Réglages', 'env fichier seuils alerte tension batterie canal fond tuiles meshmonitor export jeton postgres lsa saf meteosat passerelle variables', 'admin', () => ficheReglagesAvances()],
   ['Registre des relais', 'Outils', 'registre relais site autorisation propriétaire visite inventaire export csv', 'membre', () => ficheRegistreRelais()],
+  ['Nœuds d’un département (par position)', 'Outils', 'departement position liste noeuds 43 recherche par position', 'membre', () => ficheNoeudsDepartement()],
   ['Nœuds à inviter (autre preset)', 'Outils', 'longfast preset autre inviter recruter sentinelle longmoderate', 'admin', () => ficheAutresPresets()],
   ['Brokers MQTT supplémentaires', 'Réseau › Broker MQTT', 'mqtt broker plusieurs autre bulle voisine supplementaire', 'admin', () => ouvrirBroker()],
   ['Sujet racine MQTT', 'Compte › Réglages', 'mqtt topic racine msh', 'admin', () => ouvrirDlg('reglages', '[name=mqttRacine]')],
@@ -1871,6 +1916,8 @@ const CATALOGUE_REGLAGES = [
   // Programmer (Meshtastic)
   ['Clés d’administration', 'Programmer', 'admin key pki clé publique', 'gestion', () => ouvrirOutilProgrammer('voir-cles')],
   ['Équipes (canal chiffré par équipe)', 'Programmer', 'équipe canal clé psk intervenant cle_equipes', 'admin', () => ouvrirOutilProgrammer('voir-equipes')],
+  ['Secteurs d’alerte (géorepérage)', 'Outils', 'secteur zone géorepérage geofence sortie entrée équipe alerte polygone périmètre', 'gestion', () => ficheSecteurs()],
+  ['Mode urgence (crise)', 'Outils', 'urgence crise catastrophe bandeau journal adrasec plan secours exercice', 'gestion', () => ficheCrise()],
   ['Favoris entre relais', 'Programmer', 'favoris sauts relais', 'gestion', () => ouvrirOutilProgrammer('voir-favoris')],
   ['Modèles de réglages', 'Programmer', 'modèle yaml export import', 'gestion', () => ouvrirOutilProgrammer('voir-modeles')],
   ['Contrôle du trafic', 'Programmer', 'bavard trafic mqtt réinjecté', 'gestion', () => ouvrirOutilProgrammer('voir-trafic')],
@@ -1886,10 +1933,14 @@ const CATALOGUE_REGLAGES = [
   ['Mettre à jour la carte', 'Version', 'mise à jour version upgrade docker image nouvelle', 'admin', () => ficheMaj()],
   ['Signalements (route inondée…)', 'Outils', 'signaler événement inondation alerte waypoint bipper germacrise', 'membre', () => ficheSignalements()],
 ];
+// Carte hors de France : zone d'étude = carré de 1° (MN40W075), pas de département
+// Carte réglée hors de France (carré du monde) : le serveur le dit (config.monde), sinon d'après le code de la zone
+const carteMondeClient = () => (typeof (etat.config || {}).monde === 'boolean' ? etat.config.monde : /^M[NS]\d{2}[EW]\d{3}$/.test(String(((etat.config || {}).departement || {}).code || '')));
 function indexReglages() {
   const r = etat.admin ? 3 : etat.gestion ? 2 : etat.membre ? 1 : 0;
   const niv = { admin: 3, gestion: 2, membre: 1 };
-  const l = CATALOGUE_REGLAGES.filter((e) => !e[3] || r >= niv[e[3]]).map(([t, ch, m, , go]) => ({ t, ch, m, go }));
+  const l = CATALOGUE_REGLAGES.filter((e) => !e[3] || r >= niv[e[3]]).map(([t, ch, m, , go]) => ({ t, ch, m, go }))
+    .map((e) => (carteMondeClient() && e.t === 'Télécharger toute la France (relief)' ? { ...e, t: 'Télécharger le relief de la zone (carrés voisins)' } : e));
   const cleT = (t) => sansAccent(t).replace(/^[^a-z0-9]+/, '').trim();
   const vus = new Set(l.map((e) => cleT(e.t)));
   const ajouter = (t, ch, m, go) => { t = String(t || '').replace(/\s+/g, ' ').trim(); if (!t || t.length < 2 || vus.has(cleT(t))) return; vus.add(cleT(t)); l.push({ t, ch, m, go }); };
@@ -2475,6 +2526,142 @@ document.addEventListener('click', (e) => {
   menuAuteur(Number(b.dataset.auteur), b);
 });
 
+// ---- Recherche dans les messages (Meshtastic et MeshCore) ----------------------------------------------------
+// Un mot du texte, ou le nom (long, court) / l'identifiant de l'expéditeur — et du destinataire d'un message
+// direct. Sans majuscules ni accents ; le serveur applique les mêmes droits que pour la lecture des messages.
+const rechMsg = { q: '', n: 0, minuteur: null, resultats: [], mots: [], suite: null, active: false };
+// Sans accents ni majuscules, caractère par caractère (garde la correspondance avec le texte d'origine)
+function normaliserRecherche(t) {
+  const car = Array.from(String(t == null ? '' : t)), norm = [], index = [];
+  car.forEach((c, i) => { for (const x of c.normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase()) { norm.push(x); index.push(i); } });
+  return { car, norm: norm.join(''), index };
+}
+// Texte échappé, chaque terme trouvé (sans tenir compte des accents ni des majuscules) entouré de <mark>
+function surlignerRecherche(texte, termes) {
+  if (texte == null || texte === '') return '';
+  const { car, norm, index } = normaliserRecherche(texte);
+  const marque = new Array(car.length).fill(false);
+  for (const t of termes || []) {
+    const nt = normaliserRecherche(t).norm;
+    if (!nt) continue;
+    for (let p = norm.indexOf(nt); p >= 0; p = norm.indexOf(nt, p + nt.length)) for (let k = p; k < p + nt.length; k++) marque[index[k]] = true;
+  }
+  let h = '', dans = false;
+  car.forEach((c, i) => {
+    if (marque[i] && !dans) { h += '<mark>'; dans = true; } else if (!marque[i] && dans) { h += '</mark>'; dans = false; }
+    h += esc(c);
+  });
+  return h + (dans ? '</mark>' : '');
+}
+function modeRecherche(actif) {
+  rechMsg.active = actif;
+  const s = document.querySelector('section[data-vue="messages"]');
+  if (s) s.classList.toggle('en-recherche', actif);
+  const z = $('#resultats-recherche'); if (z) z.hidden = !actif;
+  const b = $('#effacer-recherche-messages'); if (b) b.hidden = !($('#recherche-messages') || {}).value;
+}
+async function lancerRechercheMessages(suite = false) {
+  const champ = $('#recherche-messages'), z = $('#resultats-recherche');
+  if (!champ || !z) return;
+  const q = champ.value.replace(/\s+/g, ' ').trim();
+  if (!q) { modeRecherche(false); return; }
+  modeRecherche(true);
+  if (q.replace(/[^\p{L}\p{N}]/gu, '').length < 2) { z.innerHTML = '<div class="vide">Tapez au moins 2 lettres ou chiffres.</div>'; return; }
+  const n = ++rechMsg.n;
+  if (!suite) z.innerHTML = '<div class="vide">Recherche…</div>';
+  let r;
+  try { r = await api('/api/messages/recherche?q=' + encodeURIComponent(q) + (suite && rechMsg.suite ? '&avant=' + rechMsg.suite : '')); } catch (e) { if (n === rechMsg.n) z.innerHTML = `<div class="vide">${esc(e.message)}</div>`; return; }
+  if (n !== rechMsg.n) return; // une frappe plus récente a relancé la recherche
+  rechMsg.q = q; rechMsg.mots = r.mots || []; rechMsg.suite = r.suite;
+  rechMsg.resultats = suite ? [...rechMsg.resultats, ...r.resultats] : r.resultats;
+  rendreRechercheMessages();
+}
+function rendreRechercheMessages() {
+  const z = $('#resultats-recherche');
+  if (!z) return;
+  const l = rechMsg.resultats, termes = [...rechMsg.mots, rechMsg.q];
+  const S = (t) => surlignerRecherche(t, termes);
+  const TROUVE = { texte: 'dans le texte', expediteur: 'par l’expéditeur', destinataire: 'par le destinataire' };
+  const ligne = (r) => {
+    const date = new Date(r.heure).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const lieu = r.direct ? '<b class="canal-msg direct">✉️ Direct</b>' : `<b class="canal-msg" style="--coul:${couleurCanal(r.canal)}">📢 ${esc(r.canal || '?')}</b>`;
+    let qui;
+    if (r.reseau === 'mt') {
+      const nom = (num, long, court, id) => {
+        const libelle = long || court || nomNoeud(num), details = [long && court ? court : null, id !== libelle ? id : null].filter(Boolean);
+        return `<button type="button" class="auteur-msg" data-auteur="${num >>> 0}" title="Fiche, message direct, position">${S(libelle)}</button>${details.length ? ` <small class="id-recherche">${details.map(S).join(' · ')}</small>` : ''}`;
+      };
+      qui = nom(r.de, r.nomDe, r.nomCourtDe, r.idDe) + (r.direct ? ' → ' + nom(r.vers, r.nomVers, r.nomCourtVers, r.idVers) : '');
+    } else {
+      const nom = (cle, n) => `<button type="button" class="auteur-msg" data-mc-auteur="${esc(cle || '')}" data-mc-nom="${esc(n || '')}" title="Fiche, message direct, position">${S(n || '?')}</button>`;
+      qui = nom(r.de, r.nomDe) + (r.nomActuelDe ? ` <small class="id-recherche"><span>nom actuel :</span> ${S(r.nomActuelDe)}</small>` : '') + (r.direct ? ' → ' + nom(r.vers, r.nomVers) : '');
+    }
+    return `<div class="message resultat-recherche cliquable" data-ref="${esc(r.ref)}" tabindex="0" role="button" title="Ouvrir le message dans son canal">
+      <div class="entete">${esc(date)} · ${lieu} · <span class="tag reseau-${r.reseau}">${r.reseau === 'mc' ? 'MeshCore' : 'Meshtastic'}</span> · ${qui}</div>
+      <div class="texte" translate="no">${S(r.texte)}</div>
+      <div class="trouve-recherche">${r.trouve.map((k) => `<span>${TROUVE[k]}</span>`).join('')}</div></div>`;
+  };
+  z.innerHTML = !l.length ? `<div class="vide">Aucun message trouvé pour « ${esc(rechMsg.q)} ».</div>`
+    : `<div class="note">Messages trouvés : ${l.length + (rechMsg.suite ? '+' : '')} · du plus récent au plus ancien</div>${l.map(ligne).join('')}${rechMsg.suite ? '<button type="button" class="mini" id="suite-recherche">Plus anciens…</button>' : ''}`;
+  const suite = $('#suite-recherche'); if (suite) suite.onclick = () => lancerRechercheMessages(true);
+  z.querySelectorAll('.resultat-recherche').forEach((el) => {
+    const r = l.find((x) => x.ref === el.dataset.ref); // « ref », pas « cle » : un champ « cle » serait masqué en démonstration
+    const ouvrir = (e) => { if (e.target.closest('[data-auteur], [data-mc-auteur], [data-epingle]')) return; ouvrirResultatRecherche(r); };
+    el.onclick = ouvrir;
+    el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ouvrir(e); } };
+  });
+}
+// Mise en évidence d'un message retrouvé dans sa liste (canal ou messages directs)
+function reperer(el) {
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.add('repere');
+  setTimeout(() => el.classList.remove('repere'), 4000);
+}
+// Clic sur un résultat : le message est affiché dans son canal (ou parmi les messages directs), à sa place
+async function ouvrirResultatRecherche(r) {
+  if (!r) return;
+  modeRecherche(false);
+  if (r.reseau === 'mt') {
+    const filtre = r.direct ? (estMonDirect(r) ? 'direct' : '') : 'c:' + r.canal;
+    if (filtreMessages !== filtre) choisirFiltreMessages(filtre);
+    try { await chargerMessages(); } catch { /* hors ligne */ }
+    const el = $('#messages').querySelector(`.message[data-rowid="${r.rowid}"]`);
+    if (el) reperer(el);
+    else { annonce('Message plus ancien que l’historique affiché : son parcours est tracé sur la carte.'); afficherParcours(r.rowid); }
+    return;
+  }
+  if (typeof choisirFiltreMc !== 'function') return;
+  choisirFiltreMc(r.direct ? 'direct' : 'c:' + r.canal);
+  mc.vue = 'messages';
+  if (typeof cliquerOnglet === 'function') { ergo.groupe = 'messages'; cliquerOnglet('meshcore', 'messages'); }
+  for (let k = 0; k < 20; k++) {
+    await new Promise((f) => setTimeout(f, 200));
+    const el = document.querySelector(`#mc-contenu [data-mc-id="${r.id}"]`);
+    if (el) { reperer(el); return; }
+  }
+  annonce('Message plus ancien que les 300 derniers messages MeshCore affichés.');
+}
+// Saisie : recherche après une courte pause ; Entrée tout de suite ; Échap efface ; retour au champ = résultats
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'recherche-messages') return;
+  clearTimeout(rechMsg.minuteur);
+  if (!e.target.value.trim()) { rechMsg.n++; modeRecherche(false); return; }
+  rechMsg.minuteur = setTimeout(() => lancerRechercheMessages(), 350);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.target.id !== 'recherche-messages') return;
+  if (e.key === 'Enter') { e.preventDefault(); clearTimeout(rechMsg.minuteur); lancerRechercheMessages(); }
+  else if (e.key === 'Escape' && e.target.value) { e.preventDefault(); e.target.value = ''; rechMsg.n++; modeRecherche(false); }
+});
+document.addEventListener('focusin', (e) => {
+  if (e.target.id === 'recherche-messages' && !rechMsg.active && e.target.value.trim() && rechMsg.q === e.target.value.replace(/\s+/g, ' ').trim()) { modeRecherche(true); rendreRechercheMessages(); }
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#effacer-recherche-messages')) return;
+  const c = $('#recherche-messages'); if (c) { c.value = ''; c.focus(); }
+  rechMsg.n++; modeRecherche(false);
+});
+
 // Clic sur un message : le formulaire bascule sur le bon canal (ou en direct vers l'expéditeur) pour répondre
 async function repondreA(el) {
   const f = $('#form-envoi');
@@ -2611,16 +2798,55 @@ function ajouterCalculettePertes(racine) {
     };
   });
 }
+// Dates de la fiche d'installation : un champ de date vide propose la date du jour dès qu'on entre dedans
+// (c'est presque toujours la bonne, surtout pour « dernière visite sur place »). Ce n'est qu'une aide à la saisie :
+// la proposition est signalée sous le champ, elle s'efface si on vide le champ (et ne revient pas toute seule),
+// et rien n'est écrit sur le serveur tant que la fiche n'est pas enregistrée.
+function dateDuJourIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function proposerDatesDuJour(formulaire) {
+  const iso = dateDuJourIso();
+  for (const champ of formulaire.querySelectorAll('input[type="date"]')) {
+    const oublier = () => {
+      champ.classList.remove('date-proposee');
+      const m = champ.parentElement && champ.parentElement.querySelector('.date-proposee-marque');
+      if (m) m.remove();
+    };
+    champ.addEventListener('focus', () => {
+      if (champ.value || champ.dataset.dejaPropose) return; // jamais une date déjà saisie, et une seule fois par champ
+      champ.dataset.dejaPropose = '1';
+      champ.value = iso;
+      champ.classList.add('date-proposee');
+      const m = document.createElement('small');
+      m.className = 'date-proposee-marque';
+      m.textContent = 'Date du jour proposée : gardez-la, changez-la, ou videz le champ.';
+      champ.insertAdjacentElement('afterend', m);
+    });
+    // L'utilisateur reprend la main (saisie, calendrier, champ vidé) : ce n'est plus une proposition
+    champ.addEventListener('input', oublier);
+    champ.addEventListener('change', oublier);
+  }
+}
 function brancherInstallation(n) {
   const fo = $('#f-install');
   if (!fo) return;
   ajouterCalculettePertes(fo);
+  proposerDatesDuJour(fo);
   fo.onsubmit = async (e) => {
     e.preventDefault();
     const nums = ['hauteur', 'gain', 'pertesCable', 'puissance', 'batterieAh', 'panneauW'];
     const corps = Object.fromEntries([...new FormData(fo).entries()].map(([k, x]) => [k, nums.includes(k) ? String(x).replace(',', '.').trim() : String(x).trim()]));
-    try { await postJson(`/api/noeuds/${n.num}/installation`, corps, 'PUT'); $('#install-retour').textContent = '✔ Fiche enregistrée.'; $('#install-retour').classList.add('ok'); }
-    catch (err) { $('#install-retour').textContent = err.message; }
+    // Dates du jour proposées et gardées telles quelles : enregistrées, mais nommées dans le retour (jamais en silence)
+    const gardees = [...fo.querySelectorAll('input[type="date"].date-proposee')].filter((c) => c.value)
+      .map((c) => String(((c.closest('label') || {}).textContent || c.name)).trim());
+    try {
+      await postJson(`/api/noeuds/${n.num}/installation`, corps, 'PUT');
+      $('#install-retour').textContent = '✔ Fiche enregistrée.' + (gardees.length ? ` Date du jour enregistrée pour : ${gardees.join(', ')}.` : '');
+      $('#install-retour').classList.add('ok');
+      fo.querySelectorAll('input[type="date"].date-proposee').forEach((c) => { c.classList.remove('date-proposee'); const m = c.parentElement && c.parentElement.querySelector('.date-proposee-marque'); if (m) m.remove(); });
+    } catch (err) { $('#install-retour').textContent = err.message; }
   };
 }
 // ---- Responsable d'un nœud : la personne qui en répond (membres connectés seulement) ----
@@ -2668,6 +2894,10 @@ async function dlgResponsable(num) {
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-resp]'); if (b) { e.preventDefault(); dlgResponsable(Number(b.dataset.resp)); } });
 
 async function ouvrirFiche(num) {
+  // D'où vient cette fiche : seul l'écran qui l'ouvre juste avant (registre des relais, liste d'un département)
+  // demande qu'on y revienne en la fermant. Ouverte depuis la carte, la recherche ou une autre fiche : retour à la carte.
+  etat.retourFiche = etat.retourFicheDemande || null;
+  etat.retourFicheDemande = null;
   etat.selection = num;
   const fiche = $('#fiche');
   fiche.hidden = false;
@@ -2677,6 +2907,10 @@ async function ouvrirFiche(num) {
   if (etat.selection !== num) return;
   const n = d.noeud;
   const s = etat.config.seuils;
+  // Position floutée par le nœud lui-même (firmware 2.7/2.8) : on montre la zone où il se trouve réellement
+  if (etat.cerclePrec) { etat.cerclePrec.remove(); etat.cerclePrec = null; }
+  const flou = n.precision > 0 && n.precision < 32 && n.lat != null ? 23300 / 2 ** (n.precision - 10) : 0;
+  if (flou) etat.cerclePrec = L.circle([n.lat, n.lon], { radius: flou, color: '#a78bfa', weight: 1.5, dashArray: '4 4', fillColor: '#a78bfa', fillOpacity: 0.08, interactive: false }).addTo(carte);
   const mesures = [
     ['Dernier entendu', ilYa(n.dernierVu)],
     ['Sauts', n.sautsDernier == null ? '–' : n.sautsDernier === 0 ? 'Direct' : n.sautsDernier],
@@ -2710,12 +2944,14 @@ async function ouvrirFiche(num) {
     <h2>${esc(n.nomLong || n.id)}</h2>
     <div class="ident">${esc(n.nomCourt || '')} · ${esc(n.id)} · ${n.num} ${boutonsSuivi(n.num)}</div>
     ${blocCoords(n.lat, n.lon, { alt: n.alt, approx: !etat.membre && !n.infrastructure && etat.config.precisionPublique >= 0 })}
+    ${n.lat == null ? '<div class="note">📍 Aucune position reçue : ce nœud n’est pas perdu, il ne partage pas sa position. Depuis le firmware 2.8, la diffusion de la position est coupée par défaut et la position exacte n’est jamais envoyée sur un canal public. Son propriétaire peut l’activer dans l’appli Meshtastic (Position), sur un canal privé pour une position exacte.</div>' : flou ? `<div class="note">📍 Position volontairement floutée par le nœud (${precisionTexte(n.precision)}) : il se trouve quelque part dans le cercle pointillé, pas forcément sur le point.</div>` : ''}
     <div class="badges">
       <span class="badge ${n.statut}">${{ actif: 'Actif', recent: 'Récent', inactif: 'Inactif' }[n.statut]}</span>
       <span class="badge ${n.infrastructure ? 'infra' : ''}">${esc(n.roleFr)}</span>
       ${n.passerelle ? `<span class="badge passerelle">Passerelle MQTT · ${n.etatPasserelle === 'offline' ? 'hors ligne' : 'en ligne'}</span>` : ''}
       ${n.preset ? `<span class="badge ${etat.autresPresets && etat.autresPresets.nums.has(n.num) ? 'autre-preset' : ''}" ${etat.autresPresets && etat.autresPresets.nums.has(n.num) ? `title="Autre preset que le réseau (${esc(nomPreset(etat.autresPresets.preset))}) : voir Outils › Nœuds à inviter"` : ''}>${esc(n.preset)}</span>` : ''}
       ${[...new Set(d.paquets.map((p) => p.canal).filter(Boolean))].slice(0, 4).map((c) => `<span class="badge canal">${esc(c)}</span>`).join('')}
+      ${d.paquets.some((p) => p.signature === -1 && !p.signe) ? '<span class="badge refus" title="Au moins un paquet récent porte une signature fausse : usurpation possible de ce nœud, ou clé publique changée (nœud réinitialisé)">⚠ signature invalide</span>' : d.paquets.some((p) => p.signe || p.signature === 2) ? '<span class="badge" title="Ce nœud signe ses paquets (firmware 2.8) : la carte a vérifié qu’ils viennent bien de lui">✍ signe ses paquets</span>' : ''}
       ${n.materiel ? `<span class="badge">${esc(n.materiel)}</span>` : ''}
       ${n.licencie ? `<span class="badge licencie" title="Mode licencié (radioamateur) : messages non chiffrés, identifié par son indicatif. Ce nœud ne lit pas les canaux chiffrés du réseau.">📻 Radioamateur${n.nomLong ? ' · <span translate="no">' + esc(n.nomLong) + '</span>' : ''}</span>` : ''}
     </div>
@@ -3379,6 +3615,20 @@ function dessinerSommets() {
   etat.coucheSommets = g;
 }
 
+// Résultat calculé sur le relief grossier mondial (le relief précis de la zone se télécharge encore)
+function texteApprox(r) {
+  const a = r && r.reliefApprox;
+  return a ? `Relief approximatif (≈ ${fmt(a.resolutionKm, 0, ' km')}) : le relief précis se charge (${a.progression || 0} %), le résultat sera recalculé tout seul.` : '';
+}
+function noteApprox(r) { return r && r.approximatif ? `<div class="alerte attention note-approx">⏳ ${esc(texteApprox(r))}</div>` : ''; }
+// Ajoute la mention sous le titre de la fiche, et relance le calcul dans 30 s tant qu'il reste approximatif
+function suivreApprox(r, encoreValable, relancer) {
+  if (!r || !r.approximatif) return;
+  const h = $('#fiche-contenu h2');
+  if (h && !$('#fiche-contenu .note-approx')) h.insertAdjacentHTML('afterend', noteApprox(r));
+  clearTimeout(etat.minuterieApprox);
+  etat.minuterieApprox = setTimeout(() => { if (encoreValable()) relancer(); }, 30000);
+}
 async function voirCouvertureSite(p, titre, hauteur, opts = {}) {
   const hs = hauteur ?? ($('#relief-hs') ? $('#relief-hs').value : H_RPT);
   let r;
@@ -3388,7 +3638,7 @@ async function voirCouvertureSite(p, titre, hauteur, opts = {}) {
   const g = L.layerGroup();
   L.imageOverlay(r.image, [[e.sud, e.ouest], [e.nord, e.est]], { opacity: 0.75, pane: 'couverture', className: 'pixelise' }).addTo(g);
   L.circleMarker([p.lat, p.lon], { radius: 7, color: '#f4c542', weight: 3, fillOpacity: 0.2, pane: 'traces' })
-    .bindTooltip(`<b>${esc(titre || nomSommet(p))}</b><br>Couverture estimée : ${r.surfaceKm2} km² · ${fmt(r.pctZone, 1, ' %')} du département<br><small>antenne à ${hs} m · ≥ 10 dB de marge en turquoise, 0 à 10 dB en jaune, limite en orange</small>`, { className: 'info', permanent: false })
+    .bindTooltip(`<b>${esc(titre || nomSommet(p))}</b><br>Couverture estimée : ${r.surfaceKm2} km² · ${fmt(r.pctZone, 1, ' %')} du département<br><small>antenne à ${hs} m · ≥ 10 dB de marge en turquoise, 0 à 10 dB en jaune, limite en orange</small>${r.approximatif ? `<br><b>${esc(texteApprox(r))}</b>` : ''}`, { className: 'info', permanent: false })
     .addTo(g);
   g.addTo(carte);
   etat.coucheCouverture = g;
@@ -3397,7 +3647,8 @@ async function voirCouvertureSite(p, titre, hauteur, opts = {}) {
   if (!titre) carte.flyTo([p.lat, p.lon], Math.min(carte.getZoom(), 10), { duration: 0.6 });
   if (opts.cadrer) carte.fitBounds(L.latLng(p.lat, p.lon).toBounds(2 * 1000 * (r.rayonKm || 40)), { padding: [30, 30] });
   const info = $('#couverture-info');
-  if (info) info.innerHTML = `<b>${esc(titre || nomSommet(p))}</b> : ${r.surfaceKm2} km² couverts, dont ${fmt(r.pctZone, 1, ' %')} du département.`;
+  if (info) info.innerHTML = `<b>${esc(titre || nomSommet(p))}</b> : ${r.surfaceKm2} km² couverts, dont ${fmt(r.pctZone, 1, ' %')} du département.${noteApprox(r)}`;
+  if (r.approximatif) { clearTimeout(etat.minuterieApproxSite); etat.minuterieApproxSite = setTimeout(() => { if (etat.coucheCouverture === g) voirCouvertureSite(p, titre, hauteur, { ...opts, cadrer: false }); }, 30000); }
   return r;
 }
 
@@ -3520,6 +3771,7 @@ async function couvertureMulti(sites) {
   const ba = $('#ajout-site-multi'); if (ba) ba.onclick = () => basculerMode('couv-plus');
   $('#recalc-multi').onclick = () => { $('#fiche-contenu').querySelectorAll('[data-h]').forEach((el) => { sites[Number(el.dataset.h)].h = Number(el.value) || H_RPT; }); couvertureMulti(sites); };
   $('#fiche-contenu').querySelectorAll('[data-retirer-site]').forEach((b) => (b.onclick = () => couvertureMulti(sites.filter((_, i) => i !== Number(b.dataset.retirerSite)))));
+  suivreApprox(r, () => etat.coucheCouverture === g, () => couvertureMulti(sites));
   $('#gpx-couv-multi').onclick = () => telechargerGpx('couverture-sites.gpx', sites.map((x, i) => ({ lat: x.lat, lon: x.lon, alt: r.sites[i].sol, nom: `${i + 1} - ${x.nom || 'Site'}`, desc: `Antenne ${x.h} m, ${r.sites[i].km2} km²` })));
 }
 function ajouterSiteCouverture(latlng) {
@@ -3562,6 +3814,7 @@ async function couvertureReseau() {
     <p class="note">Turquoise : ≥ 10 dB de marge · jaune : 0 à 10 dB · orange : en limite. Hypothèse : antennes à ${hn} m, nœud desservi à 2 m du sol. ${r.env != null ? `Pertes de végétation et bâti : ${r.env} dB.` : ''}</p>`;
   $('#hn-recalc').onclick = () => { try { localStorage.setItem('pl_hn', $('#hn-reseau').value); } catch { /* ignoré */ } couvertureReseau(); };
   $('#couv-vers-plan').onclick = () => allerPlan();
+  suivreApprox(r, () => etat.coucheCouverture === g, () => couvertureReseau());
   $('#fiche-contenu').querySelectorAll('[data-ouvrir-noeud]').forEach((el) => (el.onclick = () => {
     const n = r.noeuds.find((x) => String(x.num) === el.dataset.ouvrirNoeud);
     if (n) carte.flyTo([n.lat, n.lon], 12, { duration: 0.6 });
@@ -3604,7 +3857,7 @@ async function couvertureMesuree(jours, noeud) {
       <div class="mesure"><span>Via relais seulement</span><b>${viaRelais}</b></div>
       <div class="mesure"><span>Surface mesurée</span><b>≈ ${surface} km²</b></div>
     </div>
-    ${horsZone ? `<p class="note">${horsZone} carré(s) hors de la zone affichée (${esc($('#sel-zone') ? $('#sel-zone').selectedOptions[0].textContent : 'zone')}) ne sont pas montrés : choisissez « France » dans le sélecteur de zone pour tout voir.</p>` : ''}
+    ${horsZone ? `<p class="note">${horsZone} carré(s) hors de la zone affichée (${esc($('#sel-zone') ? $('#sel-zone').selectedOptions[0].textContent : 'zone')}) ne sont pas montrés : choisissez « ${libelleToutZone()} » dans le sélecteur de zone pour tout voir.</p>` : ''}
     <div class="parametres compact"><label>Période <select id="mes-jours">${[1, 3, 7, 14, 30].map((j) => `<option value="${j}" ${j === jours ? 'selected' : ''}>${j} jour${j > 1 ? 's' : ''}</option>`).join('')}</select></label>${noeud != null ? '<button id="mes-tous">Tous les nœuds</button>' : ''}</div>
     <p class="note">Chaque carré de 500 m est un endroit d’où un nœud a réellement été reçu. Couleur = meilleur SNR reçu en direct par une passerelle (vert excellent → rouge limite) ; gris = reçu seulement grâce à des relais. Les nœuds dont la position est volontairement floutée et les messages passés par internet sont écartés.</p>
     ${cal && cal.liaisons != null ? `<p class="note">Le modèle de relief est recalé sur <b>${cal.liaisons}</b> liaisons mesurées (dont les relevés des nœuds mobiles) : pertes d’environnement retenues ${cal.perteEnvironnementDb != null ? cal.perteEnvironnementDb + ' dB' : 'par défaut'}${cal.ecartMedianDb != null ? `, écart médian modèle − mesure ${fmt(cal.ecartMedianDb, 1, ' dB')}` : ''}.</p>` : ''}
@@ -3704,6 +3957,7 @@ async function simulation() {
   $('#simu-ajout').onclick = () => basculerMode('simu-ajout');
   $('#simu-lancer').onclick = () => simulation();
   $('#simu-raz').onclick = () => { etat.simu = { retirer: new Set(), ajouter: [] }; simulation(); };
+  suivreApprox(r, () => etat.coucheCouverture === g, () => simulation());
 }
 function ajouterRelaisSimulation(latlng) {
   const lieu = nomLieu(latlng);
@@ -3966,7 +4220,7 @@ function fichePartager() {
   const base = location.origin;
   const iframe = `<iframe src="${base}/publique" width="100%" height="520" style="border:0;border-radius:8px" title="Carte du réseau" loading="lazy"></iframe>`;
   const ha = `rest:\n  - resource: ${base}/api/export/resume.json\n    scan_interval: 120\n    sensor:\n      - name: "Nœuds actifs du réseau"\n        value_template: "{{ value_json.noeudsActifs }}"\n      - name: "Couverture du réseau"\n        unit_of_measurement: "%"\n        value_template: "{{ value_json.couverturePct }}"\n      - name: "Alertes critiques du réseau"\n        value_template: "{{ value_json.alertesCritiques }}"`;
-  const lien = (url, lib, desc) => `<div class="ligne"><span class="titre"><a href="${url}" target="_blank" rel="noopener">${lib}</a><small>${desc}</small></span><span class="meta"><button class="mini" data-copier="${esc(url)}">Copier</button></span></div>`;
+  const lien = (url, lib, desc) => `<div class="ligne sans-pastille"><span class="titre"><a href="${url}" target="_blank" rel="noopener">${lib}</a><small>${desc}</small></span><span class="meta"><button class="mini" data-copier="${esc(url)}">Copier</button></span></div>`;
   $('#fiche').hidden = false;
   etat.selection = null;
   $('#fiche-contenu').innerHTML = `<h2>Carte publique et exports</h2>
@@ -3989,7 +4243,10 @@ function fichePartager() {
     <p class="note">Déclarez les cartes live des départements voisins : leurs relais s’affichent (couche « Bulles voisines ») et comptent dans les calculs de couverture près des limites. Votre propre carte publie ses relais à l’adresse <span class="mono">${esc(base)}/api/federation</span> : donnez votre adresse aux autres bulles.</p>
     <div id="liste-federation"><div class="vide">Chargement…</div></div>
     <form id="f-federation" class="parametres compact"><label>Adresse de la carte voisine <input name="url" placeholder="https://carte-42.exemple.fr" required></label><label>Nom (facultatif) <input name="nom" placeholder="Loire"></label><button type="submit" class="principal">Ajouter</button></form>
-    <p class="erreur" id="federation-retour"></p>` : ''}
+    <p class="erreur" id="federation-retour"></p>
+    <div hidden data-pl="ukryte: ściana darczyńców (HelloAsso / GitHub Sponsors) nie dotyczy MeshCore Południe"><h3>Mur des donateurs</h3>
+    <p class="note">Affiche sur la carte ceux qui ont soutenu le projet : dons à une association (HelloAsso) et parrainages GitHub Sponsors. Deux sources indépendantes, chacune activable séparément ; les liens « Faire un don » affichés viennent de ces réglages. HelloAsso ne dit pas si un donateur a accepté d’être montré publiquement : un don HelloAsso n’apparaît donc que si vous ajoutez vous-même l’entrée ci-dessous, après son accord.</p>
+    <div id="donateurs-reglages"><div class="vide">Chargement…</div></div></div>` : ''}
     <p class="note">Ces exports suivent les mêmes règles de confidentialité que la carte publique. Pour les protéger, définissez <span class="mono">EXPORT_JETON</span> dans le fichier .env : il faut alors ajouter <span class="mono">?jeton=…</span> aux adresses (ou l’en-tête « Authorization: Bearer … »).</p>`;
   if (etat.admin && $('#f-federation')) {
     rendreFederationAdmin();
@@ -3999,7 +4256,90 @@ function fichePartager() {
       $('#federation-retour').textContent = 'Connexion à la carte voisine…';
       try { const r = await postJson('/api/federation/partenaires', { url: f.url.value.trim(), nom: f.nom.value.trim() }); $('#federation-retour').textContent = r.erreur ? `Ajoutée, mais injoignable pour l’instant : ${r.erreur}` : `✔ Ajoutée : ${r.relais} relais récupérés.`; f.reset(); rendreFederationAdmin(); chargerFederation(); } catch (err) { $('#federation-retour').textContent = err.message; }
     };
+    rendreDonateursAdmin();
   }
+}
+
+// ---- Mur des donateurs : réglages (administrateur) ----------------------------------------------------
+async function rendreDonateursAdmin() {
+  const z = $('#donateurs-reglages');
+  if (!z) return;
+  let r;
+  try { r = await api('/api/donateurs/reglages'); } catch (e) { z.innerHTML = `<div class="vide">${esc(e.message)}</div>`; return; }
+  // Les réglages sont rangés sous r.reglages (voir donateurs.etat()) : les lire à plat laissait la page sur « Chargement… »
+  const g2 = r.reglages || {}, h = g2.helloasso || {}, g = g2.githubSponsors || {};
+  const erreurs = r.erreurs || {};
+  const erreur = (s, msg) => (msg ? `<p class="erreur">⚠ ${esc(s)} : ${esc(msg)}</p>` : '');
+  // Secret : champ vide = inchangé ; « Effacer » retire ce qui a été saisi ici (le .env reprend la main, s'il en a un)
+  const secret = (id, libelle, defini, saisi, type = 'password') => `<label>${libelle} <span class="champ-secret"><input id="${id}" type="${type}" placeholder="${defini ? '•••••• (inchangé)' : ''}" autocomplete="${type === 'password' ? 'new-password' : 'off'}">${saisi ? `<button type="button" class="mini" data-effacer="${id}" title="Effacer le secret saisi dans cette page (le fichier .env reprend la main)">Effacer</button>` : ''}</span></label>`;
+  const types = (g2.types || ['Donation']).map((t) => `<option value="${esc(t)}" ${t === h.type ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  const plein = (r.manuel || []).length >= (r.maxManuel || 200);
+  z.innerHTML = `<div class="parametres compact">
+      <label class="case ligne-entiere"><input type="checkbox" id="don-montant" ${g2.montantVisible ? 'checked' : ''}> Montant des dons affiché (décoché : seul le nom et le pays apparaissent)</label>
+    </div>
+    <h4>HelloAsso (dons à l’association)</h4>
+    <div class="parametres compact">
+      <label class="case ligne-entiere"><input type="checkbox" id="don-ha-actif" ${h.actif ? 'checked' : ''}> Activer (vérifie l’accès à l’API et affiche le lien « Faire un don » — n’affiche rien d’automatique sur le mur, voir ci-dessous)</label>
+      <label>Organisation (slug dans l’adresse HelloAsso) <input id="don-ha-org" value="${esc(h.organisation || '')}" placeholder="mon-association"></label>
+      <label>Formulaire (slug, à la fin de son adresse) <input id="don-ha-form" value="${esc(h.formulaire || '')}" placeholder="2"></label>
+      <label>Type du formulaire <select id="don-ha-type">${types}</select></label>
+      ${secret('don-ha-id', 'Identifiant client (API)', h.clientIdDefini, h.clientIdSaisi, 'text')}
+      ${secret('don-ha-secret', 'Clé secrète (API)', h.clientSecretDefini, h.clientSecretSaisi)}
+    </div>
+    ${erreur('HelloAsso', erreurs.helloasso)}
+    <p class="note">HelloAsso ne dit pas si un donateur a accepté d’être montré publiquement : ajoutez chaque don à la main, après son accord. Le nom s’affiche tel que vous le saisissez : abrégez-le vous-même si besoin (« 42B*** »). Les parrains GitHub Sponsors restent abrégés.</p>
+    <div id="don-ha-liste">${(r.manuel || []).map((m) => `<div class="ligne sans-pastille"><span class="titre">${esc(m.nom)}${m.pays ? ' · ' + esc(m.pays) : ''}${m.montant != null ? ' · ' + esc(String(m.montant)) + ' €' : ''}<small>ajouté ${ilYa(new Date(m.date).getTime())}</small></span><span class="meta"><button class="mini" data-don-retirer="${esc(m.id)}">✕</button></span></div>`).join('') || '<div class="vide">Aucun don saisi.</div>'}</div>
+    ${plein ? `<p class="erreur">Liste pleine (${r.maxManuel || 200} dons) : retirez d’anciennes entrées avant d’en ajouter.</p>` : ''}
+    <form id="f-don-manuel" class="parametres compact">
+      <label>Nom ou pseudonyme affiché <input name="nom" maxlength="60" required placeholder="ex. 42BARBE"></label>
+      <label>Pays (code à 2 lettres, facultatif) <input name="pays" maxlength="2" pattern="[A-Za-z]{2}" placeholder="FR"></label>
+      <label>Montant en euros (facultatif) <input name="montant" type="number" min="0" step="0.01" placeholder="20"></label>
+      <label class="case ligne-entiere"><input type="checkbox" name="accord" required> Le donateur a accepté d’être affiché sur la carte (obligatoire)</label>
+      <button type="submit" class="principal" ${plein ? 'disabled' : ''}>Ajouter ce don</button>
+    </form>
+    <h4>GitHub Sponsors (parrainages du compte GitHub)</h4>
+    <div class="parametres compact">
+      <label class="case ligne-entiere"><input type="checkbox" id="don-gh-actif" ${g.actif ? 'checked' : ''}> Activer (affiche les parrainages que GitHub marque publics, et le lien « GitHub Sponsors » ; les parrainages privés ne sont jamais lus)</label>
+      <label>Compte GitHub <input id="don-gh-compte" value="${esc(g.compte || '')}" placeholder="mon-compte"></label>
+      ${secret('don-gh-jeton', 'Jeton d’accès (lecture seule)', g.jetonDefini, g.jetonSaisi)}
+    </div>
+    ${erreur('GitHub Sponsors', erreurs.githubSponsors)}
+    <p class="note">Ces versements vont sur le compte GitHub personnel du titulaire (revenus à déclarer), affichés ici à côté des dons HelloAsso.</p>
+    <div class="actions-prop"><button type="button" class="mini principal" id="don-reglages-ok">Enregistrer</button></div>
+    <p class="note">Dernière vérification : ${r.maj ? ilYa(r.maj) : 'jamais'}.</p>
+    <p class="erreur" id="don-retour"></p>`;
+  $('#don-reglages-ok').onclick = async () => {
+    const champ = (id) => $('#' + id).value.trim();
+    try {
+      await postJson('/api/donateurs/reglages', {
+        montantVisible: $('#don-montant').checked,
+        helloasso: { actif: $('#don-ha-actif').checked, organisation: champ('don-ha-org'), formulaire: champ('don-ha-form'), type: $('#don-ha-type').value, clientId: champ('don-ha-id'), clientSecret: champ('don-ha-secret') },
+        githubSponsors: { actif: $('#don-gh-actif').checked, compte: champ('don-gh-compte'), jeton: champ('don-gh-jeton') },
+      });
+      rendreDonateursAdmin();
+      chargerDonateurs();
+      annonce('✔ Réglages du mur des donateurs enregistrés.', 'info');
+    } catch (e) { $('#don-retour').textContent = e.message; }
+  };
+  z.querySelectorAll('[data-effacer]').forEach((b) => (b.onclick = async () => {
+    if (!(await confirmer('Effacer ce secret saisi dans la page ? Le fichier .env reprend la main, s’il en contient un.'))) return;
+    const cle = { 'don-ha-id': ['helloasso', 'clientIdEffacer'], 'don-ha-secret': ['helloasso', 'clientSecretEffacer'], 'don-gh-jeton': ['githubSponsors', 'jetonEffacer'] }[b.dataset.effacer];
+    try { await postJson('/api/donateurs/reglages', { [cle[0]]: { [cle[1]]: true } }); rendreDonateursAdmin(); } catch (e) { $('#don-retour').textContent = e.message; }
+  }));
+  $('#f-don-manuel').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await postJson('/api/donateurs/manuel', { nom: f.nom.value.trim(), pays: f.pays.value.trim(), montant: f.montant.value === '' ? null : Number(f.montant.value), accord: f.accord.checked });
+      f.reset();
+      rendreDonateursAdmin();
+      chargerDonateurs();
+    } catch (err) { $('#don-retour').textContent = err.message; }
+  };
+  z.querySelectorAll('[data-don-retirer]').forEach((b) => (b.onclick = async () => {
+    if (!(await confirmer('Retirer ce don de la carte ?'))) return;
+    try { await api('/api/donateurs/manuel/' + b.dataset.donRetirer, { method: 'DELETE' }); rendreDonateursAdmin(); chargerDonateurs(); } catch (e) { $('#don-retour').textContent = e.message; }
+  }));
 }
 function allerPlan() {
   const b = document.querySelector('.onglets button[data-onglet="sites"]');
@@ -4369,7 +4709,7 @@ async function rendreSites() {
   if (!e) { z.innerHTML = choix + '<div class="vide">Modèle de relief indisponible.</div>'; brancherChoixDepartement(); return; }
   const nomDep = e.departement ? `${e.departement.nom || ''} (${e.departement.code})` : '';
   if (e.mnt !== 'pret') {
-    z.innerHTML = choix + `<div class="vide">${e.mnt === 'erreur' ? 'Erreur : ' + esc(e.erreur) : `Chargement du relief IGN ${esc(nomDep)}… ${e.progression || 0} %`}<br><small>Premier chargement d’un département : quelques minutes (relief IGN, points hauts OpenStreetMap, puis classement des sites). Ensuite il est gardé sur le disque.</small></div>`;
+    z.innerHTML = choix + `<div class="vide">${e.mnt === 'erreur' ? 'Erreur : ' + esc(e.erreur) : `Chargement du relief IGN ${esc(nomDep)}… ${e.progression || 0} %`}<br><small>Premier chargement d’un département : quelques minutes (relief IGN, points hauts OpenStreetMap, puis classement des sites). Ensuite il est gardé sur le disque.</small>${e.approx ? `<br><small>En attendant, un relief approximatif (≈ ${fmt(e.approx.resolutionKm, 0, ' km')}) sert déjà à la couverture d’un site, du réseau et aux liaisons : résultats marqués « approximatifs », recalculés ensuite.</small>` : ''}</div>`;
     brancherChoixDepartement();
     return;
   }
@@ -4593,7 +4933,7 @@ async function relierPoints(a, b, opts = {}) {
     return `${l ? `<div class="bond-relier" style="border-color:${couleurMarge(l.marge)}">↓ ${fmt(l.distance / 1000, 1, ' km')} · marge <b style="color:${couleurMarge(l.marge)}">${l.marge >= 0 ? '+' : ''}${fmt(l.marge, 1, ' dB')}</b> · ${l.obstacle ? `obstacle à ${fmt(l.obstacle.distanceKm, 1, ' km')}` : 'visibilité directe'}</div>` : ''}
       <div class="proposition etape-relier ${c.type}" data-etape="${k}" data-lat="${c.lat}" data-lon="${c.lon}">
         <div class="entete-prop"><span class="lettre">${k === 0 ? 'A' : k === r.chemin.length - 1 ? 'B' : k}</span><b>${esc(c.nom || nomSommet(c))}</b><span class="marge">${titre}</span></div>
-        <div class="meta-longue">${c.alt} m${c.commune ? ' · ' + esc(c.commune) : ''} · antenne ${c.hauteur} m${c.type === 'nouveau' ? ` · Accès : ${texteAcces(c.acces)}` : ''}</div>
+        <div class="meta-longue">${c.alt} m${c.commune ? ' · ' + esc(c.commune) : ''} · antenne ${c.hauteur != null ? c.hauteur : c.type === 'depart' ? hA : c.type === 'arrivee' ? hB : r.parametres.hs} m${c.type === 'nouveau' ? ` · Accès : ${texteAcces(c.acces)}` : ''}</div>
         ${c.type === 'nouveau' ? blocCoords(c.lat, c.lon, { alt: c.alt, couv: { nom: c.nom || nomSommet(c), h: c.hauteur || H_RPT } }) : ''}
         ${alt && alt.options.length ? `<details class="alt-relier"><summary>Autres emplacements possibles (${alt.options.length})</summary>${alt.options.map((o, j) => `<div class="ligne-alt" data-lat="${o.lat}" data-lon="${o.lon}"><b class="repere-alt">${k}${String.fromCharCode(97 + j)}</b> ${esc(o.nom || nomSommet(o))} · ${o.alt} m${o.commune ? ' · ' + esc(o.commune) : ''} · marge mini ${fmt(o.margeMin, 1, ' dB')} ${o.acces ? ACCES[o.acces.type].icone : ''}</div>`).join('')}</details>` : ''}
       </div>`;
@@ -4616,6 +4956,7 @@ async function relierPoints(a, b, opts = {}) {
   const relancerRelier = () => relierPoints(a, b, { hA: Number($('#relier-ha').value) || 2, hB: Number($('#relier-hb').value) || 2, acces: $('#relier-acces').value });
   $('#relier-recalc').onclick = relancerRelier;
   $('#relier-acces').onchange = relancerRelier;
+  suivreApprox(r, () => etat.coucheCouvrir === g, relancerRelier);
   $('#fiche-contenu').querySelectorAll('.ligne-alt').forEach((el) => (el.onclick = () => carte.flyTo([Number(el.dataset.lat), Number(el.dataset.lon)], 14)));
   // Clic sur une étape « relais à installer » : la carte se centre sur l'emplacement
   $('#fiche-contenu').querySelectorAll('.etape-relier.nouveau .entete-prop').forEach((el) => { el.style.cursor = 'pointer'; el.title = 'Centrer la carte sur cet emplacement'; el.onclick = () => { const d = el.closest('.etape-relier').dataset; carte.flyTo([Number(d.lat), Number(d.lon)], 14); }; });
@@ -4810,9 +5151,9 @@ async function rendreModules(force) {
   const btnEcoute = (m) => `<button data-ec-on="${esc(m.hote)}" data-port="${m.port}" title="Le relier en plus du module principal, pour l'écoute seulement">👂 En écoute</button>`;
   const ligneEcoute = (x) => {
     const estAg = x.hote.startsWith('agent-');
-    const sous = x.navigateur ? `${esc(x.source || 'navigateur')} d'une page de la carte` : estAg ? 'agent' : x.hote.startsWith('/dev/') ? `USB du serveur ${esc(x.hote)}` : `${esc(x.hote)}${x.port !== 4403 ? ':' + x.port : ''}`;
+    const sous = x.navigateur ? `${esc(x.source || 'navigateur')} d'une page de la carte${x.compte ? ` · 📡 passerelle de ${esc(x.compte)}` : ''}` : estAg ? 'agent' : x.hote.startsWith('/dev/') ? `USB du serveur ${esc(x.hote)}` : `${esc(x.hote)}${x.port !== 4403 ? ':' + x.port : ''}`;
     const statut = x.connecte ? `en écoute · ${x.paquets} paquets${x.noeud != null ? '' : ' · configuration…'}` : `connexion…${x.erreur ? ' (' + esc(x.erreur) + ')' : ''}`;
-    const boutons = `${!x.navigateur ? `<button data-ec-princ="${esc(x.hote)}" data-port="${x.port}" title="En faire le module principal (envois, administration) ; l'actuel passe en écoute">⭐ Principal</button>` : ''}<button data-ec-off="${esc(x.hote)}" data-port="${x.port}">Arrêter l'écoute</button>`;
+    const boutons = `${!x.navigateur ? `<button data-ec-princ="${esc(x.hote)}" data-port="${x.port}" title="En faire le module principal (envois, administration) ; l'actuel passe en écoute">⭐ Principal</button>` : ''}<button data-ec-off="${esc(x.hote)}" data-port="${x.port}" title="${x.compte ? 'Couper cette passerelle : elle ne pourra pas se relier de nouveau pendant 12 h' : ''}">${x.compte ? 'Couper la passerelle' : 'Arrêter l\'écoute'}</button>`;
     return `<div class="ligne module ecoute"><span class="point ${x.connecte ? 'actif' : 'alerte'}"></span><span class="titre">${esc(x.nom || 'Module')} <span class="badge">👂 écoute</span><small>${sous}</small></span><span class="meta"></span>
       <span class="sous-ligne meta-longue">${statut}</span><span class="sous-ligne boutons-module">${boutons}</span></div>`;
   };
@@ -4900,6 +5241,51 @@ async function rendreModules(force) {
       retour(res.trouves.length ? `${res.trouves.length} module(s) trouvé(s) : ${res.trouves.join(', ')}` : 'Aucun module Meshtastic trouvé sur ce réseau.');
     } catch (err) { retour(err.message); b.disabled = false; }
   };
+}
+
+// ---- Nœuds par département, d'après la position qu'ils ont retransmise -------------------------
+// Le test « ce point tombe-t-il dans le département ? » se fait sur le serveur (contours nationaux, plus de
+// 500 ko de GeoJSON) : la carte ne reçoit que le code du département de chaque nœud, une fois par minute au plus.
+let indexDeps = null, indexDepsHeure = 0, indexDepsEnCours = null;
+function indexDepartementsNoeuds(force) {
+  if (!etat.membre) return Promise.resolve(null);
+  if (indexDeps && !force && Date.now() - indexDepsHeure < 60000) return Promise.resolve(indexDeps);
+  if (indexDepsEnCours) return indexDepsEnCours;
+  indexDepsEnCours = api('/api/noeuds-par-departement')
+    .then((r) => { indexDeps = r; indexDepsHeure = Date.now(); return r; })
+    .catch(() => null)
+    .finally(() => { indexDepsEnCours = null; });
+  return indexDepsEnCours;
+}
+// Liste des départements (code et nom) : fichier de référence du serveur, chargé une seule fois
+let listeDepsCarte = null;
+function listeDepartementsCarte() {
+  if (listeDepsCarte) return Promise.resolve(listeDepsCarte);
+  return api('/api/departements').then((l) => (listeDepsCarte = Array.isArray(l) ? l : [])).catch(() => (listeDepsCarte = []));
+}
+const nomNu = (s) => sansAccent(s).replace(/[-’']/g, ' ').replace(/\s+/g, ' ').trim();
+// « 43 », « dep 43 », « département 2A », « Haute-Loire » : code du département demandé, sinon null
+function departementDemande(q, liste) {
+  const t = nomNu(String(q).replace(/\./g, ' '));
+  const m = /^(?:dep|dept|departement|departements)?\s*(\d{2}|2a|2b)$/.exec(t);
+  if (m) return m[1].toUpperCase();
+  const nom = t.replace(/^(?:dep|dept|departement|departements)\s+/, '');
+  if (nom.length < 3) return null;
+  const d = (liste || []).find((x) => nomNu(x.nom) === nom) || (liste || []).find((x) => nomNu(x.nom).startsWith(nom));
+  return d ? d.code : null;
+}
+// Entrée « Nœuds du département XX » de la recherche : une liste de nœuds, pas un recentrage de la carte
+async function entreeDepartement(q) {
+  if (!etat.membre) return null;
+  const code = departementDemande(q, await listeDepartementsCarte());
+  if (!code) return null;
+  const idx = await indexDepartementsNoeuds();
+  if (!idx) return null;
+  const d = (idx.departements || []).find((x) => x.code === code);
+  const nom = d ? d.nom : ((listeDepsCarte || []).find((x) => x.code === code) || {}).nom || '';
+  return { type: 'Département', nom: nom ? `Nœuds du département ${code} · ${nom}` : `Nœuds du département ${code}`,
+    detail: d && (d.nb || d.nbMc) ? `${(d.nb || 0) + (d.nbMc || 0)} nœud(s) d’après la position reçue` : 'aucun nœud positionné ici pour l’instant',
+    go: () => ficheNoeudsDepartement(code) };
 }
 
 // ---- Recherche d'un lieu (nœuds, points hauts, lieux et adresses) ------------------------------
@@ -5021,6 +5407,12 @@ function brancherRecherche() {
     try { for (const e of indexReglages()) { if (sansAccent(`${e.t} ${e.m}`).includes(sansAccent(q))) fonctions.push({ type: 'Fonction', nom: e.t, detail: e.ch, go: e.go }); if (fonctions.length >= 3) break; } } catch { /* catalogue indisponible */ }
     locaux.unshift(...fonctions);
     resultats = locaux.slice(0, 6); index = -1; afficher();
+    // Recherche par position et non par nom : « 43 » ou « Haute-Loire » donne la liste des nœuds du département
+    try {
+      const d = await entreeDepartement(q);
+      if (n !== demande) return;
+      if (d) { locaux.unshift(d); resultats = locaux.slice(0, 6); afficher(); }
+    } catch { /* index des départements indisponible */ }
     try {
       const c = carte.getCenter();
       const r = await api(`/api/recherche?q=${encodeURIComponent(q)}&lat=${c.lat.toFixed(4)}&lon=${c.lng.toFixed(4)}`);
@@ -5121,7 +5513,7 @@ async function ouvrirTrames(num, filtre) {
         <td class="nowrap">${new Date(t.heure).toLocaleDateString('fr-FR')}<br>${heure(t.heure)}</td>
         <td class="nowrap">${lignesRx(t)}</td>
         <td>${t.receptions.map((x) => `<div class="rx mono petit">${esc(x.sujet || '')}</div>`).join('') || esc(t.canal || '')}</td>
-        <td><b><i class="pt" style="background:${portInfo(t.port).couleur}"></i>${esc(t.nomPort || t.port)}</b>${t.pki ? ' <span class="badge">PKI</span>' : ''}${t.signe ? ' <span class="badge" title="Signature de l’expéditeur vérifiée (firmware 2.8)">✍ signé</span>' : ''}
+        <td><b><i class="pt" style="background:${portInfo(t.port).couleur}"></i>${esc(t.nomPort || t.port)}</b>${t.pki ? ' <span class="badge">PKI</span>' : ''}${badgeSignature(t)}
           <div class="petit">${esc(t.texte ? '💬 ' + t.texte : t.resume || '')}${t.reprises ? ' · <span class="pastille">reprise après redémarrage</span>' : ''}</div>
           ${t.contenu ? `<details><summary>JSON</summary><pre class="json">${jsonJoli(t.contenu)}</pre></details>` : ''}</td>
       </tr>`).join('') || '<tr><td colspan="8" class="vide">Aucune trame pour ce filtre.</td></tr>'}</tbody>
@@ -5155,7 +5547,7 @@ async function ouvrirTrame(rowid) {
     <h2>Trame ${t.idPaquet} <small>${esc(t.nomPort || t.port)}</small></h2>
     <div class="grille">
       ${lig('Expéditeur', lienNoeud(t.de))}${lig('Destinataire', lienNoeud(t.vers))}${lig('Date', new Date(t.heure).toLocaleString('fr-FR'))}
-      ${lig('Canal', esc(t.canal || '–'))}${lig('Sauts au départ', t.hopDepart || '–')}${t.signe ? lig('Signature', '✍ vérifiée par la passerelle (firmware 2.8)') : ''}${lig('Chiffrement', t.pki ? 'PKI (message direct)' : t.dechiffre ? 'clé de canal, déchiffrée' : 'non déchiffrée')}
+      ${lig('Canal', esc(t.canal || '–'))}${lig('Sauts au départ', t.hopDepart || '–')}${t.signe || t.signature ? lig('Signature', t.signature === -1 ? '⚠ invalide : le paquet ne vient pas de ce nœud, ou a été modifié en route' : t.signature === 2 ? '✍ vérifiée par la carte avec la clé publique du nœud (firmware 2.8)' : t.signe ? '✍ vérifiée par la passerelle (firmware 2.8)' : 'présente, mais la carte ne connaît pas encore la clé publique du nœud (fiche NodeInfo)') : ''}${lig('Chiffrement', t.pki ? 'PKI (message direct)' : t.dechiffre ? 'clé de canal, déchiffrée' : 'non déchiffrée')}
       ${lig('Taille', t.taille != null ? t.taille + ' octets' : '–')}${lig('Réceptions', t.receptions.length)}${lig('Via MQTT', t.viaMqtt ? 'oui' : 'non')}
     </div>
     ${t.texte ? `<div class="encadre-texte">💬 ${esc(t.texte)}</div>` : `<p>${esc(t.resume || '')}</p>`}
@@ -5409,8 +5801,8 @@ meshtastic --host 192.168.1.50 --dest '!a1b2c3d4' --set security.is_managed true
         ${e.recherche ? `<span class="note">🔎 En cours jusqu’à ${new Date(e.recherche.jusqua).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} (toutes les ${e.recherche.intervalle} min)</span>` : ''}
       </div>
       <div class="parametres compact">
-        <span>Zone de sécurité : ${e.zone ? `<b>${(e.zone.rayon / 1000).toLocaleString('fr-FR')} km</b> autour de ${e.zone.lat.toFixed(4)}, ${e.zone.lon.toFixed(4)} <a href="#" data-voir-zone>voir</a>` : '<span class="note">aucune</span>'}</span>
-        <button class="mini" data-zone>📍 ${e.zone ? 'Changer' : 'Définir'} la zone</button>${e.zone ? '<button class="mini" data-zone-suppr>Retirer</button>' : ''}
+        <span>Secteurs d’alerte : ${(e.secteurs || []).length ? e.secteurs.map((x) => `<b>${esc(x.nom)}</b>${x.actif ? '' : ' (désactivé)'}${x.dehors ? ` <span class="sa-dehors">⛔ ${x.dehors} hors secteur</span>` : ''}`).join(', ') : '<span class="note">aucun</span>'}</span>
+        <button class="mini" data-secteurs title="Prévenir quand un membre sort d’un secteur dessiné sur la carte (ou y entre)">🗺️ ${(e.secteurs || []).length ? 'Secteurs…' : 'Définir un secteur'}</button>
       </div>
       <div class="actions-prop">
         ${e.nbMembres ? `<button data-positions-eq title="Chaque nœud de l’équipe renvoie sa position (espacées de 3 s)">📍 Demander les positions</button>` : ''}
@@ -5461,16 +5853,7 @@ meshtastic --host 192.168.1.50 --dest '!a1b2c3d4' --set security.is_managed true
       const m = Number(ev.target.value);
       try { await postJson(`/api/equipes/${id}/recherche`, { minutes: m, intervalle: 2 }); ficheEquipes(id).then(() => { const b = z.querySelector(`[data-eq="${id}"] [data-retour]`); if (b) b.textContent = m ? `🔎 Mode recherche : positions demandées toutes les 2 min pendant ${m} min, puis retour au suivi habituel. Chaque demande est un paquet radio.` : 'Mode recherche arrêté.'; }); } catch (e) { retour(e.message); }
     };
-    { const eq = r.equipes.find((x) => x.id === id);
-      const bz = bloc.querySelector('[data-zone]'); if (bz) bz.onclick = () => choisirPointPuis('Touchez la carte au centre de la zone de sécurité.', async (ll) => {
-        const km = await saisir('Rayon de la zone de sécurité, en km (0,1 à 100) :', eq.zone ? String(eq.zone.rayon / 1000).replace('.', ',') : '2');
-        if (km == null) return;
-        const v = Number(String(km).replace(',', '.'));
-        try { await postJson(`/api/equipes/${id}`, { zone: { lat: ll.lat, lon: ll.lng, rayon: v * 1000 } }, 'PATCH'); ficheEquipes(id); montrerZoneEquipe({ lat: ll.lat, lon: ll.lng, rayon: v * 1000 }, eq.nom); } catch (e) { retour(e.message); }
-      });
-      const bs = bloc.querySelector('[data-zone-suppr]'); if (bs) bs.onclick = async () => { try { await postJson(`/api/equipes/${id}`, { zone: null }, 'PATCH'); montrerZoneEquipe(null); ficheEquipes(id); } catch (e) { retour(e.message); } };
-      const bv = bloc.querySelector('[data-voir-zone]'); if (bv) bv.onclick = (ev) => { ev.preventDefault(); montrerZoneEquipe(eq.zone, eq.nom, true); };
-    }
+    { const bz = bloc.querySelector('[data-secteurs]'); if (bz) bz.onclick = () => ficheSecteurs({ equipe: id }); }
     bloc.querySelector('[data-positions]').onchange = async (ev) => { try { await postJson(`/api/equipes/${id}`, { positions: ev.target.checked }, 'PATCH'); retour('Enregistré : « Renvoyer » ou une nouvelle clé l’appliquera aux nœuds déjà membres.'); } catch (e) { retour(e.message); } };
     { const bp = bloc.querySelector('[data-positions-eq]'); if (bp) bp.onclick = async () => {
       const eq = r.equipes.find((x) => x.id === id);
@@ -5632,18 +6015,33 @@ async function rendreGestion() {
   if (i.taches.some((t) => !t.fin)) suivreTaches();
 }
 
+// Résumé d'une opération : une ligne par réglage envoyé (libellé, valeur, et la valeur d'avant si connue).
+// Chaque morceau est un élément à part : la traduction de l'interface le reconnaît ligne à ligne.
+// Les valeurs « brutes » (nom de nœud, nom de canal, coordonnées) portent translate="no".
+function ligneResume(d) {
+  return `<div class="ligne-resume">${d.lib ? `<span class="lib-resume">${esc(d.lib)}</span>` : ''}<span class="val-resume"${d.brut ? ' translate="no"' : ''}>${esc(d.valeur)}</span>${(d.notes || []).map((n) => `<span class="note-resume">${esc(n)}</span>`).join('')}</div>`;
+}
+function rendreResumeTache(t) {
+  const l = (t.details || []).filter((d) => d && d.valeur != null);
+  if (!l.length) return t.resume ? `<div class="resume-tache"><div class="ligne-resume"><span class="val-resume">${esc(t.resume)}</span></div></div>` : '';
+  // Résumé long (plusieurs sections, plusieurs canaux) : les premières lignes restent visibles,
+  // le reste est replié mais complet — rien n'est perdu.
+  const tete = l.slice(0, 5).map(ligneResume).join('');
+  const reste = l.slice(5);
+  return `<div class="resume-tache">${tete}${reste.length ? `<details class="reste-resume"><summary>et ${reste.length} autres réglages</summary>${reste.map(ligneResume).join('')}</details>` : ''}</div>`;
+}
 function rendreTaches(liste) {
   if (!liste || !liste.length) return '<div class="vide">Aucune.</div>';
   return liste.slice(0, 8).map((t) => `<div class="tache">
-    <div class="entete-tache"><b>${esc(t.nom)}</b><small>${heure(t.debut)} · ${esc(t.auteur)}${t.fin ? '' : t.prochainEssai ? ` · insiste : prochain essai à ${heure(t.prochainEssai)}` : ' · en cours'}${t.insister && t.fin ? ' · insistance terminée' : ''}</small>${!t.fin && !t.arret ? `<button class="mini arreter" data-arreter-tache="${t.id}" title="Arrêter cette opération">■ Arrêter</button>` : ''}${t.fin && t.noeuds.some((x) => x.statut === 'echec' || x.statut === 'annule') ? `<button class="mini" data-relancer-tache="${t.id}" data-resume="${esc(t.resume || '')}" data-nb="${t.noeuds.filter((x) => x.statut === 'echec' || x.statut === 'annule').length}" title="Relancer avec les mêmes réglages, sur les nœuds en échec">↻ Réessayer</button><button class="mini" data-relancer-tache="${t.id}" data-insister="1" data-resume="${esc(t.resume || '')}" data-nb="${t.noeuds.filter((x) => x.statut === 'echec' || x.statut === 'annule').length}" title="Relancer, puis reprendre automatiquement les nœuds en échec toutes les 10 min pendant 2 h">🔁 Insister 2 h</button>` : ''}${(t.type === 'verifier' || (t.type === 'lire' && (!t.fin || t.noeuds.some((x) => x.statut === 'ok' || x.partiel)))) ? `<button class="mini" data-voir-tache="${t.id}">${t.fin ? 'Voir' : 'Suivre'}</button>` : ''}</div>
-    ${t.resume ? `<div class="resume-tache">${esc(t.resume)}</div>` : ''}
+    <div class="entete-tache"><b>${esc(t.nom)}</b><small>${heure(t.debut)} · ${esc(t.auteur)}${t.fin ? '' : t.prochainEssai ? ` · insiste : prochain essai à ${heure(t.prochainEssai)}` : ' · en cours'}${t.insister && t.fin ? ' · insistance terminée' : ''}</small>${!t.fin && !t.arret ? `<button class="mini arreter" data-arreter-tache="${t.id}" title="Arrêter cette opération">■ Arrêter</button>` : ''}${t.fin && t.noeuds.some((x) => x.statut === 'echec' || x.statut === 'annule') ? `<button class="mini" data-relancer-tache="${t.id}" data-resume="${esc((t.resume || '').slice(0, 160))}" data-principal="${t.principal ? 1 : 0}" data-nb="${t.noeuds.filter((x) => x.statut === 'echec' || x.statut === 'annule').length}" title="Relancer avec les mêmes réglages, sur les nœuds en échec">↻ Réessayer</button><button class="mini" data-relancer-tache="${t.id}" data-insister="1" data-resume="${esc((t.resume || '').slice(0, 160))}" data-principal="${t.principal ? 1 : 0}" data-nb="${t.noeuds.filter((x) => x.statut === 'echec' || x.statut === 'annule').length}" title="Relancer, puis reprendre automatiquement les nœuds en échec toutes les 10 min pendant 2 h">🔁 Insister 2 h</button>` : ''}${(t.type === 'verifier' || (t.type === 'lire' && (!t.fin || t.noeuds.some((x) => x.statut === 'ok' || x.partiel)))) ? `<button class="mini" data-voir-tache="${t.id}">${t.fin ? 'Voir' : 'Suivre'}</button>` : ''}</div>
+    ${rendreResumeTache(t)}
     ${t.noeuds.map((n) => `<div class="etape ${n.statut}"><span>${esc(nomNoeud(n.num))}</span><span>${STATUTS_TACHE[n.statut]}${n.finNoeud && (n.statut === 'ok' || n.statut === 'echec') ? ` <small class="heure-etape">à ${heure(n.finNoeud)}</small>` : ''}${n.detail && n.statut !== 'ok' ? ' · ' + esc(n.detail) : ''}</span></div>`).join('')}
   </div>`).join('');
 }
 
 function brancherArrets() {
   $('#taches-gestion').querySelectorAll('[data-relancer-tache]').forEach((b) => (b.onclick = async () => {
-    const principal = /\(principal\)/.test(b.dataset.resume || '');
+    const principal = b.dataset.principal === '1';
     if (principal && !(await confirmer(`Réessayer « ${b.dataset.resume} » sur ${b.dataset.nb} nœud(s) ?\nLe canal PRINCIPAL sera réécrit (mêmes garde-fous : contrôle de fréquence et vérification).`))) return;
     b.disabled = true; b.textContent = '↻ …';
     try {
@@ -5740,7 +6138,7 @@ function suiviModif(t) {
   const n = t.noeuds[0] || {};
   const defil = $('#fiche').scrollTop;
   $('#fiche').hidden = false;
-  $('#fiche-contenu').innerHTML = `<h2>Modification · ${esc(nomNoeud(n.num))}</h2><div class="ident">${esc(t.resume || '')}</div>
+  $('#fiche-contenu').innerHTML = `<h2>Modification · ${esc(nomNoeud(n.num))}</h2>${rendreResumeTache(t)}
     ${!t.fin ? `<div class="alerte info-lecture"><span class="sablier"></span> ${esc(n.detail || 'en cours…')} <button class="mini arreter" data-arreter-tache="${t.id}">■ Arrêter</button></div>` : n.statut === 'ok' ? '<div class="alerte info-lecture">✔ Modifications appliquées et relues.</div>' : `<div class="alerte attention">✖ ${esc(STATUTS_TACHE[n.statut])} : ${esc(n.detail || '')}</div>`}
     <ol class="etapes-modif">${(n.etapes || []).map((e) => `<li>${esc(e)}</li>`).join('')}</ol>
     ${t.fin ? `<div class="actions-prop"><button id="ed-retour-editeur" class="principal">Revenir à l’éditeur</button></div>` : ''}`;
@@ -5793,6 +6191,18 @@ async function voirTache(id) {
 
 // ---- Vue zone ----------------------------------------------------------------------------
 // Paramètre ?zone= des API : 1 = département, v = + voisins, r84 = région, rien = toute la France
+// (carte réglée hors de France, etat.config.monde : rien = toute la carte, sans régions françaises ;
+// la valeur interne reste « france » pour les choix déjà retenus dans les navigateurs)
+const libelleToutZone = () => (carteMondeClient() ? 'Toute la carte' : 'France');
+// « Toute la carte » hors de France : cadrage sur tous les nœuds connus (Meshtastic et MeshCore), vue du monde sinon
+function cadrerToutReseau() {
+  const pts = [];
+  const ok = (n) => n && Number.isFinite(n.lat) && Number.isFinite(n.lon) && Math.abs(n.lat) <= 90 && Math.abs(n.lon) <= 180 && !(n.lat === 0 && n.lon === 0);
+  for (const n of etat.noeuds.values()) if (ok(n)) pts.push([n.lat, n.lon]);
+  if (typeof mc !== 'undefined' && mc.noeuds) for (const n of mc.noeuds.values()) if (ok(n)) pts.push([n.lat, n.lon]);
+  if (pts.length) carte.fitBounds(L.latLngBounds(pts), { padding: [20, 20], maxZoom: 11 });
+  else carte.setView([20, 0], 2);
+}
 const paramZone = () => (etat.zoneMode === 'voisins' ? 'v' : /^r\d{2}$/.test(etat.zoneMode) ? etat.zoneMode : etat.zone ? '1' : '');
 const regionChoisie = () => (/^r\d{2}$/.test(etat.zoneMode) ? (etat.config.regions || []).find((r) => 'r' + r.code === etat.zoneMode) : null);
 function appliquerZone(recadrer) {
@@ -5807,7 +6217,8 @@ function appliquerZone(recadrer) {
   etat.config.zone = etat.zoneMode === 'voisins' ? v.bbox : reg ? reg.bbox : etat.config.zoneDep;
   try { localStorage.setItem('gaulix_zone', etat.zoneMode); } catch { /* stockage indisponible */ }
   const b = $('#sel-zone');
-  // Régions de France, une seule fois
+  // Régions de France, une seule fois (retirées si la carte passe hors de France sans rechargement)
+  { const og = b.querySelector('optgroup'); if (og && !(etat.config.regions || []).length) og.remove(); }
   if (!b.querySelector('optgroup') && (etat.config.regions || []).length) {
     b.insertAdjacentHTML('beforeend', `<optgroup label="Régions">${etat.config.regions.map((r) => `<option value="r${r.code}">${esc(r.nom)}</option>`).join('')}</optgroup>`);
   }
@@ -5816,14 +6227,17 @@ function appliquerZone(recadrer) {
   b.options[1].textContent = `${nom} + voisins`;
   b.options[1].title = v ? v.departements.map((d) => `${d.code} ${d.nom}`).join(', ') : '';
   b.options[1].hidden = !v;
+  { const fr = b.querySelector('option[value="france"]'); if (fr) { fr.textContent = libelleToutZone(); fr.title = carteMondeClient() ? 'Tous les nœuds connus de la carte, où qu’ils soient' : ''; } }
   { const fr = b.querySelector('option[value="france"]'); if (fr && etat.config.horsFrance) { fr.remove(); if (etat.zoneMode === 'france') etat.zoneMode = 'dep'; } }
   if (!v && b.options[1] && b.options[1].value === 'voisins') b.options[1].disabled = true;
   b.value = etat.zoneMode;
-  b.title = etat.zoneMode === 'voisins' && v ? `${nom} et départements voisins : ${v.departements.map((d) => d.nom).join(', ')}` : reg ? `Région ${reg.nom}` : 'Secteur affiché : votre département, avec ses voisins, une région ou toute la France';
+  b.title = etat.zoneMode === 'voisins' && v ? `${nom} et départements voisins : ${v.departements.map((d) => d.nom).join(', ')}` : reg ? `Région ${reg.nom}`
+    : carteMondeClient() ? 'Secteur affiché : la zone de la carte ou toute la carte' : 'Secteur affiché : votre département, avec ses voisins, une région ou toute la France';
   b.classList.toggle('actif', etat.zone);
   if (recadrer) {
     const z = etat.config.zone;
     if (etat.zone) carte.fitBounds([[z[0], z[1]], [z[2], z[3]]], { padding: [20, 20] });
+    else if (carteMondeClient()) cadrerToutReseau();
     else carte.setView([46.6, 2.5], 6);
   }
   dessinerNoeuds();
@@ -5937,13 +6351,56 @@ function dessinerChaleur() {
 setInterval(() => { if (carte) dessinerChaleur(); }, 20000);
 
 // ---- Chargement & temps réel -------------------------------------------------------
-async function chargerNoeuds() {
-  const liste = await api('/api/noeuds');
-  etat.noeuds = new Map(liste.map((n) => [n.num, n]));
+// Liste complète au démarrage et toutes les 10 min ; entre-temps, seulement les nœuds modifiés (?depuis=) :
+// avec le flux msh/EU_868, la liste complète pèse plusieurs Mo et était redemandée toutes les 4 s par chaque carte
+// Le repère ?depuis= est l'heure serveur de préparation de la liste (en-tête X-Heure), jamais une heure tirée des
+// données (une horloge GPS dans le futur gelait la mise à jour). Le serveur renvoie les nœuds dont la fiche a été
+// écrite depuis (quelle que soit l'heure de la donnée) et ceux qui ont été supprimés.
+async function chargerNoeuds(complet) {
+  if (complet || !etat.heureNoeuds || Date.now() - (etat.completNoeuds || 0) > 600000) {
+    const r = await fetch('/api/noeuds', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error(r.statusText);
+    const liste = await r.json();
+    etat.noeuds = new Map(liste.map((n) => [n.num, n]));
+    etat.heureNoeuds = Number(r.headers.get('X-Heure')) || Date.now();
+    etat.completNoeuds = Date.now();
+  } else {
+    const r = await api('/api/noeuds?depuis=' + etat.heureNoeuds);
+    if (Array.isArray(r)) { // repère trop ancien pour le serveur : il a renvoyé la liste complète
+      etat.noeuds = new Map(r.map((n) => [n.num, n]));
+      etat.completNoeuds = Date.now();
+    } else {
+      for (const n of r.noeuds || []) etat.noeuds.set(n.num, n);
+      for (const num of r.supprimes || []) retirerNoeud(Number(num) >>> 0);
+    }
+    if (r.heure) etat.heureNoeuds = r.heure;
+  }
+  majStatuts();
   dessinerNoeuds();
   if (etat.config) rendreLegende();
   rendreNoeuds();
 }
+// Nœud disparu (purge, administrateur) : retiré de la carte et des listes
+function retirerNoeud(k) {
+  etat.noeuds.delete(k);
+  const mk = etat.marqueurs.get(k); if (mk) { mk.remove(); etat.marqueurs.delete(k); }
+  if (etat.selection === k) $('#fermer-fiche').click();
+}
+// Statut (actif → récent → inactif) recalculé ici à partir de dernierVu : le serveur ne renvoie pas un nœud qui
+// vieillit sans rien émettre. Vrai si au moins un statut a changé.
+function majStatuts() {
+  const s = etat.config && etat.config.seuils;
+  if (!s) return false;
+  const maintenant = Date.now();
+  let change = false;
+  for (const n of etat.noeuds.values()) {
+    const age = maintenant - (n.dernierVu || 0);
+    const statut = age < s.actifMinutes * 60000 ? 'actif' : age < s.inactifHeures * 3600000 ? 'recent' : 'inactif';
+    if (n.statut !== statut) { n.statut = statut; change = true; }
+  }
+  return change;
+}
+setInterval(() => { if (carte && majStatuts()) { dessinerNoeuds(); rendreNoeuds(); } }, 60000);
 async function chargerLiens() {
   etat.liens = await api('/api/liens?heures=' + $('#fenetre').value);
   dessinerLiens();
@@ -5996,19 +6453,25 @@ function majEtat(e) {
 
 // ---- Page du broker MQTT : état, passerelles entendues, réglages et test ----------------------
 
-let rafraichir = null;
+let rafraichir = null, rafraichirLiens = null;
 function planifierRafraichissement() {
   if (rafraichir) return;
   rafraichir = setTimeout(async () => {
     rafraichir = null;
-    await Promise.all([chargerNoeuds(), chargerLiens()]).catch(() => {});
+    // Liaisons relues au plus toutes les 30 s (des milliers de liaisons avec le flux d'un pays entier) ; si la relecture
+    // est sautée, elle est programmée à l'échéance pour ne pas attendre le paquet suivant
+    const reste = 30000 - (Date.now() - (etat.heureLiens || 0));
+    const liens = reste <= 0;
+    if (liens) etat.heureLiens = Date.now();
+    else if (!rafraichirLiens) rafraichirLiens = setTimeout(() => { rafraichirLiens = null; planifierRafraichissement(); }, reste + 100);
+    await Promise.all([chargerNoeuds(), liens ? chargerLiens() : null]).catch(() => {});
     rendreReseau();
   }, 4000);
 }
 
 // Économie de données et de batterie : onglet caché depuis 2 min (téléphone en poche), le flux en direct est coupé ;
 // au retour, reconnexion et rechargement des nœuds et liaisons
-const veille = { ws: null, minuterie: null, endormi: false };
+const veille = { ws: null, minuterie: null, endormi: false, coupe: false };
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     clearTimeout(veille.minuterie);
@@ -6018,7 +6481,7 @@ document.addEventListener('visibilitychange', () => {
     if (veille.endormi) {
       veille.endormi = false;
       connecterWs();
-      Promise.all([chargerNoeuds(), chargerLiens()]).then(() => rendreReseau()).catch(() => {});
+      Promise.all([chargerNoeuds(true), chargerLiens()]).then(() => rendreReseau()).catch(() => {});
       if (typeof mcPlanifier === 'function') mcPlanifier();
     }
   }
@@ -6040,6 +6503,7 @@ function connecterWs() {
       if (f && !$('#fiche').hidden && f.querySelector('.alertes-off')) (etat.membre && !masquee('signalements') ? ficheSignalements() : ficheAlertesOff());
       return;
     }
+    if (typeof criseRecevoir === 'function' && criseRecevoir(m)) return;
     if (m.genre === 'equipe-sos') {
       if (etat.gestion) {
         annonce(`🆘 ${m.nom} (équipe ${m.nomEquipe}) demande de l’aide : « ${m.texte} »`, 'erreur');
@@ -6058,10 +6522,7 @@ function connecterWs() {
     }
     // Nœud supprimé par un administrateur : retiré de la carte et des listes
     if (m.genre === 'noeud-supprime') {
-      const k = Number(m.num) >>> 0;
-      etat.noeuds.delete(k);
-      const mk = etat.marqueurs.get(k); if (mk) { mk.remove(); etat.marqueurs.delete(k); }
-      if (etat.selection === k) $('#fermer-fiche').click();
+      retirerNoeud(Number(m.num) >>> 0);
       rendreNoeuds(); dessinerLiens();
       return;
     }
@@ -6073,6 +6534,8 @@ function connecterWs() {
       return;
     }
     if (m.genre === 'bienvenue' || m.genre === 'mqtt') {
+      // Reconnexion après une coupure : des suppressions ou des modifications ont pu être manquées, liste complète
+      if (m.genre === 'bienvenue' && veille.coupe) { veille.coupe = false; chargerNoeuds(true).then(() => rendreReseau()).catch(() => {}); }
       const ok = m.genre === 'bienvenue' ? m.mqtt : m.connecte;
       temoin.className = 'direct ' + (ok ? 'ok' : 'ko');
       temoin.querySelector('b').textContent = ok ? 'En direct' : 'Broker déconnecté';
@@ -6093,6 +6556,8 @@ function connecterWs() {
       majEtat(m);
       dessinerNoeuds();
     } else if (m.genre === 'statut') {
+      // Module radio ou MeshMonitor (re)connecté : des fiches entières peuvent avoir changé, liste complète
+      etat.completNoeuds = 0;
       planifierRafraichissement();
     } else if (m.genre && m.genre.startsWith('mc-') && typeof mcRecevoir === 'function') {
       mcRecevoir(m);
@@ -6102,6 +6567,7 @@ function connecterWs() {
     temoin.className = 'direct ko';
     if (veille.endormi) { temoin.querySelector('b').textContent = 'En pause'; return; } // reprise au retour sur l'onglet
     temoin.querySelector('b').textContent = 'Reconnexion…';
+    veille.coupe = true;
     setTimeout(connecterWs, 4000);
   };
 }
@@ -6126,7 +6592,15 @@ function brancherInterface() {
   $('#replier').onclick = () => { $('#panneau').classList.add('replie'); $('#deplier').hidden = false; document.body.classList.add('panneau-replie'); };
   $('#deplier').onclick = () => { $('#panneau').classList.remove('replie'); $('#deplier').hidden = true; document.body.classList.remove('panneau-replie'); };
   installerDetachement();
-  $('#fermer-fiche').onclick = () => { $('#fiche').hidden = true; etat.selection = null; if (etat.trajet) { etat.trajet.remove(); etat.trajet = null; } };
+  $('#fermer-fiche').onclick = () => {
+    const retour = etat.retourFiche; etat.retourFiche = null; // consommé une seule fois : jamais de va-et-vient sans fin
+    $('#fiche').hidden = true; etat.selection = null;
+    if (etat.trajet) { etat.trajet.remove(); etat.trajet = null; }
+    if (etat.cerclePrec) { etat.cerclePrec.remove(); etat.cerclePrec = null; }
+    // Fiche ouverte depuis le registre ou depuis la liste d'un département : on y revient, avec la recherche en cours
+    if (retour && retour.ecran === 'registre') ficheRegistreRelais(retour);
+    else if (retour && retour.ecran === 'departement') ficheNoeudsDepartement(retour.code, retour);
+  };
   document.body.addEventListener('click', (e) => {
     const el = e.target.closest('.ligne[data-num], .alerte[data-num], .paquet[data-num]');
     if (!el || el.closest('#fiche')) return;
@@ -6143,7 +6617,10 @@ function brancherInterface() {
       noms: () => [...etat.noeuds.values()].filter((n) => n.dernierVu && Date.now() - n.dernierVu < 7 * 86400000).flatMap((n) => [n.nomCourt, n.nomLong]) }); }
   { const g = $('#groupe-noeuds'); if (g) { try { g.value = localStorage.getItem('gaulix_groupe') || ''; } catch { /* ignoré */ } g.hidden = !etat.membre; g.onchange = () => { try { localStorage.setItem('gaulix_groupe', g.value); } catch { /* ignoré */ } rendreNoeuds(); }; } }
   $('#fenetre').onchange = chargerLiens;
-  document.querySelectorAll('.bascule').forEach((b) => (b.onclick = () => {
+  // Bascules de couche : SEULEMENT les boutons porteurs d'un data-couche. La classe « bascule » sert aussi
+  // au style des boutons du menu Outils et du menu Radio : sans le filtre, ce gestionnaire écrasait leur
+  // propre action (Module USB, Module Bluetooth, Thème clair, Passerelle…) et le clic ne faisait plus rien.
+  document.querySelectorAll('.bascule[data-couche]').forEach((b) => (b.onclick = () => {
     const c = b.dataset.couche;
     etat.couches[c] = !etat.couches[c];
     b.classList.toggle('actif', etat.couches[c]);
@@ -6214,7 +6691,7 @@ function brancherInterface() {
       <h3>Archives</h3>${l.map((x) => `<div class="ligne"><span class="titre"><a href="/rapports/${encodeURIComponent(x)}" target="_blank" rel="noopener">Semaine du ${esc(x.slice(8, 18).split('-').reverse().join('/'))}</a></span></div>`).join('') || '<div class="vide">Pas encore d’archive (premier rapport lundi prochain vers 7 h).</div>'}`;
   };
   { const bc = $('#btn-chercher-reglage'); if (bc) bc.onclick = ouvrirRechercheReglages; }
-  { const bf = $('#outil-france'); if (bf) { bf.hidden = !etat.admin; bf.onclick = () => { const m = document.querySelector('.menu-outils'); if (m) m.open = false; ficheFrance(); }; } }
+  { const bf = $('#outil-france'); if (bf) { bf.hidden = !etat.admin; if (carteMondeClient()) { bf.textContent = '🗺️ Relief de la zone'; bf.title = 'Télécharger le relief de la zone de la carte et de ses carrés voisins (administrateur)'; } bf.onclick = () => { const m = document.querySelector('.menu-outils'); if (m) m.open = false; ficheFrance(); }; } }
   { const bs = $('#outil-signalements'); if (bs) bs.onclick = () => { const m = document.querySelector('.menu-outils'); if (m) m.open = false; if (masquee('signalements')) ficheAlertesOff(); else ficheSignalements(); }; }
   { const bt = $('#outil-trafic'); if (bt) bt.onclick = () => { const m = document.querySelector('.menu-outils'); if (m) m.open = false; ficheTrafic(); }; }
   { const bc = $('#outil-connecter'); if (bc) bc.onclick = () => { const m = document.querySelector('.menu-outils'); if (m) m.open = false; ouvrirConnexion(); }; }
@@ -6225,6 +6702,14 @@ function brancherInterface() {
   { const bi = $('#outil-inviter'); if (bi) { bi.hidden = !etat.admin || !!etat.consultation; bi.onclick = () => { const m = document.querySelector('.menu-outils'); if (m) m.open = false; ficheAutresPresets(); }; } }
   $('#outil-portee').onclick = () => { const m = document.querySelector('.menu-outils'); if (m) m.open = false; testPortee(null); };
   $('#outil-terrain').onclick = () => { const m = document.querySelector('.menu-outils'); if (m) m.open = false; ficheTerrain(); };
+  // Menus du haut (Couches, Couverture radio, Outils) : jamais plus hauts que la place sous leur bouton, pour
+  // qu'on puisse toujours faire défiler jusqu'à la dernière entrée (Outils est long en « Les deux » réseaux)
+  document.querySelectorAll('details.menu-couches').forEach((d) => d.addEventListener('toggle', () => {
+    const m = d.open && d.querySelector(':scope > .menu');
+    if (!m || getComputedStyle(m).position === 'fixed') return; // téléphone : déjà borné par la feuille de style
+    m.style.maxHeight = '';
+    m.style.maxHeight = Math.max(160, Math.floor(window.innerHeight - m.getBoundingClientRect().top - 12)) + 'px';
+  }));
   $('#outil-partager').onclick = () => { const m = document.querySelector('.menu-outils'); if (m) m.open = false; fichePartager(); };
   $('#btn-simulation').onclick = () => { const mr = $('#menu-radio'); if (mr) mr.open = false; simulation(); };
   $('#btn-plan-menu').onclick = () => { const mr = $('#menu-radio'); if (mr) mr.open = false; allerPlan(); };
@@ -6278,6 +6763,7 @@ function ongletsDialogue(dlg) {
     dlg.querySelectorAll('[data-pan]').forEach((p) => (p.hidden = p.dataset.pan !== b.dataset.dlg));
     if (b.dataset.dlg === 'comptes') rendreComptes();
     if (b.dataset.dlg === 'journal') rendreJournal();
+    if (b.dataset.dlg === 'frequentation') rendreFrequentation();
     if (b.dataset.dlg === 'sauvegardes') rendreSauvegardes();
     if (b.dataset.dlg === 'archive') rendreArchive();
     if (b.dataset.dlg === 'reglages') rendreReglages();
@@ -6297,6 +6783,51 @@ function brancherComptes() {
   const dlgC = $('#dlg-compte'), dlgG = $('#dlg-gestion');
   ongletsDialogue(dlgC);
   ongletsDialogue(dlgG);
+  // ---- Mot de passe oublié : par e-mail si la carte en envoie, sinon demande aux administrateurs ----
+  const montrerPan = (nom) => {
+    dlgC.querySelectorAll('[data-pan]').forEach((f) => (f.hidden = f.dataset.pan !== nom));
+    dlgC.querySelectorAll('.onglets-dlg [data-dlg]').forEach((b) => b.classList.toggle('actif', b.dataset.dlg === nom));
+    dlgC.querySelectorAll('.erreur').forEach((x) => (x.textContent = ''));
+  };
+  const fo = $('#form-oubli');
+  $('#btn-oubli').onclick = async () => {
+    montrerPan('oubli');
+    fo.identifiant.value = $('#form-connexion').identifiant.value;
+    $('#note-oubli').textContent = 'Indiquez votre identifiant, votre indicatif ou votre adresse e-mail.';
+    try { const r = await api('/api/mot-de-passe/oubli'); $('#note-oubli').textContent = r.courriel ? 'Indiquez votre identifiant, votre indicatif ou votre adresse e-mail : un lien pour choisir un nouveau mot de passe sera envoyé à l’adresse e-mail de votre compte.' : 'Indiquez votre identifiant, votre indicatif ou votre adresse e-mail : les administrateurs de la carte seront prévenus et vous transmettront un lien pour choisir un nouveau mot de passe.'; } catch { /* note par défaut */ }
+    fo.identifiant.focus();
+  };
+  dlgC.querySelectorAll('.retour-connexion').forEach((b) => (b.onclick = () => montrerPan('connexion')));
+  fo.onsubmit = async (e) => {
+    e.preventDefault();
+    const err = fo.querySelector('.erreur');
+    try {
+      const r = await postJson('/api/mot-de-passe/oubli', { identifiant: fo.identifiant.value });
+      err.textContent = '';
+      $('#note-oubli').innerHTML = r.courriel
+        ? '<span class="succes">✔ Demande envoyée.</span> Si ce compte existe et a une adresse e-mail, un lien valable 1 heure vient d’y être envoyé (regardez aussi les indésirables). Sinon, les administrateurs de la carte ont été prévenus.'
+        : '<span class="succes">✔ Demande envoyée.</span> Si ce compte existe, les administrateurs de la carte ont été prévenus : ils vous transmettront un lien pour choisir un nouveau mot de passe.';
+    } catch (x) { err.textContent = x.message; }
+  };
+  // Lien reçu (/?reinit=…) : choix du nouveau mot de passe, puis connexion
+  const jetonReinit = new URLSearchParams(location.search).get('reinit');
+  if (jetonReinit) {
+    try { history.replaceState(null, '', location.pathname); } catch { /* */ }
+    const fr = $('#form-reinit');
+    fr.onsubmit = async (e) => {
+      e.preventDefault();
+      const err = fr.querySelector('.erreur');
+      if (fr.nouveau.value !== fr.confirmation.value) { err.textContent = 'Les deux mots de passe sont différents'; return; }
+      try {
+        const r = await postJson('/api/mot-de-passe/reinitialiser', { jeton: jetonReinit, nouveau: fr.nouveau.value });
+        if (r.connecte) { location.reload(); return; }
+        montrerPan('connexion');
+        $('#form-connexion').identifiant.value = r.identifiant;
+        $('#form-connexion').querySelector('.erreur').innerHTML = '<span class="succes">✔ Mot de passe changé : connectez-vous avec lui et votre code.</span>';
+      } catch (x) { err.textContent = x.message; }
+    };
+    setTimeout(() => { if (!dlgC.open) dlgC.showModal(); montrerPan('reinit'); fr.nouveau.focus(); }, 500);
+  }
   $('#fermer-compte').onclick = () => dlgC.close();
   $('#fermer-gestion').onclick = () => dlgG.close();
   $('#btn-admin').onclick = () => {
@@ -6351,6 +6882,13 @@ function ouvrirGestion() {
       <div class="mesure"><span>Double authentification</span><b>${c.deuxFacteurs ? '✔ activée' : 'non'}</b></div>
       <div class="mesure"><span>Indicatif</span><b>${esc(c.indicatif || '–')}</b></div>
     </div>
+    <h3>Adresse e-mail</h3>
+    <p class="note">Sert à recevoir un lien si vous oubliez votre mot de passe. Elle n’est montrée qu’aux administrateurs.</p>
+    <form id="form-email" class="parametres compact">
+      <label>E-mail <input name="email" type="email" autocomplete="email" value="${esc(c.email || '')}" placeholder="prenom@exemple.fr"></label>
+      <button type="submit">Enregistrer</button>
+    </form>
+    <p class="erreur" id="retour-email"></p>
     <h3>Changer de mot de passe</h3>
     <form id="form-mdp" class="parametres compact">
       <label>Actuel <input name="ancien" type="password" autocomplete="current-password" required></label>
@@ -6380,6 +6918,11 @@ function ouvrirGestion() {
   const f2 = $('#form-2fa-retirer');
   if (f2) f2.onsubmit = async (e) => { e.preventDefault(); try { await postJson('/api/compte/deux-facteurs/retirer', { motDePasse: e.target.motDePasse.value }); etat.config.compte.deuxFacteurs = false; ouvrirGestion(); } catch (x) { r2(x.message); } };
   $('#btn-deco-partout').onclick = async () => { try { await postJson('/api/compte/deconnecter-partout'); r2('✔ Toutes vos autres sessions sont fermées.'); } catch (x) { r2(x.message); } };
+  $('#form-email').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await postJson('/api/compte/email', { email: e.target.email.value }); etat.config.compte.email = e.target.email.value.trim() || null; $('#retour-email').innerHTML = '<span class="succes">E-mail enregistré ✓</span>'; }
+    catch (x) { $('#retour-email').textContent = x.message; }
+  };
   $('#form-mdp').onsubmit = async (e) => {
     e.preventDefault();
     try { await postJson('/api/compte/mot-de-passe', { ancien: e.target.ancien.value, nouveau: e.target.nouveau.value }); $('#retour-mdp').textContent = 'Mot de passe changé ✓'; e.target.reset(); }
@@ -6413,12 +6956,25 @@ async function optionsDepartements(select, code) {
   select.addEventListener('change', async () => {
     if (select.value !== 'choisir-monde') { avant = select.value; return; }
     const c = typeof carte !== 'undefined' ? carte.getCenter() : { lat: 40, lng: -75 };
-    const v = typeof saisir === 'function'
-      ? await saisir('Position du centre de votre réseau (latitude, longitude en degrés décimaux, ex. 40.7, -74.0) :', `${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`)
-      : prompt('Latitude, longitude du centre de votre réseau :', `${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`);
-    const m = /^\s*(-?\d{1,2}(?:\.\d+)?)\s*[,; ]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/.exec(v || '');
-    if (!m || Math.abs(Number(m[1])) > 85 || Math.abs(Number(m[2])) > 180) { select.value = avant; return; }
-    const k = codeMonde(Number(m[1]), Number(m[2]));
+    // « 52.12, 4.43 », « 52.12 4.43 » ou, avec la virgule décimale, « 52,12; 4,43 » / « 52,12 4,43 ».
+    // Saisie non reconnue : la question est reposée avec la saisie, au lieu de revenir en arrière sans rien dire.
+    const lire = (v) => {
+      const s = String(v || '').trim();
+      const m = /^(-?\d{1,2}(?:\.\d+)?)\s*[,; ]\s*(-?\d{1,3}(?:\.\d+)?)$/.exec(s) || /^(-?\d{1,2}(?:,\d+)?)\s*[; ]\s*(-?\d{1,3}(?:,\d+)?)$/.exec(s);
+      if (!m) return null;
+      const lat = Number(m[1].replace(',', '.')), lon = Number(m[2].replace(',', '.'));
+      return Math.abs(lat) <= 85 && Math.abs(lon) <= 180 ? [lat, lon] : null;
+    };
+    let v = `${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`, pos = null;
+    for (let essai = 0; essai < 3 && !pos; essai++) {
+      v = typeof saisir === 'function'
+        ? await saisir('Position du centre de votre réseau (latitude, longitude en degrés décimaux, ex. 40.7, -74.0) :', v)
+        : prompt('Latitude, longitude du centre de votre réseau :', v);
+      if (!v) break; // annulé
+      pos = lire(v);
+    }
+    if (!pos) { select.value = avant; return; }
+    const k = codeMonde(pos[0], pos[1]);
     let o = [...select.options].find((x) => x.value === k);
     if (!o) { o = new Option('🌍 ' + nomMonde(k), k); select.querySelector('optgroup').prepend(o); }
     select.value = avant = k;
@@ -6567,7 +7123,18 @@ function installerTiroir() {
   if (PANNEAU_SEUL) return; // fenêtre détachée : panneau plein écran, pas de tiroir
   const mq = matchMedia('(max-width: 900px)');
   const p = $('#panneau');
-  if (!p.querySelector('.poignee-tiroir')) p.insertAdjacentHTML('afterbegin', '<div class="poignee-tiroir" title="Tirer ou toucher pour agrandir / réduire"></div>');
+  if (!p.querySelector('.poignee-tiroir')) p.insertAdjacentHTML('afterbegin', '<div class="poignee-tiroir" title="Tirer ou toucher pour agrandir / réduire"></div><button type="button" class="reduire-tiroir" title="Réduire le panneau en bas" aria-label="Réduire le panneau">▾</button>');
+  // Hauteur pleine : du bas du titre ou de la recherche de lieu (le plus bas des deux, qui grandit avec le texte
+  // agrandi d'Android ou l'avis de mise à jour) jusqu'à la barre d'outils
+  const majPlein = () => {
+    if (!mq.matches) return;
+    let haut = 0;
+    for (const s of ['.barre', '.recherche-lieu']) { const e = document.querySelector(s); const r = e && e.getBoundingClientRect(); if (r && r.height > 0) haut = Math.max(haut, r.bottom); } // éléments fixes : offsetParent nul, d'où la taille
+    const o = document.querySelector('.outils'), ho = o ? o.offsetHeight : 50;
+    document.documentElement.style.setProperty('--h-tiroir-plein', Math.max(180, Math.round(window.innerHeight - ho - haut - 8)) + 'px');
+  };
+  setTimeout(majPlein, 400); setTimeout(majPlein, 2500);
+  if (window.ResizeObserver) { const ro = new ResizeObserver(majPlein); for (const s of ['.barre', '.recherche-lieu', '.outils']) { const e = document.querySelector(s); if (e) ro.observe(e); } }
   const ETATS = ['reduit', 'moitie', 'plein'];
   // Hauteur réduite : poignée + choix du réseau + onglets, sans contenu (mesurée une fois la page affichée)
   const majReduit = () => {
@@ -6581,14 +7148,15 @@ function installerTiroir() {
     etat.tiroir = e; ecrireLs('gaulix_tiroir', e);
     const o = document.querySelector('.outils');
     if (o) document.documentElement.style.setProperty('--h-outils', o.offsetHeight + 'px');
-    majReduit();
+    majReduit(); majPlein();
     setTimeout(() => { document.documentElement.style.setProperty('--h-tiroir-reel', p.offsetHeight + 'px'); if (typeof carte !== 'undefined' && carte) carte.invalidateSize(); }, 260);
   };
   // Hauteur réelle du tiroir suivie en continu (attribution et boutons de la carte juste au-dessus, jamais au milieu)
   if (window.ResizeObserver) new ResizeObserver(() => { if (mq.matches) document.documentElement.style.setProperty('--h-tiroir-reel', p.offsetHeight + 'px'); }).observe(p);
   appliquer(lireLs('gaulix_tiroir', 'reduit'));
   mq.addEventListener('change', () => appliquer(etat.tiroir || 'reduit'));
-  window.addEventListener('resize', () => { const o = document.querySelector('.outils'); if (o) document.documentElement.style.setProperty('--h-outils', o.offsetHeight + 'px'); majReduit(); });
+  window.addEventListener('resize', () => { const o = document.querySelector('.outils'); if (o) document.documentElement.style.setProperty('--h-outils', o.offsetHeight + 'px'); majReduit(); majPlein(); });
+  { const rt = p.querySelector('.reduire-tiroir'); if (rt) rt.onclick = () => appliquer('reduit'); }
   window.ustawTiroir = appliquer;
   // PL: krzyżyk zamykający szufladę otwartą na cały ekran
   if (!document.querySelector('.zamknij-tiroir')) {
@@ -6598,7 +7166,7 @@ function installerTiroir() {
   const poignee = p.querySelector('.poignee-tiroir');
   let depart = null;
   poignee.addEventListener('pointerdown', (ev) => { depart = { y: ev.clientY, h: p.offsetHeight, t: Date.now() }; poignee.setPointerCapture(ev.pointerId); p.style.transition = 'none'; });
-  poignee.addEventListener('pointermove', (ev) => { if (!depart) return; p.style.height = Math.max(70, depart.h + (depart.y - ev.clientY)) + 'px'; });
+  poignee.addEventListener('pointermove', (ev) => { if (!depart) return; const max = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--h-tiroir-plein')) || window.innerHeight; p.style.height = Math.max(70, Math.min(max, depart.h + (depart.y - ev.clientY))) + 'px'; });
   poignee.addEventListener('pointerup', (ev) => {
     if (!depart) return;
     const dy = depart.y - ev.clientY, h = p.offsetHeight;
@@ -6768,6 +7336,8 @@ async function demarrer() {
   etat.gestion = !!etat.config.gestion;
   etat.secteur = etat.admin ? null : (etat.config.compte && etat.config.compte.noeuds) || [];
   etat.membre = etat.config.membre;
+  // Membre non administrateur : « Connecter un module » devient « Devenir passerelle » (sa radio, en écoute)
+  { const bc = $('#outil-connecter'); if (bc && !etat.admin) { bc.hidden = !(etat.membre && etat.config.passerelleMembres); bc.textContent = '📡 Devenir passerelle…'; bc.title = 'Relier votre radio Meshtastic ou MeshCore à la carte depuis ce PC (USB ou Bluetooth) et y écrire les canaux de la carte'; } }
   if (etat.consultation) {
     const b = document.createElement('div');
     b.className = 'bandeau-consultation';
@@ -6781,6 +7351,11 @@ async function demarrer() {
   for (const c of etat.config.couchesMasquees || []) if (c in etat.couches) etat.couches[c] = false;
   // Téléphone ou tablette, sans choix enregistré : pas d'animation des paquets (coûteuse sur mobile)
   const choixCouches = lireLs('gaulix_couches', null);
+  // Ménage : une version précédente pouvait enregistrer une clé parasite « undefined » (un clic sur un bouton
+  // du menu Outils passait par la bascule des couches). On la retire sans toucher aux choix légitimes.
+  if (choixCouches && Object.keys(choixCouches).some((k) => !(k in etat.couches))) {
+    ecrireLs('gaulix_couches', Object.fromEntries(Object.entries(choixCouches).filter(([k]) => k in etat.couches)));
+  }
   const economie = !!(navigator.connection && (navigator.connection.saveData || /(^|-)2g$/.test(navigator.connection.effectiveType || '')));
   if (!choixCouches && ((window.matchMedia && matchMedia('(pointer: coarse)').matches) || economie)) etat.couches.animations = false;
   Object.assign(etat.couches, Object.fromEntries(Object.entries(choixCouches || {}).filter(([k, v]) => k in etat.couches && typeof v === 'boolean')));
@@ -6802,8 +7377,7 @@ async function demarrer() {
     const lc = $('#lien-client'), lf = $('#lien-flasher'), note = $('#note-outils');
     if (lc) lc.href = o.client || auto(8443, 8096);
     if (lf) lf.href = o.flasher || auto(10000, 8097);
-    const chromium = !!(navigator.userAgentData && navigator.userAgentData.brands && navigator.userAgentData.brands.some((b) => /Chrom|Edge/i.test(b.brand)));
-    if (note) note.textContent = !https ? 'USB et Bluetooth demandent la carte en HTTPS (voir README).' : !('serial' in navigator) && !chromium ? 'USB et Bluetooth : utilisez Chrome ou Edge.' : '';
+    if (note) marquerVoiesModule(); // note du menu + marquage des boutons USB / Bluetooth inutilisables ici
   }
   const nomMarque = document.querySelector('.marque .nom-carte');
   if (nomMarque) nomMarque.textContent = etat.config.titre.split(' · ')[0];
@@ -6833,6 +7407,7 @@ async function demarrer() {
   // ?vue=lat,lon,zoom (lien « Explorer en détail » de la carte publique) : reprendre la même vue
   { const v = (new URLSearchParams(location.search).get('vue') || '').split(',').map(Number); if (v.length === 3 && v.every(Number.isFinite)) setTimeout(() => carte.setView([v[0], v[1]], v[2]), 200); }
   if (typeof demarrerMeshcore === 'function') demarrerMeshcore();
+  if (typeof demarrerCrise === 'function') demarrerCrise();
   chargerRelief();
   chargerAsymetrie(); setInterval(chargerAsymetrie, 120000);
   chargerNouveaux(); setInterval(chargerNouveaux, 300000);
@@ -6858,6 +7433,14 @@ demarrer().catch((e) => {
 });
 
 // ---- QR code des réglages d'un nœud (ChannelSet meshtastic.org/e/#…) -------------------------
+// Signature XEdDSA d'un paquet (firmware 2.8) : signe = vérifiée par la passerelle ; signature = vérification de la carte
+// (2 valide, 1 clé de l'expéditeur inconnue, -1 invalide)
+function badgeSignature(t) {
+  if (t.signature === -1 && !t.signe) return ' <span class="badge refus" title="Signature invalide : le paquet ne vient pas de ce nœud, ou a été modifié en route">⚠ signature</span>';
+  if (t.signe || t.signature === 2) return ' <span class="badge" title="Signature de l’expéditeur vérifiée (firmware 2.8)">✍ signé</span>';
+  if (t.signature === 1) return ' <span class="badge" title="Paquet signé, mais la carte ne connaît pas encore la clé publique de l’expéditeur">✍ ?</span>';
+  return '';
+}
 const precisionTexte = (bits) => {
   if (!bits) return 'pas de position';
   if (bits >= 32) return 'exacte';
@@ -7074,8 +7657,12 @@ function ouvrirWsModule(nom, source, envoyerAuModule) {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/module?nom=${encodeURIComponent(nom)}&source=${encodeURIComponent(source)}&role=${moduleNav.role === 'ecoute' ? 'ecoute' : 'principal'}`);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => ok(ws);
-    ws.onerror = () => ko(new Error('connexion au serveur refusée (êtes-vous connecté en admin ?)'));
-    ws.onmessage = (e) => { if (e.data instanceof ArrayBuffer) envoyerAuModule(new Uint8Array(e.data)); };
+    ws.onerror = () => ko(new Error('connexion au serveur refusée (connectez-vous avec votre compte ; passerelle coupée ou désactivée ?)'));
+    ws.onmessage = (e) => {
+      if (e.data instanceof ArrayBuffer) { envoyerAuModule(new Uint8Array(e.data)); return; }
+      // Trame texte du serveur : nom réel de la passerelle (celui d'un membre porte son identifiant) et rôle accordé
+      try { const d = JSON.parse(e.data); if (d.genre === 'passerelle') setTimeout(() => { moduleNav.hote = d.hote; moduleNav.role = d.role; majModuleNav(moduleNav.etat, moduleNav.erreur); }, 0); } catch { /* autre */ }
+    };
     ws.onclose = () => {
       if (moduleNav.ws !== ws) return;
       // Liaison avec le serveur coupée (redémarrage, proxy) : le module est toujours là, on se reconnecte
@@ -7097,12 +7684,46 @@ async function reglerSignauxUsb(port) {
   const pont = info.usbVendorId != null && PONTS_USB_SERIE.has(info.usbVendorId);
   try { await port.setSignals(pont ? { dataTerminalReady: false, requestToSend: false } : { dataTerminalReady: true, requestToSend: true }); } catch { /* pas géré */ }
 }
-async function brancherUsb(portDonne) {
-  if (!('serial' in navigator)) {
-    // Ne jamais échouer en silence : HTTP (hors de ce PC) ou navigateur sans Web Serial (Firefox, Safari, application mobile)
-    const m = !window.isSecureContext ? 'USB impossible ici : ouvrez la carte en HTTPS (adresse en …ts.net) ou depuis le PC où tourne la carte (localhost).' : 'Ce navigateur ne gère pas l’USB : utilisez Chrome ou Edge sur un ordinateur.';
-    annonce('🔌 ' + m, 'erreur'); alert(m); return;
+// Un clic sur « Module USB de ce PC » ou « Module Bluetooth » doit TOUJOURS répondre quelque chose : soit
+// l'action, soit la raison pour laquelle elle est impossible ici. Chrome n'expose ni navigator.serial ni
+// navigator.bluetooth sur une page non sécurisée (carte en http://, par exemple via une adresse Tailscale),
+// ni dans Firefox ou Safari : sans message, le bouton semble cassé.
+const VOIES_MODULE = {
+  usb: {
+    icone: '🔌',
+    dispo: () => 'serial' in navigator,
+    nonSecurise: 'USB impossible ici : ouvrez la carte en HTTPS (adresse en …ts.net) ou depuis le PC où tourne la carte (localhost).',
+    navigateur: 'Ce navigateur ne gère pas l’USB : utilisez Chrome ou Edge sur un ordinateur.',
+  },
+  ble: {
+    icone: '📶',
+    dispo: () => !!navigator.bluetooth,
+    nonSecurise: 'Bluetooth impossible ici : ouvrez la carte en HTTPS (adresse en …ts.net) ou depuis le PC où tourne la carte (localhost).',
+    navigateur: 'Ce navigateur ne gère pas le Bluetooth : utilisez Chrome ou Edge sur un ordinateur.',
+  },
+};
+// Renvoie true si la voie est utilisable ; sinon prévient (bandeau + boîte) et renvoie false.
+function voieModuleDispo(voie) {
+  const v = VOIES_MODULE[voie];
+  if (v.dispo()) return true;
+  // 15 s : le message doit rester le temps d'être lu, c'est la seule réponse possible à ce clic
+  annonce(v.icone + ' ' + (window.isSecureContext ? v.navigateur : v.nonSecurise), 'erreur', null, undefined, 15000);
+  return false;
+}
+// Boutons proposés mais inutilisables dans ce contexte : marqués sur place (ils restent cliquables, le clic
+// explique pourquoi ; un bouton désactivé ne dirait rien, c'est justement ce qui déroute).
+function marquerVoiesModule() {
+  for (const [sel, voie] of [['#outil-usb', 'usb'], ['#outil-ble', 'ble']]) {
+    const b = $(sel); if (!b) continue;
+    const v = VOIES_MODULE[voie], dispo = v.dispo();
+    b.classList.toggle('indispo', !dispo);
+    if (!dispo) b.title = window.isSecureContext ? v.navigateur : v.nonSecurise;
   }
+  const note = $('#note-outils');
+  if (note) note.textContent = !window.isSecureContext ? 'USB et Bluetooth demandent la carte en HTTPS (voir README).' : !VOIES_MODULE.usb.dispo() && !VOIES_MODULE.ble.dispo() ? 'USB et Bluetooth : utilisez Chrome ou Edge.' : '';
+}
+async function brancherUsb(portDonne) {
+  if (!voieModuleDispo('usb')) return;
   let port = portDonne;
   if (!port) {
     try { port = await navigator.serial.requestPort({}); } catch (e) {
@@ -7149,9 +7770,15 @@ async function brancherUsb(portDonne) {
   }
 }
 async function brancherBle(appareilDonne, reprise = false) {
-  if (!navigator.bluetooth) { alert('Ce navigateur ne gère pas le Bluetooth : utilisez Chrome ou Edge, sur la carte en HTTPS.'); return; }
+  if (!voieModuleDispo('ble')) return;
   let appareil = appareilDonne;
-  if (!appareil) try { appareil = await navigator.bluetooth.requestDevice({ filters: [{ services: [BLE_SERVICE] }] }); } catch { return; }
+  if (!appareil) {
+    try { appareil = await navigator.bluetooth.requestDevice({ filters: [{ services: [BLE_SERVICE] }] }); } catch (e) {
+      // NotFoundError : fenêtre fermée sans choix, ou aucun module vu. Toute autre erreur est un vrai échec : on le dit.
+      annonce(e.name === 'NotFoundError' ? '📶 Aucun module Bluetooth choisi. Liste vide ? Allumez le module, fermez l’appli Meshtastic du téléphone (un seul appareil à la fois), puis réessayez.' : '📶 Bluetooth : ' + e.message, 'erreur');
+      return;
+    }
+  }
   if (!reprise) arreterReconnexionBle(moduleNav);
   moduleNav.type = 'ble'; majModuleNav(reprise ? 'reconnexion' : 'connexion', reprise ? 'reconnexion Bluetooth…' : null);
   try {
@@ -7209,6 +7836,8 @@ async function brancherBle(appareilDonne, reprise = false) {
     try { appareil.gatt.disconnect(); } catch { /* déjà */ }
     moduleNav.ble = null;
     majModuleNav(reprise ? 'reconnexion' : 'aucun', 'Bluetooth : ' + e.message);
+    // Visible aussi quand on vient du menu Outils (le bloc des modules n'est pas affiché)
+    if (!appareilDonne && !reprise) annonce('📶 Module Bluetooth : ' + e.message, 'erreur');
   }
 }
 // auto : coupure subie (la reconnexion automatique suit) ; sinon débranchement voulu
@@ -7347,16 +7976,20 @@ async function reconnaitreUsb(port, duree = 8000) {
   return { type, texte: new TextDecoder().decode(tampon).replace(/[^\x20-\x7e\n]/g, '').trim() };
 }
 async function ouvrirConnexion(message) {
-  if (!etat.admin) { alert('Connectez-vous en administrateur pour relier un module à la carte.'); return; }
+  // Un membre (non administrateur) relie sa radio en passerelle : en écoute seulement, par USB ou Bluetooth de ce PC
+  const membreSeul = !etat.admin;
+  if (membreSeul && !etat.membre) { alert('Connectez-vous avec votre compte pour relier votre radio à la carte (passerelle).'); return; }
+  if (membreSeul && !(etat.config && etat.config.passerelleMembres)) { alert('Les passerelles des membres sont désactivées sur cette carte.'); return; }
   const https = window.isSecureContext; // HTTPS, ou la carte ouverte sur ce PC même (localhost) : USB et Bluetooth permis
   const nav = !!navigator.bluetooth, ser = 'serial' in navigator;
   $('#fiche').hidden = false;
   etat.selection = null;
   const z = $('#fiche-contenu');
-  z.innerHTML = `<h2>Connecter un module</h2>
-    <p class="note">Meshtastic ou MeshCore : le type est reconnu tout seul. Choisissez simplement comment le module est relié.</p>
+  z.innerHTML = `<h2>${membreSeul ? '📡 Devenir passerelle' : 'Connecter un module'}</h2>
+    ${membreSeul ? `<p class="note">Reliez votre radio Meshtastic ou MeshCore à ce PC : la page relaie ce qu’elle entend vers la carte, sans rien installer. Elle reste en écoute (elle n’émet rien pour la carte) et vous pouvez y écrire les canaux de la carte.</p>
+      <p class="note">Gardez cet onglet ouvert : le relais s’arrête si la page se ferme ou si le PC se met en veille.</p>` : '<p class="note">Meshtastic ou MeshCore : le type est reconnu tout seul. Choisissez simplement comment le module est relié.</p>'}
     <div class="cx-etat" id="cx-etat"><small>état des modules…</small></div>
-    <fieldset class="cx-role" id="cx-role"><legend>Ce nouveau module sera…</legend>
+    <fieldset class="cx-role" id="cx-role" ${membreSeul ? 'hidden' : ''}><legend>Ce nouveau module sera…</legend>
       <label><input type="radio" name="cx-role" value="principal" checked> <b>le module principal</b> <small>(remplace l’actuel : écoute, envois de messages, administration)</small></label>
       <label><input type="radio" name="cx-role" value="ecoute"> <b>👂 en écoute, en plus</b> <small>(l’actuel reste principal ; celui-ci ajoute ce qu’il entend à la carte)</small></label>
     </fieldset>
@@ -7365,11 +7998,12 @@ async function ouvrirConnexion(message) {
       <button class="cx-gros" data-cx="usb" ${!https || !ser ? 'disabled' : ''}><span>🔌</span><b>USB</b><small>câble branché sur ce PC</small></button>
     </div>
     ${!https ? '<p class="alerte attention">Bluetooth et USB demandent la carte en <b>HTTPS</b> (adresse en …ts.net), dans Chrome ou Edge.</p>' : !nav || !ser ? '<p class="alerte attention">Ce navigateur ne gère pas le Bluetooth ou l’USB : utilisez <b>Chrome ou Edge</b> (pas Firefox ni Safari).</p>' : ''}
-    <div class="cx-serie"><button type="button" class="cx-gros cx-large" data-cx="serie"><span>🖥️</span><b>USB du serveur</b><small>module branché sur la machine qui fait tourner la carte (NAS, Raspberry Pi…)</small></button><div id="cx-ports"></div></div>
+    ${membreSeul ? '' : `<div class="cx-serie"><button type="button" class="cx-gros cx-large" data-cx="serie"><span>🖥️</span><b>USB du serveur</b><small>module branché sur la machine qui fait tourner la carte (NAS, Raspberry Pi…)</small></button><div id="cx-ports"></div></div>
     <form class="cx-ip" id="cx-ip"><label><span>🌐 <b>Adresse IP</b> du module en Wi-Fi</span>
       <span class="ligne-ip"><input name="adresse" placeholder="192.168.1.122" inputmode="decimal" autocomplete="off" required><button class="principal">Connecter</button></span></label>
-      <small>Si le module est sur un autre réseau que la carte, un PC de ce réseau avec l’agent 1.6 sert de relais tout seul.</small></form>
+      <small>Si le module est sur un autre réseau que la carte, un PC de ce réseau avec l’agent 1.6 sert de relais tout seul.</small></form>`}
     <div id="cx-retour" class="cx-retour">${message ? esc(message) : ''}</div>
+    <div id="cx-canaux"></div>
     <details class="cx-aide"><summary>Ça ne marche pas ?</summary><ul>
       <li><b>Bluetooth</b> : fermez l’appli Meshtastic / MeshCore du téléphone (un seul appareil à la fois). Code PIN : celui affiché par le module, sinon 123456. En cas d’échec, appairez d’abord le module dans les réglages Bluetooth de Windows.</li>
       <li><b>Meshtastic en Wi-Fi</b> (ESP32 : Heltec, T-Beam…) : le Bluetooth est coupé tant que le Wi-Fi est actif ; utilisez l’adresse IP.</li>
@@ -7379,10 +8013,27 @@ async function ouvrirConnexion(message) {
       <li><b>Adresse IP</b> : le module doit être allumé, en Wi-Fi, et sur un réseau joignable par la carte ou par un PC avec l’agent 1.6 (<a href="/agent/live-mesh-agent-windows.exe">télécharger pour Windows</a>).</li>
     </ul></details>`;
   const retour = (t, cls = '') => { const r = $('#cx-retour'); if (r) { r.className = 'cx-retour ' + cls; r.innerHTML = t; } };
-  const role = () => { const c = z.querySelector('input[name="cx-role"]:checked'); return c ? c.value : 'principal'; };
+  const role = () => { if (membreSeul) return 'ecoute'; const c = z.querySelector('input[name="cx-role"]:checked'); return c ? c.value : 'principal'; };
   const libRole = (r) => (r === 'ecoute' ? ' en écoute, en plus du module principal' : '');
   let premierEtat = true;
+  // Passerelles de ce compte (vue d'un membre : la liste des modules de la carte lui est fermée)
+  const majEtatMembre = async () => {
+    const el = $('#cx-etat'); if (!el) return;
+    let r;
+    try { r = await api('/api/passerelle/miennes'); } catch (e) { el.innerHTML = `<small class="attention">${esc(e.message)}</small>`; return; }
+    const relie = typeof moduleNav !== 'undefined' && moduleNav.etat === 'relie', relieMc = mcActif() && mc.nav && mc.nav.etat === 'relie';
+    el.innerHTML = r.passerelles.length ? r.passerelles.map((p) => {
+      const ok = p.protocole === 'meshcore' || (p.radio && p.radio.connecte);
+      const nom = p.radio && p.radio.nom ? p.radio.nom : p.protocole === 'meshcore' ? 'Companion MeshCore' : 'Radio Meshtastic';
+      const stop = p.protocole === 'meshcore' ? (relieMc ? `<button class="mini" data-cx-stop="mc">Débrancher</button>` : '') : relie && p.hote === moduleNav.hote ? `<button class="mini" data-cx-stop="mt">Débrancher</button>` : '';
+      return `<div><span class="point ${ok ? 'actif' : 'recent'}"></span><b>📡 ${esc(nom)}</b> · ${esc(p.source || '')} · 👂 passerelle en écoute${p.radio ? ` · ${p.radio.paquets} paquets` : ''}${ok ? '' : ' · configuration…'} ${stop}</div>`;
+    }).join('') : '<div><span class="point inactif"></span>Aucune radio reliée depuis ce compte.</div>';
+    if (r.refus) el.insertAdjacentHTML('beforeend', `<div class="attention">⚠️ ${esc(r.refus)}</div>`);
+    el.querySelectorAll('[data-cx-stop]').forEach((b) => (b.onclick = async () => { if (b.dataset.cxStop === 'mt') await debrancherModuleNav(); else await mcDebrancherNav(); setTimeout(majEtat, 1500); }));
+  };
   const majEtat = async () => {
+    if (membreSeul) { await majEtatMembre(); rendreCanauxPasserelle(); return; }
+    rendreCanauxPasserelle();
     const e = await etatConnexions();
     const el = $('#cx-etat'); if (!el) return;
     const mt = e.mt, m = e.mc && e.mc.companion;
@@ -7401,6 +8052,9 @@ async function ouvrirConnexion(message) {
     }));
   };
   majEtat();
+  // Tant que le dialogue est ouvert : état et canaux de la radio relus toutes les 5 s (rien n'est redessiné sans changement)
+  clearInterval(ouvrirConnexion.minuterie);
+  ouvrirConnexion.minuterie = setInterval(() => { if (!document.getElementById('cx-etat') || $('#fiche').hidden) { clearInterval(ouvrirConnexion.minuterie); return; } majEtat(); }, 5000);
   const fini = (type) => { setTimeout(majEtat, 2500); setTimeout(majEtat, 8000); return type; };
 
   z.querySelector('[data-cx="ble"]').onclick = async () => {
@@ -7410,7 +8064,11 @@ async function ouvrirConnexion(message) {
         filters: [{ services: [BLE_SERVICE] }, { services: [MC_BLE] }, { namePrefix: 'Meshtastic' }, { namePrefix: 'MeshCore' }],
         optionalServices: [BLE_SERVICE, MC_BLE],
       });
-    } catch { return; } // fenêtre fermée
+    } catch (e) {
+      // NotFoundError : fenêtre fermée sans choix, ou aucun module vu. Jamais d'échec muet.
+      retour(e.name === 'NotFoundError' ? '✗ Aucun module Bluetooth choisi. Si la liste était vide : allumez le module, fermez l’appli Meshtastic / MeshCore du téléphone (un seul appareil à la fois), puis réessayez.' : '✗ Bluetooth : ' + esc(e.message), 'ko');
+      return;
+    }
     retour(`Connexion à « ${esc(app.name || 'module')} »… (Windows peut demander le code PIN)`);
     let type = null;
     try {
@@ -7473,7 +8131,7 @@ async function ouvrirConnexion(message) {
     fini(type);
   };
 
-  z.querySelector('[data-cx="serie"]').onclick = async () => {
+  if (!membreSeul) z.querySelector('[data-cx="serie"]').onclick = async () => {
     const zp = $('#cx-ports');
     zp.innerHTML = '<small>recherche des ports…</small>';
     let r;
@@ -7488,7 +8146,7 @@ async function ouvrirConnexion(message) {
       b.disabled = false;
     }));
   };
-  $('#cx-ip').onsubmit = async (ev) => {
+  if (!membreSeul) $('#cx-ip').onsubmit = async (ev) => {
     ev.preventDefault();
     const adresse = ev.target.adresse.value.trim();
     const b = ev.target.querySelector('button'); b.disabled = true;
@@ -7502,6 +8160,120 @@ async function ouvrirConnexion(message) {
       retour(`✗ ${esc(e.message)}${conseil ? '<br>' + esc(conseil) : ''}`, 'ko');
     }
     b.disabled = false;
+  };
+}
+
+// ---- Canaux de la radio reliée par cette page : jeu de canaux de la carte ------------------------
+// Les clés ne quittent jamais le serveur : la page choisit des canaux par leur nom, le serveur les écrit sur la radio.
+async function rendreCanauxPasserelle(force) {
+  const z = $('#cx-canaux');
+  if (!z) return;
+  if (typeof moduleNav === 'undefined' || moduleNav.etat !== 'relie') { z.innerHTML = ''; z.dataset.sig = ''; return; }
+  if (!force && (z.querySelector('.editeur-jeu:not([hidden])') || z.dataset.ecriture)) return; // réglage ou écriture en cours
+  let m, j;
+  try { [m, j] = await Promise.all([api('/api/passerelle/miennes'), api('/api/jeux-canaux')]); } catch (e) { z.innerHTML = `<p class="note">${esc(e.message)}</p>`; return; }
+  const p = m.passerelles.find((x) => x.hote === moduleNav.hote) || m.passerelles.find((x) => x.protocole === 'meshtastic' && x.role === moduleNav.role);
+  if (!p || !p.radio || !p.radio.connecte) { if (!z.dataset.sig) z.innerHTML = '<p class="note">🎚️ Lecture des canaux de la radio…</p>'; return; }
+  const sig = JSON.stringify([p.hote, p.radio.canaux, j.jeux]);
+  if (!force && z.dataset.sig === sig) return;
+  z.dataset.sig = sig;
+  const canaux = p.radio.canaux;
+  const presents = new Set(canaux.filter((c) => c.index > 0 && c.role !== 'DISABLED').map((c) => c.nom));
+  const badge = (c) => (c === 'prive' ? '<span class="badge-cle" title="Clé privée">🔒</span>' : c === 'public' ? '<span class="badge-clair">en clair</span>' : c === 'aucun' ? '<span class="badge-clair">sans chiffrement</span>' : '');
+  z.innerHTML = `<div class="canaux-radio">
+    <h3>🎚️ Canaux de la radio <small>${esc(p.radio.nom || '')}</small></h3>
+    <div class="grille-canaux">${canaux.map((c) => `<div class="case-canal ${c.role === 'DISABLED' ? 'vide' : ''}"><span class="num">${c.index}</span><b class="mono">${c.role === 'DISABLED' ? '—' : esc(c.nom)}</b>${badge(c.chiffrement)}</div>`).join('')}</div>
+    ${j.jeux.length ? j.jeux.map((jeu) => `<fieldset class="jeu-canaux" data-portee="${esc(jeu.portee)}"><legend>${esc(jeu.titre)}${jeu.modifiable ? ` <button type="button" class="mini" data-jeu-edit="${esc(jeu.portee)}">✏️ Régler ce jeu</button>` : ''}</legend>
+      ${jeu.canaux.length ? jeu.canaux.map((c) => `<label class="case"><input type="checkbox" data-ajout="${esc(jeu.portee)}" data-id="${esc(c.id)}" data-nom="${esc(c.nom)}" data-clair="${c.chiffrement === 'public' ? 1 : ''}" ${presents.has(c.nom) ? '' : 'checked'}> <b class="mono">${esc(c.nom)}</b> ${badge(c.chiffrement)}${presents.has(c.nom) ? ' <small>déjà sur la radio : cochez pour lui remettre la clé du jeu</small>' : ''}</label>`).join('') : '<p class="note">Aucun canal dans ce jeu pour l’instant.</p>'}
+      <div class="editeur-jeu" hidden></div></fieldset>`).join('') : '<p class="note">Aucun jeu de canaux proposé sur cette carte. Un administrateur peut en définir un.</p>'}
+    <fieldset class="liberer-canaux" hidden><legend></legend><div class="liste-liberer"></div></fieldset>
+    <p class="alerte attention avert-clair" hidden>🔓 Canaux non chiffrés : ils utilisent la clé publique par défaut, tout le monde peut les lire. N’y faites passer aucune donnée personnelle (nom, adresse, état de santé).</p>
+    ${j.jeux.some((x) => x.canaux.length) ? `<div class="boutons"><button class="principal" id="cx-ecrire">Écrire sur la radio</button> <small>La radio n’est modifiée qu’à ce clic.</small></div>` : ''}
+    <div id="cx-ecrire-retour" class="cx-retour"></div>
+  </div>`;
+  const occupes = canaux.filter((c) => c.index > 0 && c.role !== 'DISABLED');
+  const libres = canaux.filter((c) => c.index > 0 && c.role === 'DISABLED').length;
+  const fsLib = z.querySelector('.liberer-canaux');
+  const maj = () => {
+    const coches = [...z.querySelectorAll('[data-ajout]:checked')];
+    const noms = new Set(coches.map((x) => x.dataset.nom));
+    const nouveaux = [...noms].filter((n) => !presents.has(n)).length;
+    // Canaux de la radio qui peuvent céder leur place : ceux que le jeu ne remplace pas
+    const candidats = occupes.filter((c) => !noms.has(c.nom));
+    const dejaLib = new Set([...z.querySelectorAll('[data-liberer]:checked')].map((x) => Number(x.dataset.liberer)));
+    const besoin = Math.max(0, nouveaux - libres - [...dejaLib].filter((i) => candidats.some((c) => c.index === i)).length);
+    const montrer = besoin > 0 || dejaLib.size > 0;
+    fsLib.hidden = !montrer;
+    if (montrer) {
+      fsLib.querySelector('legend').textContent = besoin ? `Place insuffisante : libérer ${besoin} emplacement(s)` : 'Emplacements libérés';
+      const l = fsLib.querySelector('.liste-liberer');
+      const sigL = candidats.map((c) => c.index).join(',');
+      if (l.dataset.sig !== sigL) {
+        l.dataset.sig = sigL;
+        l.innerHTML = candidats.map((c) => `<label class="case"><input type="checkbox" data-liberer="${c.index}" ${dejaLib.has(c.index) ? 'checked' : ''}> <span class="num">${c.index}</span> <b class="mono">${esc(c.nom)}</b> <small>sera supprimé de la radio</small></label>`).join('');
+        l.querySelectorAll('[data-liberer]').forEach((x) => (x.onchange = maj));
+      }
+    }
+    z.querySelector('.avert-clair').hidden = !coches.some((x) => x.dataset.clair);
+    const b = $('#cx-ecrire');
+    if (b) b.disabled = besoin > 0 || (!coches.length && !dejaLib.size);
+  };
+  z.querySelectorAll('[data-ajout]').forEach((x) => (x.onchange = maj));
+  maj();
+  const b = $('#cx-ecrire');
+  if (b) b.onclick = async () => {
+    const ajouter = [...z.querySelectorAll('[data-ajout]:checked')].map((x) => ({ portee: x.dataset.ajout, id: x.dataset.id }));
+    const liberer = [...z.querySelectorAll('[data-liberer]:checked')].map((x) => Number(x.dataset.liberer));
+    const ret = $('#cx-ecrire-retour');
+    b.disabled = true; z.dataset.ecriture = '1';
+    ret.className = 'cx-retour'; ret.textContent = 'Écriture sur la radio puis relecture de contrôle (une vingtaine de secondes)…';
+    try {
+      const r = await postJson('/api/passerelle/canaux', { hote: p.hote, ajouter, liberer });
+      ret.className = 'cx-retour'; ret.classList.add('ok'); ret.innerHTML = '✓ ' + r.journal.map(esc).join(' · ');
+      setTimeout(() => { delete z.dataset.ecriture; rendreCanauxPasserelle(true).then(() => { const x = $('#cx-ecrire-retour'); if (x) { x.className = 'cx-retour'; x.classList.add('ok'); x.innerHTML = '✓ Canaux écrits et relus sur la radio.'; } }); }, 1500);
+    } catch (e) { ret.className = 'cx-retour'; ret.classList.add('ko'); ret.textContent = '✗ ' + e.message; b.disabled = false; delete z.dataset.ecriture; }
+  };
+  z.querySelectorAll('[data-jeu-edit]').forEach((x) => (x.onclick = () => {
+    const jeu = j.jeux.find((k) => k.portee === x.dataset.jeuEdit);
+    const ed = x.closest('fieldset').querySelector('.editeur-jeu');
+    if (!ed.hidden) { ed.hidden = true; return; }
+    editeurJeuCanaux(ed, jeu, () => rendreCanauxPasserelle(true));
+  }));
+}
+// Régler le jeu de canaux de la carte (administrateur)
+function editeurJeuCanaux(zone, jeu, apres) {
+  zone.hidden = false;
+  const ligne = (c = {}) => `<div class="ligne-jeu" data-id="${esc(c.id || '')}">
+    <input class="mono" data-champ="nom" maxlength="11" placeholder="Nom (11 car.)" value="${esc(c.nom || '')}">
+    <select data-champ="cle">${c.id ? `<option value="">garder la clé${c.empreinte ? ' ' + esc(c.empreinte) : c.chiffrement === 'public' ? ' (publique)' : ''}</option>` : ''}<option value="aleatoire" ${c.id ? '' : 'selected'}>nouvelle clé privée (aléatoire)</option><option value="publique">clé publique (en clair)</option><option value="coller">coller une clé (base64)</option></select>
+    <input class="mono" data-champ="collee" placeholder="clé en base64 (16 ou 32 octets)" hidden autocomplete="off">
+    <label class="case" title="Partager la position des membres sur ce canal"><input type="checkbox" data-champ="positions" ${c.positions ? 'checked' : ''}> positions</label>
+    <button type="button" class="mini" data-retirer title="Retirer ce canal du jeu">✕</button></div>`;
+  zone.innerHTML = `<p class="note">7 canaux au plus (le canal 0 de la radio n’est jamais touché). Les clés restent sur le serveur, chiffrées : seule une empreinte courte est montrée ici.</p>
+    <div class="lignes-jeu">${jeu.canaux.map(ligne).join('')}</div>
+    <div class="boutons"><button type="button" data-plus>＋ Canal</button><button type="button" class="principal" data-enreg>✔ Enregistrer le jeu</button><button type="button" data-fermer>Annuler</button></div>
+    <div class="cx-retour" data-ret></div>`;
+  const brancher = () => zone.querySelectorAll('.ligne-jeu').forEach((l) => {
+    const sel = l.querySelector('[data-champ="cle"]'), col = l.querySelector('[data-champ="collee"]');
+    sel.onchange = () => { col.hidden = sel.value !== 'coller'; if (!col.hidden) col.focus(); };
+    l.querySelector('[data-retirer]').onclick = () => l.remove();
+  });
+  brancher();
+  zone.querySelector('[data-plus]').onclick = () => { if (zone.querySelectorAll('.ligne-jeu').length >= 7) return; zone.querySelector('.lignes-jeu').insertAdjacentHTML('beforeend', ligne()); brancher(); };
+  zone.querySelector('[data-fermer]').onclick = () => { zone.hidden = true; zone.innerHTML = ''; };
+  zone.querySelector('[data-enreg]').onclick = async () => {
+    const canaux = [...zone.querySelectorAll('.ligne-jeu')].map((l) => {
+      const v = (k) => l.querySelector(`[data-champ="${k}"]`);
+      const cle = v('cle').value === 'coller' ? v('collee').value.trim() : v('cle').value;
+      return { id: l.dataset.id || undefined, nom: v('nom').value.trim(), cle, positions: v('positions').checked };
+    });
+    const ret = zone.querySelector('[data-ret]');
+    const url = jeu.portee === 'carte' ? '/api/jeux-canaux/carte' : '/api/adrasec/canaux?g=' + encodeURIComponent(jeu.portee.split(':')[1]);
+    try {
+      await api(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ canaux }) });
+      zone.hidden = true; zone.innerHTML = '';
+      apres();
+    } catch (e) { ret.className = 'cx-retour'; ret.classList.add('ko'); ret.textContent = '✗ ' + e.message; }
   };
 }
 
@@ -7716,7 +8488,7 @@ function blocAlertesOff() {
     ${(meteo.length || feuxZone.length) && etat.gestion && r.envoi && (r.envoi.canauxMc.length || r.envoi.canauxMt.length) ? `<div class="ao-envoi"><b>📡 Envoyer une vigilance par radio</b> — canaux :
       ${r.envoi.canauxMc.length ? `<label>MeshCore <select id="ao-env-mc"><option value="">— aucun —</option>${r.envoi.canauxMc.map((c) => `<option ${mcChoisi === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>` : ''}
       ${r.envoi.canauxMt.length ? `<span class="ao-env-mt">Meshtastic ${r.envoi.canauxMt.map((c) => `<label class="case"><input type="checkbox" value="${esc(c)}" ${mtCoche(c) ? 'checked' : ''}> ${esc(c)}</label>`).join('')}</span>` : ''}
-      <small class="note">puis le bouton 📡 de la vigilance ou du foyer voulu.</small></div>` : ''}
+      <small class="note">puis le bouton 📡 de la vigilance ou du foyer voulu.</small></div>` : (meteo.length || feuxZone.length) && etat.gestion && r.envoi && (r.envoi.pourquoi || []).length ? `<div class="ao-envoi note">📡 <b>Envoi par radio indisponible</b> : ${r.envoi.pourquoi.map(esc).join(' ; ')}. Reliez un module (Outils › 🔌 Connecter un module) : le bouton 📡 Envoyer réapparaît à côté de chaque vigilance.</div>` : ''}
     ${meteo.length ? meteo.map((a) => `<div class="vig-ligne vig-${a.couleur}${a.envoi ? ' deja-envoye' : ''}">${etat.gestion && r.envoi && (r.envoi.canauxMc.length || r.envoi.canauxMt.length) ? `<button type="button" class="mini ao-env-btn" data-ao-env="${esc(a.dep)}|${esc(a.phenomene)}" title="Envoyer maintenant cette vigilance sur les canaux choisis">${a.envoi ? '📡 Renvoyer' : '📡 Envoyer'}</button>` : ''}<b>${ICONES_VIG[a.couleur]} Vigilance ${a.couleur} ${esc(a.phenomene)}</b> · ${esc(a.depNom)}<small>${a.debut ? 'du ' + h(a.debut) : ''}${a.fin ? ' au ' + h(a.fin) : ''}</small>${dejaEnvoye(a.envoi)}</div>`).join('') : `<p class="note">${r.erreur ? '⚠ Vigilance indisponible : ' + esc(r.erreur) : 'Aucune vigilance en cours.'}</p>`}
     <p class="note">Source : Météo-France, par le flux public MeteoAlarm (mis à jour toutes les 10 min${r.maj ? ', lu ' + ilYa(r.maj) : ''}).</p>
     ${masquee('feux') ? '' : `<h4>🔥 Feux actifs (satellite)</h4>
@@ -7797,6 +8569,51 @@ function brancherAlertesOff() {
 setTimeout(chargerAlertesOff, 2500);
 setInterval(chargerAlertesOff, 5 * 60000);
 
+// ---- Mur des donateurs : HelloAsso (association) + GitHub Sponsors, bandeau discret et désactivable --------
+// Liens « Faire un don » : tirés des réglages du serveur (/api/donateurs → liens), jamais codés ici
+const don = { liste: [], liens: {}, index: 0 };
+async function chargerDonateurs() {
+  try { const r = await api('/api/donateurs'); don.liste = Array.isArray(r.liste) ? r.liste : []; don.liens = r.liens || {}; } catch { return; }
+  rendreBandeauDonateurs();
+}
+// Drapeau à partir d'un code pays ISO à 2 lettres (émoji « indicateur régional »)
+function paysDrapeau(code) {
+  if (typeof code !== 'string' || !/^[A-Z]{2}$/i.test(code)) return '';
+  const base = 0x1f1e6;
+  return [...code.toUpperCase()].map((c) => String.fromCodePoint(base + c.charCodeAt(0) - 65)).join('');
+}
+function texteDon(x) {
+  // Données venues du serveur, mais échappées quand même (montant compris)
+  const montant = Number.isFinite(Number(x.montant)) && x.montant != null ? ` ${esc(String(x.montant))} ${x.devise === 'USD' ? '$' : '€'}` : '';
+  return `${esc(x.nom)}${x.pays ? ' ' + paysDrapeau(x.pays) : ''} a ${x.source === 'github' ? 'parrainé' : 'donné'}${montant} pour soutenir le projet`;
+}
+let minuterieDon = null;
+function rendreBandeauDonateurs() {
+  let b = document.getElementById('bandeau-donateurs');
+  try { if (localStorage.getItem('gaulix_donateurs_masque') === '1') { if (b) b.remove(); clearInterval(minuterieDon); return; } } catch { /* stockage indisponible : bandeau affiché quand même */ }
+  if (!don.liste.length) { if (b) b.remove(); clearInterval(minuterieDon); return; }
+  const afficher = () => { const x = don.liste[don.index % don.liste.length]; const t = b.querySelector('.don-texte'); if (t) t.innerHTML = texteDon(x); };
+  const liens = [don.liens.helloasso ? `<a href="${esc(don.liens.helloasso)}" target="_blank" rel="noopener">Faire un don</a>` : '',
+    don.liens.github ? `<a href="${esc(don.liens.github)}" target="_blank" rel="noopener">GitHub Sponsors</a>` : ''].filter(Boolean).map((l) => ' · ' + l).join('');
+  const blocLiens = liens ? `<span class="don-liens">${liens}</span>` : '';
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'bandeau-donateurs';
+    b.className = 'bandeau-donateurs';
+    b.setAttribute('role', 'status');
+    document.body.appendChild(b);
+    minuterieDon = setInterval(() => { don.index = (don.index + 1) % don.liste.length; afficher(); }, 8000);
+  }
+  if (b.dataset.liens !== liens) {
+    b.dataset.liens = liens;
+    b.innerHTML = `💜 <span class="don-texte"></span>${blocLiens}<button type="button" class="fermer-bandeau" title="Masquer le mur des donateurs" aria-label="Masquer le mur des donateurs">✕</button>`;
+    b.querySelector('.fermer-bandeau').onclick = () => { try { localStorage.setItem('gaulix_donateurs_masque', '1'); } catch { /* ignoré */ } b.remove(); clearInterval(minuterieDon); };
+  }
+  afficher();
+}
+setTimeout(chargerDonateurs, 4000);
+setInterval(chargerDonateurs, 15 * 60000);
+
 // ---- Statistiques d'un nœud (onglet de la fiche) ----------------------------------------------------------
 async function statistiquesNoeud(num, jours = 7) {
   const z = $('#stats-noeud');
@@ -7817,16 +8634,6 @@ async function statistiquesNoeud(num, jours = 7) {
     ${r.sauts.length ? `<h4>Sauts pour arriver</h4>${barres(r.sauts, (t) => (t.sauts === 0 ? 'direct' : `${t.sauts} saut${t.sauts > 1 ? 's' : ''}`), (t) => t.nb, (t) => (t.sauts === 0 ? '#2dd4bf' : t.sauts <= 2 ? '#facc15' : '#fb923c'))}` : ''}
     ${r.recepteurs.length ? `<h4>Qui le reçoit le plus</h4>${barres(r.recepteurs, (t) => esc(nomNoeud(t.num)) + (t.sautsMin === 0 ? ' · direct' : ''), (t) => t.nb, (t) => (t.snr != null ? couleurSnr(t.snr) : '#94a3b8'))}` : ''}`;
   const s = $('#stats-jours'); if (s) s.onchange = () => statistiquesNoeud(num, Number(s.value));
-}
-
-// Zone de sécurité d'une équipe tracée sur la carte (cercle), avec les membres
-let coucheZoneEquipe = null;
-function montrerZoneEquipe(z, nom, cadrer) {
-  if (coucheZoneEquipe) { coucheZoneEquipe.remove(); coucheZoneEquipe = null; }
-  if (!z) return;
-  coucheZoneEquipe = L.circle([z.lat, z.lon], { radius: z.rayon, color: '#22d3ee', weight: 2, dashArray: '6 6', fillOpacity: 0.06, interactive: false }).addTo(carte);
-  coucheZoneEquipe.bindTooltip(`Zone de sécurité · ${nom || ''}`, { permanent: false });
-  if (cadrer) carte.fitBounds(coucheZoneEquipe.getBounds(), { padding: [30, 30] });
 }
 
 // ---- Stations APRS (dont LoRa APRS 433,775 MHz), lues par le serveur sur APRS-IS ---------------------
@@ -8597,7 +9404,7 @@ function otworzArkusz(selektor, tytul, przycisk, dodatki) {
 // Ils n'entendent pas le réseau, et le réseau ne les entend pas. La carte les connaît par MQTT (rapport de carte, ou
 // canal au nom par défaut d'un preset) ou par un module « sentinelle » en écoute réglé sur leur preset, qui peut aussi
 // leur envoyer un message direct d'invitation.
-const NOMS_PRESETS = { LONG_FAST: 'LongFast', LONG_MODERATE: 'LongModerate', LONG_SLOW: 'LongSlow', VERY_LONG_SLOW: 'VeryLongSlow', MEDIUM_FAST: 'MediumFast', MEDIUM_SLOW: 'MediumSlow', SHORT_FAST: 'ShortFast', SHORT_SLOW: 'ShortSlow', SHORT_TURBO: 'ShortTurbo', LONG_TURBO: 'LongTurbo', MEDIUM_TURBO: 'MediumTurbo' };
+const NOMS_PRESETS = { LONG_FAST: 'LongFast', LONG_MODERATE: 'LongModerate', LONG_SLOW: 'LongSlow', VERY_LONG_SLOW: 'VeryLongSlow', MEDIUM_FAST: 'MediumFast', MEDIUM_SLOW: 'MediumSlow', SHORT_FAST: 'ShortFast', SHORT_SLOW: 'ShortSlow', SHORT_TURBO: 'ShortTurbo', LONG_TURBO: 'LongTurbo', MEDIUM_TURBO: 'MediumTurbo', LITE_FAST: 'LiteFast', LITE_SLOW: 'LiteSlow', NARROW_FAST: 'NarrowFast', NARROW_SLOW: 'NarrowSlow', TINY_FAST: 'TinyFast', TINY_SLOW: 'TinySlow' };
 const nomPreset = (p) => NOMS_PRESETS[p] || p || '?';
 etat.autresPresets = null; // { preset, nums: Set, noeuds, sentinelles }
 async function chargerAutresPresets() {

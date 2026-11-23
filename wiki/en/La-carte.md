@@ -4,19 +4,20 @@
 - **5 sections** at the top of the panel: **Network** (overview, nodes, traffic, statistics, MeshCore), **Messages** (Meshtastic and MeshCore), **Coverage**, **Manage** (Meshtastic and MeshCore programming, teams, keys, firmware) and **Settings**. Sub-sections show just below.
 - **“What do you want to do?” home**: large tiles (see the network, read and write, report, study coverage, manage my nodes, set up the map). The full dashboard is folded below.
 - **Display level** (home, or Settings): **Simple** shows the essentials, **Operator** adds advanced coverage, traffic and field tools, **Expert** shows everything. By default: simple for a visitor or member, operator for a manager, expert for an administrator. Permissions don't change: only the display is lighter.
-- **Language**: *Settings › Display › 🌐 Language* (or at the bottom of the home screen): French or English. By default it follows the browser's language.
+- **Language**: *Settings › Display › 🌐 Language* (or at the bottom of the home screen): 16 languages (English, French, Spanish, German, Italian, Portuguese, Dutch, Polish, Czech, Swedish, Traditional Chinese, Greek, Turkish, Korean, Japanese, Ukrainian). By default it follows the browser's language.
 - **Settings**: everything is in one place (display, account, nodes and networks, map, MQTT, accounts, backups, update, whole of France, bridge, teams).
 - **A single search**: the field above the map finds a place, a node, coordinates… and also a **feature** or a setting (“mqtt”, “teams”, “update”). ⚙️🔎 or Ctrl+K opens the feature search; the ☆ star of a result adds it to **⭐ My shortcuts** on the home screen, and recent features are offered first.
 - **＋ button** on the map: tap ＋ then a point on the map to report an event, see the coverage from this point, share it or draw a profile (no right-click needed, handy on a phone).
 - **“?”** to the right of the sections: help for the current screen opens in the map (pages of this wiki). **Guided tour** on the first visit, to take again from Settings.
 - **Comfort and accessibility**: confirmations and messages inside the interface (no more browser pop-ups), **Large text** option, light theme, keyboard navigation (Tab, Enter, Esc), labels for screen readers, larger buttons on touch screens.
+- **Roomier windows**: on a wide screen, settings windows open wider and lists switch to **two columns** (everything is visible without scrolling). The **⤢** button, next to the close cross, widens them further; the choice is kept for the next visit and applies to every window. **Clicking next to a window closes it**, just like the ✕ or the Esc key — unless something has been typed in it: the window then stays open and says so, nothing is lost.
 
 ![Overview](https://raw.githubusercontent.com/sauveteur71/live-mesh-map-world/main/docs/captures/en-carte.jpg)
 
 ## Nodes and networks
 - **Meshtastic / MeshCore / Both** selector at the top of the panel. When switching network, the other network's traces are cleared.
 - **Legend and filters**: relays, clients, mute clients, trackers, unknown, inactive, MQTT gateways online, nodes in alert.
-- Area shown (menu at the top): the department, the department and its neighbours, a **French region** or the whole of France. The choice is kept between visits. You only see what the map receives: your MQTT broker's reach and, for MeshCore, the “Packets kept” setting (department, neighbours or national).
+- Area shown (menu at the top): the department, the department and its neighbours, a **French region** or the whole of France. Map set outside France (a world square, e.g. “40°N–41°N · 75°W–74°W”): the map area or **Whole map**, which frames every known node (world view if there is none); no French regions or departments. The choice is kept between visits. You only see what the map receives: your MQTT broker's reach and, for MeshCore, the “Packets kept” setting (department, neighbours or national).
 - Click on a node: **detailed sheet** (info, telemetry, neighbours, “heard by”, frames, inferred configuration, range test) and a **Statistics** tab: activity hour by hour over 1 to 30 days, packet types, SNR received directly, hop count to arrive, receivers that hear it most.
 
 ## Links
@@ -38,7 +39,14 @@ In *Messages*, clicking a message's origin (📡 / 🌐) shows its **route**:
 - **Alerts**: silent node, low battery, saturated channel, gateway offline.
 - **Statistics › Maintenance**: relays' radio load, runtime, firmware, role advice.
 - **History** over more than a year, **replay** of the last 24 hours, **weekly report** (*Tools*).
-- **Map health** (*Network*): processor, memory, disk, database, MQTT.
+- **Map health** (*Network*): processor, memory, disk, database, MQTT, responsiveness.
+  - **Freezes**: every minute the map measures its longest moment without responding. "Warning" alert if it
+    freezes for more than 1.5 s at least twice in 10 minutes, "critical" beyond 5 s in one go.
+  - **Slowest tasks (last hour)**: every job is timed (MQTT message, status broadcast every 30 s, hourly purge,
+    API pages, timers). The table shows the longest run, the average and the number of runs. A task that often
+    exceeds 500 ms freezes the map for all visitors.
+  - **Recent freezes**: time, duration and longest task of that minute (the suspect). A "timer …" task is named
+    after the program file that created it: quote that name when reporting a problem.
 
 ## How to reach it and person in charge of a node
 Node card, **Neighbours** tab, **How to reach it** section: through which station of the map to reach it (linked module, listening modules, then MQTT gateways that heard it) and the state of the link: *direct, both ways proven*, *direct, return path not proven*, *N hops* or *out of range*. Hearing a node does not prove it hears us: the return path is proven when it lists us as a neighbour, a traceroute comes back or a link is measured the other way. An MQTT gateway only listens.
@@ -57,6 +65,15 @@ A public page (no messages or exact positions of private individuals) can be sha
 - The title follows the chosen network and area.
 - **🧭 Try the full map (demo)** opens, for everyone and without an account, the full map as a **demo**, on the same view: every tab and screen (Messages, Manage, MeshCore, Settings…), with the real messages of **public channels** only (default key, MeshCore Public and “#” channels; never private channels or direct messages). Passwords, channel keys, addresses, contacts and accounts are never sent; accounts, log, backups and update stay private. Nothing is saved or sent by radio: every attempt shows “Demo: nothing is saved or sent”. No sign-in or sign-up from the demo. Direct link: `/?consultation`.
 - The link to the full map (administration) only appears to logged-in administrators.
+
+## Donor wall
+A **discreet banner** at the top of the map and of the public page (💜) thanks those who support the project: name (as typed by the administrator for HelloAsso, shortened for GitHub Sponsors), country and, only if the administrator chooses so, the amount. Every visitor can close it with ✕ (it no longer comes back in that browser). Everything is **off by default**: nothing shows until a source is enabled.
+
+Settings: *Tools › 📤 Public map and exports › Donor wall* (administrator). Two independent sources:
+- **HelloAsso** (donations to the Radio-club du Velay association): HelloAsso does not say whether a donor agrees to be shown publicly, so **no donation appears automatically**. The administrator adds each donation by hand (name or nickname, country, amount), with the mandatory **“The donor agreed to be shown on the map”** box; an entry is removed with one click. The API credentials (created on admin.helloasso.com, API section) only serve to check that the access to the form works.
+- **GitHub Sponsors**: the map reads the sponsorships of the given GitHub account with a read-only token (`read:user`) and only shows the sponsors that GitHub marks **public**; private sponsors are never shown. Sources are re-read every hour (`DONATEURS_INTERVALLE_HEURES`, 1 to 24).
+
+The HelloAsso secret and the GitHub token are never sent back to the browser nor written to the log: a secret already entered shows as “•••••• (unchanged)”, and a field left empty keeps the previous value. The same settings exist in the `.env` (`HELLOASSO_*`, `GITHUB_SPONSORS_*`); those made from the map are saved in `/data/donateurs.json` and take precedence. No e-mail or postal address is ever read.
 
 ## Favorites and “My nodes”
 In a node's sheet, Meshtastic or MeshCore (logged-in account):

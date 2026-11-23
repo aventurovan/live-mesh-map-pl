@@ -1,5 +1,8 @@
 # Dépannage
 
+### `no matching manifest for linux/arm/v7`, `exec format error` ou « Système armhf non pris en charge »
+La machine tourne sous un système **32 bits**. La carte n'existe qu'en **64 bits** (x86-64 ou ARM64). Sur un Raspberry Pi, `uname -m` peut répondre `aarch64` alors que le système est en 32 bits : vérifiez plutôt `dpkg --print-architecture`, qui doit répondre `arm64` (ou `amd64` sur PC). Si c'est `armhf`, réinstallez **Raspberry Pi OS 64 bits** avec Raspberry Pi Imager (Pi 4 ou 5 ; un Pi 3 ou Zero 2 n'a pas assez de mémoire). Le script d'installation fait cette vérification avant de commencer. L'agent Gaulix, lui, a une version 32 bits (`agent-gaulix-raspberrypi-armv7`) : un vieux Pi peut relier un module radio à la carte, mais pas faire tourner la carte.
+
 ### `getaddrinfo ENOTFOUND` dans le journal
 L'adresse du broker est mal écrite (par exemple `mqttexample.org` au lieu de `mqtt.example.org`). Corrigez `MQTT_URL` (ou *Gestion › Réglages*), puis `docker compose up -d`.
 
@@ -19,6 +22,9 @@ L'adresse du broker est mal écrite (par exemple `mqttexample.org` au lieu de `m
 
 ### « hôte injoignable » (EHOSTUNREACH) pour un module Wi-Fi
 Le serveur n'est pas sur le même réseau que le module. Passez par *Connecter un module* avec l'**agent 1.6** lancé sur un PC de ce réseau, ou par le Bluetooth ou l'USB depuis le navigateur.
+
+### « Module USB de ce PC » ou « Module Bluetooth » : le bouton explique pourquoi c'est impossible
+Chrome n'ouvre l'USB et le Bluetooth que sur une page **sécurisée**. Si la carte est ouverte en `http://` depuis un autre PC (adresse Tailscale en `100.x.x.x`, par exemple), le clic affiche le message *« USB impossible ici : ouvrez la carte en HTTPS (adresse en …ts.net) ou depuis le PC où tourne la carte (localhost) »*, et les deux boutons sont marqués **⚠**. C'est normal : ouvrez la carte en HTTPS (adresse en `…ts.net`), ou depuis la machine où elle tourne (`http://localhost:…`, considéré comme sécurisé). Même message hors de Chrome ou Edge (Firefox et Safari ne gèrent ni l'USB ni le Bluetooth du navigateur).
 
 ### Le Bluetooth ne trouve pas le module
 Carte en **HTTPS**, **Chrome ou Edge**, appli du téléphone déconnectée. Sur un ESP32 Meshtastic, le Bluetooth est coupé quand le Wi-Fi est activé. Appairez le module dans Windows si besoin (code affiché ou `123456`).

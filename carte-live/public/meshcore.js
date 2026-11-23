@@ -299,11 +299,67 @@ function mcMajKpis() {
   set('#k-mc-obs', s ? `${s.observateursEnLigne}/${s.observateurs}` : '–');
   set('#k-mc-liens', s ? s.liens : '–');
   set('#k-mc-debit', s ? fmt(s.paquetsMinute, 1) : '–');
+  mcMajSansSource();
+}
+
+// ---- Aucune source MeshCore : explication claire plutôt que des compteurs vides --------------------
+// MeshCore n'a pas de serveur public mondial : tant qu'aucun courtier ni companion n'envoie de paquet, la carte le dit
+// et (pour l'administrateur) montre comment en brancher une.
+function mcSansSource() {
+  const s = mc.etat && mc.etat.stats;
+  return !!s && !s.observateurs && !s.liens && !mc.noeuds.size && !Number(s.paquetsMinute);
+}
+function mcMajSansSource() {
+  const z = $('#mc-sans-source');
+  if (!z) return;
+  const visible = mcSansSource() && !['gestion', 'companion'].includes(mc.vue);
+  z.hidden = !visible;
+  if (!visible) { z.innerHTML = ''; return; }
+  z.innerHTML = `<h4>Aucune source MeshCore pour l’instant</h4>
+    <p>Cette carte n’a encore reçu aucun paquet MeshCore, donc rien à afficher. MeshCore n’a pas de serveur public mondial : il faut lui brancher une source.</p>
+    ${etat.admin ? `<ol>
+      <li><b>Afficher un observatoire MeshCore public</b><span>Plusieurs communautés publient en libre accès ce que captent leurs observateurs (logiciel CoreScope). Un clic, rien à installer :</span>
+        <span class="mc-cs-choix">${MC_OBSERVATOIRES.map((o) => `<button type="button" class="mini" data-mc-cs="${esc(o.url)}">${esc(o.nom)}</button>`).join(' ')}</span></li>
+      <li><b>Utiliser le serveur d’une communauté</b><span>Demandez à un groupe MeshCore de votre région l’adresse, l’identifiant et le mot de passe de son serveur MQTT, puis ajoutez-les dans Réglages, rubrique « Brokers supplémentaires ».</span></li>
+      <li><b>Installer une radio observatrice chez vous</b><span>Une radio MeshCore et le logiciel meshcoretomqtt envoient ce qu’elle entend vers votre propre serveur MQTT, à ajouter de la même façon.</span></li>
+      <li><b>Ne rien brancher</b><span>La carte reste utilisable avec Meshtastic seul : choisissez « Meshtastic » en haut du panneau.</span></li>
+    </ol>
+    <button type="button" class="principal" id="mc-ouvrir-reglages">Ouvrir les réglages MQTT</button>` : '<p>L’administrateur de la carte peut en brancher une dans les réglages.</p>'}`;
+  const b = $('#mc-ouvrir-reglages');
+  if (b) b.onclick = () => { const o = document.querySelector('.onglets button[data-onglet="reglages"]'); if (o) o.click(); };
+  z.querySelectorAll('[data-mc-cs]').forEach((x) => (x.onclick = () => mcChoisirObservatoire(x.dataset.mcCs)));
+}
+// Observatoires CoreScope connus (API ouverte en lecture) ; d'autres adresses se saisissent dans MeshCore › Companion
+const MC_OBSERVATOIRES = [
+  { url: 'https://meshstats.serveurperso.in', nom: 'France' },
+  { url: 'https://analyzer.meshtexas.org', nom: 'Texas' },
+  { url: 'https://analyzer.on8ar.eu', nom: 'Belgique · Pays-Bas' },
+];
+async function mcChoisirObservatoire(url) {
+  let t;
+  try { t = await postJson('/api/mc/corescope/tester', { url }); } catch (err) { return confirmer('Observatoire injoignable : ' + err.message, { ok: 'OK' }); }
+  const debit = t.paquetsMinute != null ? `environ ${fmt(t.paquetsMinute, 0)} paquets par minute` : 'débit inconnu';
+  if (!(await confirmer(`${new URL(t.url).host} : ${t.noeuds ?? '?'} nœuds connus, ${debit}. La carte les affichera (au plus ${mc.etat && mc.etat.corescope ? mc.etat.corescope.maxParMinute : 60} paquets par minute). Le service redémarre (quelques secondes). Continuer ?`))) return;
+  const actuel = (mc.etat && mc.etat.corescope && mc.etat.corescope.texte) || '';
+  const texte = [...actuel.split('\n').filter(Boolean).filter((l) => !l.startsWith(t.url)), t.url].join('\n');
+  try { await postJson('/api/mc/reglages', { corescope: texte }); attendreRedemarrage('Observatoire MeshCore ajouté'); } catch (err) { confirmer(err.message, { ok: 'OK' }); }
+}
+// Crédit des observatoires publics dans le pied de carte (exigence de politesse envers les communautés qui partagent)
+const mcCredites = new Set();
+function mcMajCredits() {
+  const l = (mc.etat && mc.etat.observatoires) || [];
+  if (typeof carte === 'undefined' || !carte || !carte.attributionControl) return;
+  for (const h of l) {
+    if (mcCredites.has(h)) continue;
+    mcCredites.add(h);
+    carte.attributionControl.addAttribution(`MeshCore : <a href="https://${esc(h)}" target="_blank" rel="noopener">${esc(h)}</a>`);
+  }
 }
 
 // ---- Panneau MeshCore ---------------------------------------------------------------------------
 function mcRendrePanneau() {
   document.querySelectorAll('.sous-onglets-mc button').forEach((b) => b.classList.toggle('actif', b.dataset.mcVue === mc.vue));
+  mcMajSansSource();
   const z = $('#mc-contenu');
   if (!z) return;
   if (mc.vue === 'noeuds') mcRendreNoeuds();
@@ -500,7 +556,19 @@ async function mcRendreMessages() {
   ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#mc-envoi').requestSubmit(); } };
   $('#mc-dest').onchange = async (e) => {
     if (e.target.value === 'choisir') {
-      const q = (await saisir('Nom (ou début) du destinataire MeshCore :'));
+      // Mêmes propositions au fil de la frappe que pour l'écoute d'un nœud, ici sur les nœuds MeshCore connus
+      const proposerMc = (t) => {
+        const s = sansAccent(String(t || '')).trim();
+        if (!s) return [];
+        const l = [];
+        for (const x of mc.noeuds.values()) {
+          if (!x.nom || !sansAccent(x.nom).includes(s)) continue;
+          l.push({ valeur: x.nom, libelle: x.nom, detail: mcRole(x.role).un + ' · ' + String(x.cle || '').slice(0, 8).toUpperCase() });
+          if (l.length >= 8) break;
+        }
+        return l;
+      };
+      const q = (await saisir('Nom (ou début) du destinataire MeshCore :', '', { suggestions: proposerMc }));
       const n = q && [...mc.noeuds.values()].find((x) => (x.nom || '').toLowerCase().includes(q.toLowerCase().trim()));
       if (q && !n) alert('Aucun nœud MeshCore de ce nom sur la carte.');
       if (n) mc.destMessage = 'direct:' + n.cle;
@@ -565,7 +633,7 @@ function mcLigneMessage(m) {
   const qui = m.sens === 'envoye' ? `<b>${esc(m.nomDe || 'moi')}</b>${m.genre === 'direct' ? ` → ${mcBoutonAuteur(m.nomVers || mcNom(m.vers), m.vers)}` : ''}` : `${mcBoutonAuteur(m.nomDe || '?', m.genre === 'direct' ? m.de : null)}${m.genre === 'direct' ? ' → moi' : ''}`;
   const lieu = m.genre === 'direct' ? 'Direct' : m.canal || '';
   const nouv = typeof msgNouveaux !== 'undefined' && msgNouveaux.has('mc' + (m.id != null ? m.id : m.heure + (m.nomDe || '')));
-  return `<div class="paquet mc message-mc ${m.sens}${nouv ? ' nouveau' : ''}" ${m.genre === 'direct' && m.sens === 'recu' && m.de ? `data-mc-repondre="${m.de}"` : m.genre === 'canal' && m.indexCanal != null ? `data-mc-canal="${m.indexCanal}"` : ''}>
+  return `<div class="paquet mc message-mc ${m.sens}${nouv ? ' nouveau' : ''}" data-mc-id="${m.id != null ? Number(m.id) : ''}" ${m.genre === 'direct' && m.sens === 'recu' && m.de ? `data-mc-repondre="${m.de}"` : m.genre === 'canal' && m.indexCanal != null ? `data-mc-canal="${m.indexCanal}"` : ''}>
     <div class="entete"><span class="heure">${new Date(m.heure).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span><span class="tag canal-msg${m.genre === 'direct' ? ' direct' : ''}" ${m.genre !== 'direct' && typeof couleurCanal === 'function' ? `style="--coul:${couleurCanal(m.canal)}"` : ''}><i style="background:${m.genre === 'direct' ? MC_TYPES.message.hex : MC_TYPES.canal.hex}"></i>${esc(lieu)}</span>${nouv ? '<span class="etiquette-nouveau">nowa</span>' : ''}${mcTagRegion(m.region)}${estRelaye(m.texte) ? '<span class="badge-passerelle" title="Relayé par une passerelle inter-réseaux">⇄ passerelle</span>' : ''}
     ${m.sauts != null ? `<span>${m.sauts === 0 ? 'direct' : m.sauts + ' saut' + (m.sauts > 1 ? 's' : '')}${m.sauts > 0 && m.tailleHachage ? ` · ${m.tailleHachage} o` : ''}</span>` : ''}${m.sens === 'envoye' ? `<span class="statut-msg ${m.statut || ''}">${STATUTS_MSG[m.statut] || ''}${m.relais > 1 ? ' ×' + m.relais : ''}</span>` : ''}</div>
     <div class="corps">${qui} : <span translate="no">${texteMessageHtml(m.texte, m.sens === 'envoye' ? m.nomDe || 'moi' : m.nomDe, m.heure)}</span></div></div>`;
@@ -1208,6 +1276,7 @@ async function mcChargerEtat() {
   try { mc.etat = await api('/api/mc/etat'); } catch { return; }
   mcMajKpis();
   mcMajSource();
+  mcMajCredits();
   mcMajAlertes();
   if (mc.vue === 'companion' && $('[data-vue="meshcore"]').classList.contains('actif')) mcRendreCompanion();
 }
@@ -1221,7 +1290,11 @@ function mcMajAlertes() {
   document.querySelectorAll('.mc-seul-bloc').forEach((b) => (b.hidden = !mcAffiche()));
   { const pli = z.closest('details'); if (pli) pli.hidden = typeof deuxReseaux === 'function' && deuxReseaux(); }
   if (typeof deuxReseaux === 'function' && deuxReseaux() && typeof rendreReseau === 'function') { try { rendreReseau(); } catch { /* panneau absent */ } }
-  const a = ((mc.etat && mc.etat.alertes) || []).filter((x) => { const n = x.noeud && mc.noeuds.get(x.noeud); return !n || mcDansZone(n); });
+  // Alertes des capteurs réglés à la main (relevé en retard, mesure hors seuil) : montrées même hors de la zone.
+  // Un capteur dont on a soi-même réglé le relevé ou le seuil est un nœud qu'on suit, où qu'il soit ; il n'y en a
+  // que quelques-uns (ceux de meshcore-capteurs.json), aucun risque de déluge sur une carte qui voit des milliers
+  // de nœuds lointains. Les autres alertes (muet, batterie, canal…) restent filtrées sur la zone affichée.
+  const a = ((mc.etat && mc.etat.alertes) || []).filter((x) => { if (x.type === 'releve' || x.type === 'capteur') return true; const n = x.noeud && mc.noeuds.get(x.noeud); return !n || mcDansZone(n); });
   const p = $('#nb-alertes-mc');
   p.textContent = a.length;
   p.className = 'pastille' + (a.some((x) => x.niveau === 'critique') ? ' critique' : a.length ? ' attention' : '');
@@ -1273,6 +1346,13 @@ function mcMajSource() {
   if (!l) { z.insertAdjacentHTML('beforeend', '<div class="ligne cliquable" id="ligne-mc"></div>'); l = $('#ligne-mc'); l.onclick = () => { mc.vue = 'companion'; document.querySelector('.onglets button[data-onglet="meshcore"]').click(); }; }
   const c = mc.etat.companion;
   l.innerHTML = `<span class="point ${c.connecte ? 'actif' : 'inactif'}"></span><span class="titre">Companion MeshCore${c.nom ? `<small>${esc(c.nom)}</small>` : ''}</span><span class="meta">${c.connecte ? `${c.paquets} paquets` : 'non relié'} ›</span>`;
+  const obs = mc.etat.observatoires || [];
+  let o = $('#ligne-mc-obs');
+  if (!obs.length) { if (o) o.remove(); return; }
+  if (!o) { z.insertAdjacentHTML('beforeend', '<div class="ligne" id="ligne-mc-obs"></div>'); o = $('#ligne-mc-obs'); }
+  const cs = mc.etat.corescope;
+  const panne = cs && cs.sources.some((x) => x.enPanne);
+  o.innerHTML = `<span class="point ${panne ? 'recent' : 'actif'}"></span><span class="titre">Observatoire MeshCore public<small>${obs.map(esc).join(' · ')}</small></span><span class="meta">${cs ? `${cs.sources.reduce((a, x) => a + x.integres, 0)} paquets` : 'lecture seule'}</span>`;
 }
 // Avertissement « réglage radio différent » : réglage attendu de cette carte (MESHCORE_RADIO_ATTENDUE, « non » pour aucun),
 // et masquable dans ce navigateur pour un réglage donné (✕) ; il revient si le réglage du companion change.
@@ -1283,6 +1363,17 @@ function mcAvertRadio(r) {
   const sig = `${r.freq}|${r.bw}|${r.sf}|${r.cr}`;
   if (lireLs('gaulix_mc_radio_ok', null) === sig) return '';
   return ` · <b style="color:var(--attention)">réglage radio différent du réseau (${fmt(a.freq, 3)} MHz, BW ${fmt(a.bw, 1)}, SF${a.sf}, CR${a.cr})</b> <button class="mini" data-mc-radio-ok="${esc(sig)}" title="Ne plus afficher pour ce réglage, dans ce navigateur">✕</button>`;
+}
+// État des observatoires CoreScope : paquets reçus, gardés, écartés (plafond, zone), panne
+function mcBlocCoreScope(cs) {
+  if (!cs) return '';
+  const lignes = cs.sources.map((x) => `<div class="ligne"><span class="point ${x.enPanne ? 'inactif' : x.dernierPaquet && Date.now() - x.dernierPaquet < 10 * 60000 ? 'actif' : 'recent'}"></span>
+    <span class="titre">${esc(x.hote)}${x.regions.length ? ` <small>${esc(x.regions.join(', '))}</small>` : ''}<small>${x.noeuds} nœuds · ${x.observateurs} observateurs</small></span>
+    <span class="meta">${x.integres} paquets${x.ecartes ? ` · ${x.ecartes} au-delà du plafond` : ''}${x.horsZone ? ` · ${x.horsZone} hors zone` : ''}${x.enPanne && x.derniereErreur ? ` · <b style="color:var(--attention)">${esc(x.derniereErreur.message)}</b>` : ''}</span></div>`).join('');
+  const libres = MC_OBSERVATOIRES.filter((o) => !cs.sources.some((x) => x.url === o.url));
+  return `<div class="note">Données publiques de communautés MeshCore, lues toutes les ${cs.intervalleS} s, ${cs.maxParMinute} paquets par minute au plus par observatoire. Leur nom apparaît en crédit au pied de la carte.</div>
+    ${lignes ? `<div class="liste">${lignes}</div>` : '<div class="vide">Aucun observatoire.</div>'}
+    ${libres.length ? `<div class="actions-prop">Ajouter : ${libres.map((o) => `<button type="button" class="mini" data-mc-cs="${esc(o.url)}">${esc(o.nom)}</button>`).join(' ')}</div>` : ''}`;
 }
 function mcRendreCompanion() {
   const z = $('#mc-contenu');
@@ -1335,17 +1426,24 @@ function mcRendreCompanion() {
     <p class="note">Depuis le firmware 1.18, le companion BLE des cartes ESP32-S3 (Heltec V3/V4, XIAO ESP32-S3…) sait aussi se relier au Wi-Fi : renseignez le réseau et le mot de passe dans l’application MeshCore (Réglages → Wi-Fi), puis indiquez ici son adresse IP (port 5000 par défaut). Donnez-lui une adresse fixe dans votre box.</p>
     <h4>Par un agent (companion USB sur un autre PC)</h4>
     ${(e.agents || []).length ? `<div class="liste">${e.agents.map((a) => `<div class="ligne"><span class="point ${a.occupe ? 'actif' : 'recent'}"></span><span class="titre">${esc(a.nom)}<small>${esc(a.source)}</small></span><span class="meta"><button class="mini" data-mc-agent="${esc(a.hote)}">${c.cible && c.cible.hote === a.hote ? 'Choisi' : 'Utiliser'}</button>${!a.occupe && !(c.cible && c.cible.hote === a.hote) ? ` <button class="mini" data-mc-agent-ecoute="${esc(a.hote)}" title="En plus du companion principal, pour l'écoute">👂</button>` : ''}</span></div>`).join('')}</div>` : '<div class="vide">Aucun agent en ligne. L’agent se télécharge dans Réseau › Modules radio › Module par agent (choisissez le port COM du companion).</div>'}
-    </div><h4>Republication MQTT</h4>
+    </div><h4>Observatoires publics (CoreScope)</h4>
+    ${mcBlocCoreScope(e.corescope)}
+    <h4>Republication MQTT</h4>
     <div class="note">${e.republication.actif ? `${e.republication.connecte ? '● connecté' : '○ en attente'} · ${e.republication.publies} paquet(s) publié(s) sur <span class="mono">${esc(e.republication.sujet)}</span>${e.republication.refus ? ` · <b style="color:var(--attention)">${esc(e.republication.refus)}</b>` : ''}` : 'désactivée'}</div>
     <form id="mc-f-reglages" class="form-edit">
       <div class="grille-edit">
         <label>Code de zone (IATA) <input name="iata" value="${esc(e.reglages.iata)}" maxlength="8"><small>LPY = Le Puy</small></label>
         <label>Racine des sujets <input name="racine" value="${esc(e.reglages.racine)}"></label>
         <label class="case"><input type="checkbox" name="republier" ${e.reglages.republier ? 'checked' : ''}> Republier les paquets du companion</label>
-        <label>Paquets conservés <select name="perimetre">${[['departement', 'captés dans le département'], ['voisins', 'captés dans le département et ses voisins'], ['national', 'tout le flux national (lourd)']].map(([v, t]) => `<option value="${v}" ${e.reglages.perimetre === v ? 'selected' : ''}>${t}</option>`).join('')}</select><small>${e.reglages.horsPerimetre ? `${e.reglages.horsPerimetre} paquets ignorés depuis le démarrage` : 'selon la position de l’observateur qui les capte'}</small></label>
+        <label>Paquets conservés <select name="perimetre">${[['departement', 'captés dans la zone de la carte'], ['voisins', 'captés dans la zone et autour'], ['national', 'tout le flux reçu (lourd)']].map(([v, t]) => `<option value="${v}" ${e.reglages.perimetre === v ? 'selected' : ''}>${t}</option>`).join('')}</select><small>${e.reglages.horsPerimetre ? `${e.reglages.horsPerimetre} paquets ignorés depuis le démarrage` : 'selon la position de l’observateur qui les capte'}</small></label>
         <label>Liaisons déduites des chemins <select name="liensOctetsMin">${[[1, 'tous les chemins (1 octet compris)'], [2, 'chemins en 2 octets ou plus'], [3, 'chemins en 3 octets seulement']].map(([v, t]) => `<option value="${v}" ${Number(e.reglages.liensOctetsMin || 2) === v ? 'selected' : ''}>${t}</option>`).join('')}</select><small>à 1 octet, deux répéteurs peuvent avoir le même préfixe : liaisons parfois fausses</small></label>
         <label>Codes de zone voisins <input name="iataVoisins" value="${esc(e.reglages.iataVoisins || '')}" placeholder="ex. CFE, LYS, EBU"><small>pour les observateurs sans position connue</small></label>
         <label>Relevé automatique de l’état des répéteurs <select name="supervisionHeures">${[[0, 'jamais'], [1, 'toutes les heures'], [3, 'toutes les 3 h'], [6, 'toutes les 6 h'], [12, 'toutes les 12 h'], [24, 'une fois par jour']].map(([v, t]) => `<option value="${v}" ${Number(e.reglages.supervisionHeures ?? 3) === v ? 'selected' : ''}>${t}</option>`).join('')}</select><small>par le companion, sans rien cocher (lignes « 🤖 automatique » de Programmer)</small></label>
+        <label>Délai maximal d’un relevé, par nœud <input name="plafondReleveMin" type="number" min="1" max="30" value="${e.reglages.plafondReleveMin ?? 4}"><small>minutes (4 par défaut) : télémétrie, état, chemin, trace. Passé ce délai, le nœud est déclaré sans réponse et la carte passe au suivant, pour ne pas bloquer les relevés des autres.</small></label>
+        <label>Délai maximal d’une lecture complète, par nœud <input name="plafondLectureMin" type="number" min="5" max="240" value="${e.reglages.plafondLectureMin ?? 60}"><small>minutes (60 par défaut) : lecture de tous les réglages, programmation, mise en service. Trop bas, un répéteur lent est déclaré sans réponse avant la fin.</small></label>
+        <label style="grid-column:1/-1">Observatoires CoreScope (un par ligne) <textarea name="corescope" rows="2" placeholder="https://meshstats.serveurperso.in">${esc((e.corescope && e.corescope.texte) || '')}</textarea><small>adresse, éventuellement suivie de =CODE,CODE pour ne garder que certains observateurs (ex. =LYS,CFE) · vide : aucun</small></label>
+        <label>Plafond par observatoire <input name="corescopeMax" type="number" min="5" max="600" value="${e.corescope ? e.corescope.maxParMinute : 60}"><small>paquets par minute (le reste est ignoré)</small></label>
+        <label>Interrogation <select name="corescopeIntervalle">${[10, 20, 30, 60, 120].map((v) => `<option value="${v}" ${(e.corescope ? e.corescope.intervalleS : 20) === v ? 'selected' : ''}>toutes les ${v} s</option>`).join('')}</select></label>
         <label style="grid-column:1/-1">Canaux à déchiffrer (un par ligne) <textarea name="canaux" rows="3">${esc(e.reglages.canaux)}</textarea><small>Public · #nom (canal « hashtag ») · nom=secret (32 caractères hexadécimaux)</small></label>
       </div>
       <div class="actions-prop"><button type="submit" class="principal">Enregistrer et redémarrer</button></div>
@@ -1371,6 +1469,7 @@ function mcRendreCompanion() {
   z.querySelectorAll('[data-mc-qr-canal]').forEach((b) => (b.onclick = () => mcOuvrirQr({ canal: b.dataset.mcQrCanal })));
   mcBrancherOutils(z);
   mcBrancherEcoutes(z, retour);
+  z.querySelectorAll('[data-mc-cs]').forEach((x) => (x.onclick = () => mcChoisirObservatoire(x.dataset.mcCs)));
   z.querySelectorAll('[data-mc-agent-ecoute]').forEach((b) => (b.onclick = async () => {
     try { await postJson('/api/ecoutes', { protocole: 'meshcore', type: 'agent', hote: b.dataset.mcAgentEcoute }); setTimeout(mcChargerEtat, 4500); b.textContent = '…'; } catch (err) { retour(err.message); }
   }));
@@ -1391,7 +1490,7 @@ function mcRendreCompanion() {
     ev.preventDefault();
     const f = ev.target;
     if (!(await confirmer('Enregistrer ces réglages MeshCore ? Le service redémarre (quelques secondes).'))) return;
-    try { await postJson('/api/mc/reglages', { iata: f.iata.value.trim(), racine: f.racine.value.trim(), republier: f.republier.checked, canaux: f.canaux.value, perimetre: f.perimetre.value, liensOctetsMin: Number(f.liensOctetsMin.value), iataVoisins: f.iataVoisins.value, supervisionHeures: Number(f.supervisionHeures.value) }); attendreRedemarrage('Réglages MeshCore enregistrés'); } catch (err) { retour(err.message); }
+    try { await postJson('/api/mc/reglages', { iata: f.iata.value.trim(), racine: f.racine.value.trim(), republier: f.republier.checked, canaux: f.canaux.value, perimetre: f.perimetre.value, liensOctetsMin: Number(f.liensOctetsMin.value), iataVoisins: f.iataVoisins.value, supervisionHeures: Number(f.supervisionHeures.value), plafondReleveMin: Number(f.plafondReleveMin.value), plafondLectureMin: Number(f.plafondLectureMin.value), corescope: f.corescope.value, corescopeMax: Number(f.corescopeMax.value), corescopeIntervalle: Number(f.corescopeIntervalle.value) }); attendreRedemarrage('Réglages MeshCore enregistrés'); } catch (err) { retour(err.message); }
   };
 }
 
@@ -1403,7 +1502,7 @@ function mcOuvrirWs(source, versCompanion) {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/meshcore?role=${mc.nav.role === 'ecoute' ? 'ecoute' : 'principal'}&source=${source}&nom=${encodeURIComponent(source + ' ' + ((etat.config.compte && etat.config.compte.identifiant) || ''))}`);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => ok(ws);
-    ws.onerror = () => ko(new Error('connexion au serveur refusée (êtes-vous connecté en admin ?)'));
+    ws.onerror = () => ko(new Error('connexion au serveur refusée (connectez-vous avec votre compte ; passerelle coupée ou désactivée ?)'));
     ws.onmessage = (ev) => { if (ev.data instanceof ArrayBuffer) versCompanion(new Uint8Array(ev.data)); };
     ws.onclose = () => {
       if (mc.nav.ws !== ws) return;
@@ -1417,9 +1516,14 @@ function mcOuvrirWs(source, versCompanion) {
   });
 }
 async function mcBrancherUsb(portDonne) {
-  if (!('serial' in navigator)) { alert('Ce navigateur ne gère pas l’USB : utilisez Chrome ou Edge, sur la carte en HTTPS.'); return; }
+  if (!voieModuleDispo('usb')) return; // jamais d'échec muet : HTTP, Firefox, Safari… le clic explique pourquoi
   let port = portDonne;
-  if (!port) try { port = await navigator.serial.requestPort({}); } catch { return; }
+  if (!port) {
+    try { port = await navigator.serial.requestPort({}); } catch (e) {
+      annonce(e.name === 'NotFoundError' ? '🔌 Aucun port choisi. Liste vide ? Le PC ne voit pas le companion : câble de charge seule, pilote USB (CP210x, CH340) manquant, ou firmware « companion BLE » (qui ne répond qu’en Bluetooth).' : '🔌 USB : ' + e.message, 'erreur');
+      return;
+    }
+  }
   mc.nav.type = 'usb'; mcMajNav('connexion');
   try {
     await port.open({ baudRate: 115200 });
@@ -1437,13 +1541,20 @@ async function mcBrancherUsb(portDonne) {
     })();
   } catch (e) {
     try { await port.close(); } catch { /* déjà */ }
-    mcMajNav('aucun', e.name === 'NetworkError' || /open/i.test(e.message) ? 'port déjà utilisé (fermez l’appli MeshCore ou l’agent)' : e.message);
+    const cause = e.name === 'NetworkError' || /open/i.test(e.message) ? 'port déjà utilisé (fermez l’appli MeshCore ou l’agent)' : e.message;
+    mcMajNav('aucun', cause);
+    if (!portDonne) annonce('🔌 Companion MeshCore : ' + cause, 'erreur');
   }
 }
 async function mcBrancherBle(appareilDonne, reprise = false) {
-  if (!navigator.bluetooth) { alert('Ce navigateur ne gère pas le Bluetooth : utilisez Chrome ou Edge, sur la carte en HTTPS.'); return; }
+  if (!voieModuleDispo('ble')) return; // jamais d'échec muet : HTTP, Firefox, Safari… le clic explique pourquoi
   let app = appareilDonne;
-  if (!app) try { app = await navigator.bluetooth.requestDevice({ filters: [{ services: [MC_BLE_SERVICE] }, { namePrefix: 'MeshCore' }], optionalServices: [MC_BLE_SERVICE] }); } catch { return; }
+  if (!app) {
+    try { app = await navigator.bluetooth.requestDevice({ filters: [{ services: [MC_BLE_SERVICE] }, { namePrefix: 'MeshCore' }], optionalServices: [MC_BLE_SERVICE] }); } catch (e) {
+      annonce(e.name === 'NotFoundError' ? '📶 Aucun companion MeshCore choisi. Liste vide ? Allumez le module, fermez l’appli MeshCore du téléphone (un seul appareil à la fois), puis réessayez.' : '📶 Bluetooth : ' + e.message, 'erreur');
+      return;
+    }
+  }
   if (!reprise) arreterReconnexionBle(mc.nav);
   mc.nav.type = 'ble'; mcMajNav(reprise ? 'reconnexion' : 'connexion', reprise ? 'reconnexion Bluetooth…' : null);
   try {
@@ -1486,7 +1597,9 @@ async function mcBrancherBle(appareilDonne, reprise = false) {
   } catch (e) {
     try { app.gatt.disconnect(); } catch { /* déjà */ }
     mc.nav.ble = null;
-    mcMajNav(reprise ? 'reconnexion' : 'aucun', 'Bluetooth : ' + e.message + (reprise ? '' : ' (code PIN demandé ? appairez d’abord le companion dans Windows)'));
+    const cause = 'Bluetooth : ' + e.message + (reprise ? '' : ' (code PIN demandé ? appairez d’abord le companion dans Windows)');
+    mcMajNav(reprise ? 'reconnexion' : 'aucun', cause);
+    if (!appareilDonne && !reprise) annonce('📶 Companion MeshCore : ' + cause, 'erreur');
   }
 }
 // auto : coupure subie (la reconnexion automatique suit) ; sinon débranchement voulu
@@ -1580,7 +1693,8 @@ async function mcRendreCapteurs(n, z, jours = 7) {
     <div class="actions-prop">${[1, 7, 30, 90].map((j) => `<button class="mini ${j === jours ? 'actif' : ''}" data-cj="${j}">${j} j</button>`).join('')}${r.series.length ? `<a class="mini bouton-lien" href="/api/mc/capteurs/${n.cle}/csv?jours=${jours}" download>⬇ CSV (${jours} j)</a>` : ''}</div>
     ${r.peutRegler ? `<div class="reglage-capteurs"><label>Relever toutes les <select id="cap-int">${r.intervalles.map((m) => `<option value="${m}" ${m === r.intervalleMin ? 'selected' : ''}>${lib(m)}</option>`).join('')}</select></label>
       <button class="mini principal" id="cap-maintenant">Relever maintenant</button></div>
-      <p class="note">Le relevé passe par le companion de la carte (tâche « télémétrie »). Le nœud doit autoriser la télémétrie : mot de passe invité ou admin mémorisé, ou télémétrie ouverte. Chaque relevé envoie un paquet : 1 h ou plus suffit pour un abri ou une batterie.</p>` : ''}
+      <p class="note">Le relevé passe par le companion de la carte (tâche « télémétrie »). Le nœud doit autoriser la télémétrie : mot de passe invité ou admin mémorisé, ou télémétrie ouverte. Chaque relevé envoie un paquet : 1 h ou plus suffit pour un abri ou une batterie.</p>
+      <p class="note">Si le nœud ne répond pas, la carte réessaie deux fois, à un quart d’heure d’intervalle, puis attend l’intervalle suivant.</p>` : ''}
     ${r.dernier ? `<p class="note">Dernier relevé ${ilYa(r.dernier)}.</p>` : ''}
     ${r.series.length ? r.series.filter((sr) => !(r.masquees || []).includes(sr.mesure)).map((sr) => {
       const pts = sr.points.map(([h, v]) => ({ heure: h, v }));
@@ -1704,6 +1818,9 @@ function mcOtworzZAdresu() {
   setTimeout(() => mcOuvrirFiche(n.cle), 300);
 }
 async function mcOuvrirFiche(cle, ongletInitial) {
+  // Comme ouvrirFiche : seul l'écran qui ouvre la fiche juste avant (liste d'un département) demande qu'on y revienne
+  etat.retourFiche = etat.retourFicheDemande || null;
+  etat.retourFicheDemande = null;
   mc.selection = cle;
   etat.selection = null;
   $('#fiche').hidden = false;
@@ -1854,9 +1971,13 @@ async function mcOuvrirPaquet(id) {
 // Chargement complet au démarrage et toutes les 10 min ; entre-temps, seulement les nœuds modifiés
 async function mcChargerNoeuds(complet) {
   if (complet || !mc.heureNoeuds || Date.now() - mc.completNoeuds > 600000) {
-    const l = await api('/api/mc/noeuds');
+    const r = await fetch('/api/mc/noeuds', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error(r.statusText);
+    const l = await r.json();
     mc.noeuds = new Map(l.map((n) => [n.cle, n]));
-    mc.heureNoeuds = mc.completNoeuds = Date.now();
+    // Repère pris sur l'heure serveur (en-tête X-Heure), pas sur l'horloge du navigateur
+    mc.heureNoeuds = Number(r.headers.get('X-Heure')) || Date.now();
+    mc.completNoeuds = Date.now();
   } else {
     const r = await api('/api/mc/noeuds?depuis=' + mc.heureNoeuds);
     for (const n of r.noeuds) mc.noeuds.set(n.cle, n);
@@ -1911,12 +2032,14 @@ function mcRecevoir(m) {
     try { mcAnimer(m); } catch (e) { console.warn('animacja:', e); }
     try { mcAjouterAuFlux(m); } catch (e) { console.warn('flux:', e); }
     mcNoterActivite(m.de); (m.cheminResolu || []).forEach(mcNoterActivite);
-    if (m.texte && m.premiere && etat.membre) { mcNoterMessageRecu({ canal: m.canal }); mcMessagesARafraichir(); }
+    if (m.texte && m.premiere && etat.membre) { if (m.nouveauMessage && !mcEstDeMoi({ nomDe: m.expediteur })) mcNoterMessageRecu({ canal: m.canal }); mcMessagesARafraichir(); } // écho de nos envois (alertes, passerelle) : pas « non lu »
   } else if (m.genre === 'mc-etat') {
     mc.etat = { ...(mc.etat || {}), stats: m.stats, companion: { ...((mc.etat && mc.etat.companion) || {}), ...m.companion } };
     if (m.alertes) mc.etat.alertes = m.alertes;
+    if (m.observatoires) mc.etat.observatoires = m.observatoires;
     mcMajKpis();
     mcMajSource();
+    mcMajCredits();
     mcMajAlertes();
     if (etat.admin && mc.vue === 'companion') mcChargerEtat();
   } else if (m.genre === 'mc-noeuds') mcPlanifier();

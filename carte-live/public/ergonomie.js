@@ -26,12 +26,17 @@ function confirmer(texte, { ok = 'Confirmer', annuler = 'Annuler' } = {}) {
     d.querySelector('[data-r="1"]').focus();
   });
 }
-// Saisie dans l'interface (remplace prompt() du navigateur) : renvoie le texte, ou null si annulé
-function saisir(texte, defaut = '') {
+// Saisie dans l'interface (remplace prompt() du navigateur) : renvoie le texte, ou null si annulé.
+// options.suggestions : fonction optionnelle, appelée au fil de la frappe avec ce qui est tapé, qui renvoie une
+// liste de propositions [{ valeur, libelle, detail }]. Choisir une proposition remplit le champ, qui reste
+// toujours LIBRE : on peut valider un texte qui n'est dans aucune proposition (écouter un nœud encore inconnu,
+// par exemple). Clavier : ↓ ↑ pour parcourir, Entrée pour prendre la proposition visée, Échap pour refermer la
+// liste (un second Échap ferme la boîte). Les appels qui ne passent pas « suggestions » ne changent pas.
+function saisir(texte, defaut = '', options = {}) {
   return new Promise((resoudre) => {
     let d = document.getElementById('dlg-saisir');
     if (!d) { d = document.createElement('dialog'); d.id = 'dlg-saisir'; d.className = 'dlg-confirmer'; d.setAttribute('aria-labelledby', 'saisir-texte'); document.body.appendChild(d); }
-    d.innerHTML = '<form method="dialog"><p id="saisir-texte"></p><input id="saisir-champ" autocomplete="off"><div class="actions-confirmer"><button type="button" data-r="0">Annuler</button><button type="submit" class="principal">Valider</button></div></form>';
+    d.innerHTML = '<form method="dialog"><p id="saisir-texte"></p><input id="saisir-champ" autocomplete="off"><div class="propositions-saisir" id="saisir-props" role="listbox" aria-label="Propositions" hidden></div><div class="actions-confirmer"><button type="button" data-r="0">Annuler</button><button type="submit" class="principal">Valider</button></div></form>';
     d.querySelector('p').textContent = texte;
     const champ = d.querySelector('input');
     champ.value = defaut == null ? '' : String(defaut);
@@ -40,6 +45,43 @@ function saisir(texte, defaut = '') {
     d.querySelector('[data-r="0"]').onclick = () => fin(null);
     d.querySelector('form').onsubmit = (e) => { e.preventDefault(); fin(champ.value); };
     d.onclose = () => fin(null);
+    const suggerer = typeof options.suggestions === 'function' ? options.suggestions : null;
+    const props = d.querySelector('#saisir-props');
+    if (suggerer) {
+      let choix = [], vise = -1, minuterie = null;
+      champ.setAttribute('role', 'combobox');
+      champ.setAttribute('aria-autocomplete', 'list');
+      champ.setAttribute('aria-controls', 'saisir-props');
+      champ.setAttribute('aria-expanded', 'false');
+      const fermer = () => { props.hidden = true; props.innerHTML = ''; choix = []; vise = -1; champ.setAttribute('aria-expanded', 'false'); champ.removeAttribute('aria-activedescendant'); };
+      const viser = (i) => {
+        vise = i;
+        [...props.children].forEach((b, k) => { const a = k === i; b.classList.toggle('vise', a); b.setAttribute('aria-selected', a ? 'true' : 'false'); if (a) b.scrollIntoView({ block: 'nearest' }); });
+        if (i >= 0) champ.setAttribute('aria-activedescendant', 'saisir-prop-' + i); else champ.removeAttribute('aria-activedescendant');
+      };
+      const prendre = (i) => { const c = choix[i]; if (!c) return; champ.value = String(c.valeur); fermer(); champ.focus(); };
+      const proposer = () => {
+        let l = [];
+        try { l = suggerer(champ.value) || []; } catch { l = []; } // une proposition en panne ne doit pas bloquer la saisie
+        choix = l.slice(0, 10);
+        if (!choix.length) { fermer(); return; }
+        props.innerHTML = choix.map((c, i) => `<button type="button" role="option" id="saisir-prop-${i}" aria-selected="false" data-i="${i}"><b>${esc(c.libelle)}</b>${c.detail ? `<small>${esc(c.detail)}</small>` : ''}</button>`).join('');
+        props.hidden = false;
+        champ.setAttribute('aria-expanded', 'true');
+        viser(-1);
+      };
+      // Au fil de la frappe, mais pas à chaque touche : la liste est refaite après une courte pause
+      champ.addEventListener('input', () => { clearTimeout(minuterie); minuterie = setTimeout(proposer, 120); });
+      props.addEventListener('mousedown', (e) => { const b = e.target.closest('[data-i]'); if (b) { e.preventDefault(); prendre(Number(b.dataset.i)); } });
+      champ.addEventListener('keydown', (e) => {
+        if (props.hidden) { if (e.key === 'ArrowDown') { e.preventDefault(); clearTimeout(minuterie); proposer(); } return; }
+        if (e.key === 'ArrowDown') { e.preventDefault(); viser(vise + 1 >= choix.length ? 0 : vise + 1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); viser(vise <= 0 ? choix.length - 1 : vise - 1); }
+        else if ((e.key === 'Enter' || e.key === 'Tab') && vise >= 0) { e.preventDefault(); prendre(vise); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); fermer(); } // Échap referme la liste ; un second ferme la boîte
+      });
+      if (champ.value) setTimeout(proposer, 0);
+    }
     d.showModal();
     champ.focus(); champ.select();
   });
@@ -58,6 +100,96 @@ function annonceAnnulable(texte, annuler) {
 }
 // Les messages d'erreur ou d'information passent par les annonces en bas de l'écran
 window.alert = (t) => { try { annonce(String(t), /^\d+ |✔|envoy|enregistr|copi/i.test(String(t)) ? 'ok' : 'erreur'); } catch { console.warn(t); } };
+// ---- Fenêtres : élargir d'un clic, et fermer en cliquant à côté ----------------------------------------------
+// Toutes les fenêtres de la carte (<dialog>) qui ont une croix de fermeture reçoivent le même traitement :
+//   · un bouton ⤢ qui les élargit (choix gardé pour la prochaine visite, un seul réglage pour toutes) ;
+//   · un clic en dehors de la fenêtre la ferme, comme la croix ou la touche Échap.
+// Exclues : les confirmations (.dlg-confirmer, qui gèrent déjà le clic à côté) et la fenêtre d'installation
+// (pas de croix : elle doit être remplie).
+const CLE_FENETRES_LARGES = 'gaulix_fenetres_larges';
+let fenetresLarges = lireLs(CLE_FENETRES_LARGES, false) === true;
+// Champs de saisie libre : une fenêtre où l'on a commencé à taper ne se ferme pas sur un clic maladroit.
+// Les cases à cocher et les listes ne comptent pas : dans cette carte, elles s'enregistrent au changement.
+const CHAMPS_SAISIE = 'textarea,input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=reset]):not([type=file]):not([type=hidden]):not([type=range]):not([type=color])';
+// Référence : ce que contenaient les champs à l'ouverture de la fenêtre (plusieurs fenêtres gardent les
+// valeurs d'une fois sur l'autre : se fier à la valeur d'origine du HTML les déclarerait « en saisie » pour
+// toujours). Refaite quand la fenêtre réécrit son contenu.
+function noterSaisie(d) { for (const c of d.querySelectorAll(CHAMPS_SAISIE)) c.valeurOuverture = c.value; }
+function saisieEnCours(d) {
+  if (d.dataset.fermerDehors === 'toujours') return false; // fenêtre de recherche : rien à perdre
+  for (const c of d.querySelectorAll(CHAMPS_SAISIE)) {
+    if (c.disabled || c.readOnly) continue;
+    const ref = c.valeurOuverture === undefined ? (c.defaultValue || '') : c.valeurOuverture;
+    if ((c.value || '') !== ref) return true;
+  }
+  return false;
+}
+// Vrai si le point du clic tombe hors du cadre de la fenêtre (donc sur le fond assombri, qui remonte les
+// clics comme s'ils venaient de l'élément <dialog> lui-même : la position est le seul moyen de les distinguer).
+function clicHorsFenetre(d, e) {
+  const r = d.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+}
+function fermerFenetre(d) {
+  const croix = d.querySelector(':scope > .fermer, :scope > [data-fermer]');
+  if (croix) croix.click(); else d.close();
+}
+function appliquerLargeurFenetre(d) { d.classList.toggle('elargie', fenetresLarges); }
+// Bouton ⤢ posé à côté de la croix. Plusieurs fenêtres réécrivent tout leur contenu (innerHTML) après
+// l'ouverture : un observateur le repose dès qu'il disparaît.
+function poserBoutonElargir(d) {
+  // Seules les fenêtres de contenu (large / très large) gagnent à être élargies : une boîte de connexion
+  // ou une petite fiche n'a rien à y gagner.
+  if (!d.classList.contains('large') && !d.classList.contains('tres-large')) return;
+  const croix = d.querySelector(':scope > .fermer, :scope > [data-fermer]');
+  if (!croix || d.querySelector(':scope > .elargir')) return;
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'elargir';
+  b.onclick = () => {
+    fenetresLarges = !fenetresLarges;
+    ecrireLs(CLE_FENETRES_LARGES, fenetresLarges);
+    document.querySelectorAll('dialog').forEach(appliquerLargeurFenetre);
+    document.querySelectorAll('dialog > .elargir').forEach(libelleElargir);
+  };
+  croix.insertAdjacentElement('afterend', b);
+  libelleElargir(b);
+}
+function equiperFenetre(d) {
+  const croix = d.querySelector(':scope > .fermer, :scope > [data-fermer]');
+  if (!croix || d.classList.contains('dlg-confirmer')) return; // rien à fermer, ou fenêtre qui gère déjà tout
+  poserBoutonElargir(d);
+  appliquerLargeurFenetre(d);
+  noterSaisie(d);
+  if (d.dataset.fenetreEquipee) return; // gestionnaires de clic et observateur : une seule fois par fenêtre
+  d.dataset.fenetreEquipee = '1';
+  new MutationObserver(() => { if (d.open) { poserBoutonElargir(d); appliquerLargeurFenetre(d); noterSaisie(d); } }).observe(d, { childList: true });
+  // Un glissement commencé dans la fenêtre et relâché dehors (sélection de texte) ne doit pas fermer :
+  // on exige que l'appui ET le relâchement soient tous les deux sur le fond, en dehors du cadre.
+  let appuiDehors = false;
+  d.addEventListener('mousedown', (e) => { appuiDehors = e.target === d && clicHorsFenetre(d, e); });
+  d.addEventListener('click', (e) => {
+    const dehors = appuiDehors; appuiDehors = false;
+    if (!dehors || e.target !== d || !clicHorsFenetre(d, e)) return;
+    if (saisieEnCours(d)) { annonce('✍️ Fenêtre gardée ouverte : une saisie est commencée. Fermez avec la croix ✕ ou la touche Échap.', 'info'); return; }
+    fermerFenetre(d);
+  });
+}
+function libelleElargir(b) {
+  b.textContent = fenetresLarges ? '⤡' : '⤢';
+  b.title = fenetresLarges ? 'Réduire la fenêtre' : 'Élargir la fenêtre';
+  b.setAttribute('aria-label', b.title);
+}
+// Les fenêtres sont créées à des moments très différents (certaines à la volée) : on équipe chacune à son ouverture
+for (const nom of ['showModal', 'show']) {
+  const natif = HTMLDialogElement.prototype[nom];
+  HTMLDialogElement.prototype[nom] = function (...a) {
+    const r = natif.apply(this, a);
+    try { equiperFenetre(this); } catch { /* fenêtre inhabituelle : elle s'ouvre quand même */ }
+    return r;
+  };
+}
+
 
 // ---- Niveaux d'affichage -------------------------------------------------------------------------------------
 const NIVEAUX = { simple: 'Simple', operateur: 'Opérateur', expert: 'Expert' };
@@ -526,7 +658,7 @@ function dlgFonctionsMasquees() {
     ['feux', '🔥 Feux actifs (satellite)', 'couche des foyers NASA FIRMS, alertes sur la zone et envoi radio'],
   ];
   let d = document.getElementById('dlg-fonctions');
-  if (!d) { d = document.createElement('dialog'); d.id = 'dlg-fonctions'; document.body.appendChild(d); }
+  if (!d) { d = document.createElement('dialog'); d.id = 'dlg-fonctions'; d.className = 'large'; document.body.appendChild(d); }
   const m = (etat.config && etat.config.fonctionsMasquees) || [];
   d.innerHTML = `<button class="fermer" type="button" data-fermer title="Fermer">×</button><h3>👁️ Fonctions affichées</h3>
     <p class="note">Décochez ce que les utilisateurs de cette carte ne doivent pas voir. La vigilance Météo-France reste toujours affichée. Valeur de départ possible dans le .env : <span class="mono">FONCTIONS_MASQUEES=signalements,vigipirate,fr-alert,main-courante,bipper</span>.</p>

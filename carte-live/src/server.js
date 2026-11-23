@@ -10,6 +10,7 @@ const { ecrireSur, lireJson } = require('./fichiers');
 const path = require('path');
 const net = require('net');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const express = require('express');
 const mqtt = require('mqtt');
 const { WebSocketServer } = require('ws');
@@ -30,7 +31,10 @@ const { creerAsymetrie } = require('./asymetrie');
 const { creerCouvertureMesuree } = require('./couverture-mesuree');
 const { creerHistorique } = require('./historique');
 const { creerSauvegardes } = require('./sauvegardes');
-const { creerSanteCarte } = require('./sante-carte');
+const { creerSanteCarte, instrumenterMinuteries, chrono: chronoTache, noter: noterTache } = require('./sante-carte');
+// Toutes les minuteries du serveur sont chronométrées (tableau « tâches les plus lentes » de la santé de la carte)
+instrumenterMinuteries();
+const { performance } = require('perf_hooks');
 const { creerMaintenance } = require('./maintenance');
 const { creerExports } = require('./exports');
 const { creerFederation } = require('./federation');
@@ -39,6 +43,7 @@ const { creerAudit } = require('./audit');
 const { creerNouveaux } = require('./nouveaux');
 const { creerRapport } = require('./rapport');
 const { creerSitesRoutiers } = require('./sites-routiers');
+const { creerDonateurs } = require('./donateurs');
 const installations = creerInstallations(path.dirname(config.fichierBase));
 let federation = null; // créée une fois le réseau prêt (voir plus bas)
 // Zone « département + voisins », recalculée si le département ou sa zone changent (installation, réglages)
@@ -51,12 +56,17 @@ function zoneVoisins() {
   if (cacheVoisins.cle !== cle) cacheVoisins = { cle, val: calculerVoisins(config.departement.code, config.zone) };
   return cacheVoisins.val;
 }
-// Paramètre ?zone= : 1 = département, v = département + voisins, r84 = une région (code INSEE), sinon toute la carte
+// Paramètre ?zone= : 1 = département, v = département + voisins, r84 = une région (code INSEE), sinon toute la carte.
+// Carte réglée sur un carré du monde (hors de France) : pas de régions françaises, un « r84 » resté dans un
+// navigateur ou un lien retombe sur la zone de la carte (comme le fait l'interface).
 const bboxZone = (q) => {
   if (q === '1') return config.zone;
   if (q === 'v') return (zoneVoisins() || {}).bbox || config.zone;
   const m = /^r(\d{2})$/.exec(String(q || ''));
-  if (m) { const r = calculerRegions().find((x) => x.code === m[1]); return r ? r.bbox : null; }
+  if (m) {
+    if (carteMonde()) return config.zone;
+    const r = calculerRegions().find((x) => x.code === m[1]); return r ? r.bbox : null;
+  }
   return null;
 };
 const { decoderMessage, preparerCanaux } = require('./decodeur');
@@ -65,14 +75,16 @@ const { creerReseau } = require('./reseau');
 const { creerSourceMeshMonitor } = require('./meshmonitor');
 const { creerSourceRadio } = require('./radio');
 const { creerAnalyse } = require('./analyse');
-const { creerRelief, contourDepartement, DROGI_DOJAZDOWE } = require('./relief');
-const { estCodeMonde, codeMonde, nomMonde, lieuxMonde } = require('./monde');
+const { creerRelief, contourDepartement, nomDepartement, DROGI_DOJAZDOWE } = require('./relief');
+const { creerReliefGrossier } = require('./relief-grossier');
+const { creerCacheRelief } = require('./relief-cache');
+const { estCodeMonde, codeMonde, nomMonde, lieuxMonde, voisinsMonde } = require('./monde');
 const { creerComptes } = require('./comptes');
 const { creerAdministration } = require('./administration');
 const { creerAgents } = require('./agents');
 const { creerReseauMc } = require('./meshcore/reseau');
 const { creerCompanion } = require('./meshcore/companion');
-const { lireMessageMc, creerPublicateurMc } = require('./meshcore/mqtt');
+const { lireMessageMc, creerPublicateurMc, RE_SUJET: RE_SUJET_MC } = require('./meshcore/mqtt');
 const { preparerCanauxMc, decoderPaquet: decoderPaquetMc } = require('./meshcore/paquet');
 const { creerAdministrationMc } = require('./meshcore/administration');
 const fs = require('fs');
@@ -85,6 +97,8 @@ const canaux = preparerCanaux(config.canaux);
 journal(`Canaux configurés : ${canaux.map((c) => `${c.nom} (hachage ${c.hachage})`).join(', ')}`);
 const canauxMc = preparerCanauxMc(config.meshcore.canaux);
 const reseauMc = creerReseauMc(stockage.db, config, canauxMc, (...a) => journal('[MeshCore]', ...a));
+// Index plein texte des messages (créé et rempli au premier démarrage, tenu à jour par des déclencheurs SQLite)
+const rechercheMessages = require('./recherche-messages').creerRechercheMessages(stockage.db, journal);
 if (config.meshcore.actif) journal(`MeshCore : canaux ${canauxMc.map((c) => c.nom).join(', ') || 'aucun'}, sujets ${config.meshcore.racine}/#`);
 
 // ---- Comptes et sessions ------------------------------------------------------
@@ -96,6 +110,11 @@ function lireCookie(req, nom) {
 }
 const utilisateur = (req) => comptes.lireJeton(lireCookie(req, 'gaulix_session'));
 const audit = creerAudit(stockage.db);
+const courriel = require('./courriel').creerCourriel({ config, journal });
+// Fréquentation (administrateurs) : compteurs par jour, sans adresse IP gardée ; pays par la base DB-IP sur place
+const frequentation = require('./frequentation').creerFrequentation({ db: stockage.db, config, journal, clientsEnLigne: () => (typeof wss !== 'undefined' ? wss.clients.size : 0) });
+// Mur des donateurs (HelloAsso + GitHub Sponsors) : désactivé tant qu'aucune source n'est configurée
+const donateurs = creerDonateurs({ config, journal });
 const nomCompte = (c) => (c ? c.indicatif ? `${c.identifiant} (${c.indicatif})` : c.identifiant : null);
 // « Membre » : tout compte connecté (messages texte, positions exactes) ; « admin » : réglages et pilotage
 // Démonstration (?consultation, en-tête X-Demo) : un visiteur lit en plus, en GET seulement, une liste d'écrans de
@@ -130,10 +149,13 @@ function ipPrivee(req) {
 }
 
 const tentatives = new Map();
-function limiter(ip) {
+// Seules les tentatives ENREGISTREES comptent. Une connexion reussie n'en enregistre pas : plusieurs
+// personnes derriere la meme connexion internet (caserne, local ADRASEC) doivent pouvoir se connecter
+// a la suite sans etre bloquees. La protection contre la force brute porte sur les echecs (voir blocages.js).
+function limiter(ip, enregistrer = true) {
   const maintenant = Date.now();
   const t = (tentatives.get(ip) || []).filter((x) => maintenant - x < 15 * 60000);
-  t.push(maintenant);
+  if (enregistrer) t.push(maintenant);
   tentatives.set(ip, t);
   return t.length > 8;
 }
@@ -155,18 +177,20 @@ const jsonPhoto = express.json({ limit: '5mb' });
 app.use((req, res, next) => (req.path === '/api/sauvegardes/restaurer' ? jsonGros : req.path === '/api/releves' ? jsonPhoto : jsonPetit)(req, res, next));
 // Journal d'audit : toute action (hors lecture) d'un utilisateur connecté, avec son résultat
 const SANS_AUDIT = new Set(['/api/connexion', '/api/deconnexion', '/api/installation', '/api/inscription', '/api/releves', '/api/i18n/braki']);
+// Champs masqués dans le journal d'audit pour une route donnée (le nom d'un donateur n'y a rien à faire)
+const AUDIT_MASQUES = { '/api/donateurs/manuel': ['nom'] };
 app.use((req, res, next) => {
   if (req.method === 'GET' || !req.path.startsWith('/api/') || SANS_AUDIT.has(req.path)) return next();
   const u = utilisateur(req);
   if (!u) return next();
-  res.on('finish', () => audit.noter(nomCompte(u), req.ip, `${req.method} ${req.path}`, audit.resumer(req.body), res.statusCode < 400));
+  res.on('finish', () => audit.noter(nomCompte(u), req.ip, `${req.method} ${req.path}`, audit.resumer(req.body, AUDIT_MASQUES[req.path] || []), res.statusCode < 400));
   next();
 });
 // ---- Démonstration en lecture (lien « Explorer en détail ») ------------------------------------------------
 // Écrans lisibles par un visiteur en démonstration (GET seulement) : jamais les comptes, le journal d'audit, les
 // sauvegardes, les clés d'équipe, les QR de canaux, les exports YAML ni la mise à jour.
 const DEMO_LECTURE = [
-  /^\/api\/messages(\/\d+\/parcours)?$/, /^\/api\/mc\/messages$/, /^\/api\/trames\/\d+$/, /^\/api\/paquets$/,
+  /^\/api\/messages(\/\d+\/parcours|\/recherche)?$/, /^\/api\/mc\/messages$/, /^\/api\/trames\/\d+$/, /^\/api\/paquets$/,
   /^\/api\/admin-noeuds(\/(modeles|favoris|firmware|conformite-auto|v28|taches\/[\w-]+|lecture\/\d+(\/detail)?))?$/,
   /^\/api\/lorawan(\/[\w:.-]+)?$/, /^\/api\/trafic\/controle$/, /^\/api\/noeuds-nouveaux$/, /^\/api\/installations$/, /^\/api\/responsables$/,
   /^\/api\/mc\/(admin(\/modeles|\/taches\/[\w-]+)?|maintenance|audit\/(regions|collisions)|noeuds\/[0-9A-Fa-f]{64}\/chemin|capteurs\/[0-9A-Fa-f]{64}|companion\/(stats|telemetrie|decouverte))$/,
@@ -229,10 +253,33 @@ function pageVersionnee(fichier) {
   }
   return pagesVersionnees.get(fichier);
 }
-const envoyerPage = (fichier) => (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(pageVersionnee(fichier));
+const NOMS_PAGES = { 'index.html': 'carte', 'publique.html': 'page publique', 'rejoindre.html': 'rejoindre', 'adrasec.html': 'ADRASEC', 'terrain.html': 'lien terrain' };
+const envoyerPage = (fichier) => (req, res) => {
+  try { frequentation.noter(req, /CarteLiveAndroid/.test(req.get('user-agent') || '') ? 'appli Android' : NOMS_PAGES[fichier] || fichier.replace(/\.html$/, '')); } catch { /* comptage sans importance */ }
+  res.set('Cache-Control', 'no-cache').type('html').send(pageVersionnee(fichier));
+};
+app.get('/api/frequentation', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  res.set('Cache-Control', 'no-store').json(frequentation.resume(req.query.jours));
+});
 app.get(['/', '/index.html'], envoyerPage('index.html'));
 app.get('/publique.html', envoyerPage('publique.html'));
 app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: '5m', index: false }));
+// Temps bloquant de chaque route : partie synchrone du traitement, et envoi d'une réponse JSON préparée plus tard
+// (après une attente). Noté dans le registre des tâches de la santé de la carte, sous « GET /api/… ». Placé après
+// les fichiers statiques : de là jusqu'à la route, Express enchaîne sans attendre.
+app.use((req, res, next) => {
+  const t0 = performance.now();
+  let retour = false;
+  const nomRoute = () => `${req.method} ${req.route && typeof req.route.path === 'string' ? (req.baseUrl || '') + req.route.path : req.path.startsWith('/api/') ? req.path.replace(/\/[0-9a-f!]{4,}$/i, '/:id') : 'page ou fichier'}`;
+  const json = res.json;
+  res.json = function jsonChronometre(corps) {
+    if (!retour) return json.call(this, corps);
+    const t = performance.now();
+    try { return json.call(this, corps); } finally { noterTache(nomRoute(), performance.now() - t); }
+  };
+  try { next(); } finally { retour = true; noterTache(nomRoute(), performance.now() - t0); }
+});
 
 // Version installée et dernière version publiée sur GitHub (vérifiée toutes les heures, et à l'ouverture de la mise à jour)
 const DEPOT = process.env.DEPOT_GITHUB || 'aventurovan/live-mesh-map-pl';
@@ -273,7 +320,8 @@ app.get('/api/aide/:page', (req, res) => {
 
 app.get('/api/config', (req, res) => {
   res.json({
-    fonctionsMasquees: typeof fonctionsMasquees !== 'undefined' ? [...fonctionsMasquees] : [],
+    fonctionsMasquees: typeof fonctionsMasquees !== 'undefined' ? masqueesEffectives() : [],
+    urgence: (() => { try { return estMembre(req) ? urgence.etat() : null; } catch { return null; } })(),
     version: infosVersion(),
     freqMHz: Number(process.env.RADIO_FREQ_MHZ) || 869.525,
     titre: config.carte.titre,
@@ -288,11 +336,14 @@ app.get('/api/config', (req, res) => {
     gestion: estGestion(req),
     membre: estMembre(req),
     compte: utilisateur(req),
+    passerelleMembres: passerelleMembresActive(),
     installation: comptes.installationRequise(),
     inscriptions: config.inscriptions,
     departement: config.departement,
     zone: config.zone,
     zoneVoisins: zoneVoisins(),
+    // monde : zone de la carte hors de France (carré de 1°) → ni régions ni « France » dans le choix du secteur
+    monde: carteMonde(),
     regions: horsFrance() ? [] : calculerRegions().map(({ code, nom, bbox }) => ({ code, nom, bbox })),
     horsFrance: horsFrance(),
     zoneNom: config.zoneNom,
@@ -311,10 +362,32 @@ app.get('/api/config', (req, res) => {
   });
 });
 
+// Liste complète des nœuds : des milliers avec le flux msh/EU_868 (plusieurs Mo de JSON). Elle est préparée au plus
+// toutes les 10 s et la même réponse sert tous les navigateurs (une vue membre, une vue publique). ?depuis=heure :
+// seulement les nœuds modifiés depuis (mise à jour incrémentale de la carte, quelques nœuds au lieu de milliers).
+// L'en-tête X-Heure donne l'heure serveur de préparation de la liste : c'est le repère que le navigateur renvoie en
+// ?depuis= (et non le maximum des heures des nœuds : une horloge GPS dans le futur gelait la liste incrémentale).
+// Un ?depuis= trop ancien (plus de 10 min : onglet endormi) reçoit la liste complète en cache.
+let cacheNoeuds = {};
+function viderCacheNoeuds(ageMs = 0) { for (const k of Object.keys(cacheNoeuds)) if (Date.now() - cacheNoeuds[k].heure >= ageMs) delete cacheNoeuds[k]; }
 app.get('/api/noeuds', (req, res) => {
   const admin = estMembre(req);
   const maintenant = Date.now();
-  res.json(stockage.q.noeuds.all().map((n) => reseau.vueNoeud(n, admin, maintenant)));
+  const depuis = Number(req.query.depuis) || 0;
+  res.set('Cache-Control', 'private, no-cache').set('Vary', 'Cookie, Accept-Encoding').set('X-Heure', String(maintenant));
+  if (depuis > 0 && maintenant - depuis < 600000) return res.set('Cache-Control', 'no-store').json({ heure: maintenant, ...reseau.noeudsDepuis(Math.min(depuis, maintenant) - 5000, admin) });
+  const k = admin ? 'membre' : 'public';
+  let c = cacheNoeuds[k];
+  if (!c || maintenant - c.heure > 10000) {
+    const corps = Buffer.from(JSON.stringify(stockage.q.noeuds.all().map((n) => reseau.vueNoeud(n, admin, maintenant))));
+    // Version gzip gardée avec la liste : compressée une fois toutes les 10 s au lieu d'une fois par navigateur
+    const gz = corps.length > 1024 ? zlib.gzipSync(corps, { level: 5 }) : null;
+    c = cacheNoeuds[k] = { heure: maintenant, corps, gz, etag: `W/"${corps.length.toString(16)}-${crypto.createHash('sha1').update(corps).digest('base64').slice(0, 20)}"` };
+  }
+  res.set('ETag', c.etag).set('X-Heure', String(c.heure)).type('json');
+  if (req.fresh) return res.status(304).end();
+  if (c.gz && req.acceptsEncodings('gzip')) return res.set('Content-Encoding', 'gzip').send(c.gz);
+  res.send(c.corps);
 });
 
 app.get('/api/noeuds/:num', (req, res) => {
@@ -337,6 +410,20 @@ app.put('/api/noeuds/:num/installation', (req, res) => {
     // Le classement des sites tient compte des vraies antennes du réseau : recalcul différé (plusieurs fiches de suite)
     clearTimeout(minuterieReclassement); minuterieReclassement = setTimeout(() => relief.calculerClassement(), 60000);
     res.json({ ok: true, installation: r });
+  } catch (e) { res.status(400).json({ erreur: e.message }); }
+});
+// Autorisation du site seule : le reste de la fiche d'installation est gardé. Sert au registre des relais pour
+// cocher plusieurs relais et leur mettre la même autorisation d'un coup, sans ouvrir chaque fiche.
+// Mêmes droits, même validation et une ligne de journal d'audit par nœud que la fiche entière.
+app.post('/api/noeuds/:num/autorisation', (req, res) => {
+  if (!estGestion(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  if (!peutGerer(req, req.params.num)) return refuserSecteur(res);
+  const v = String((req.body || {}).autorisation || '').trim();
+  if (v && !installations.AUTORISATIONS.includes(v)) return res.status(400).json({ erreur: 'Autorisation inconnue' });
+  try {
+    const c = utilisateur(req);
+    installations.completer(Number(req.params.num) >>> 0, { autorisation: v }, c ? c.indicatif || c.identifiant : null);
+    res.json({ ok: true, autorisation: v || null }); // jamais la fiche entière : propriétaire et contact sont privés
   } catch (e) { res.status(400).json({ erreur: e.message }); }
 });
 app.get('/api/installations', (req, res) => {
@@ -438,6 +525,28 @@ let reliefPublic = { couverture: 'departement' };
 try { reliefPublic = { ...reliefPublic, ...lireJson(fReliefPublic) }; } catch { /* défaut */ }
 const franceOuverte = () => reliefPublic.couverture === 'france';
 const precharge = { enCours: false, arret: false, total: 0, faits: 0, deja: 0, erreurs: [], courant: null, etape: null, aCompleter: [], instance: null, debut: null, fin: null };
+// ---- Relief grossier mondial (≈ 9 km, NOAA ETOPO1) : affiché le temps que le relief précis d'une zone se télécharge.
+// Activé par défaut dans l'édition monde (RELIEF_MONDE=non pour le couper par défaut), réglable dans Gestion.
+const GROSSIER_DEFAUT = process.env.RELIEF_MONDE ? /^(oui|1|true|yes|on)$/i.test(process.env.RELIEF_MONDE) : true;
+const grossierActif = () => (reliefPublic.grossier === undefined ? GROSSIER_DEFAUT : !!reliefPublic.grossier);
+const reliefGrossier = creerReliefGrossier({ dossier: path.dirname(config.fichierBase), journal, minutes: Number(process.env.RELIEF_MONDE_MINUTES) || 5 });
+// Téléchargé une fois, en arrière-plan, peu après le démarrage ; nouvel essai toutes les heures en cas d'échec
+function lancerReliefGrossier() { if (grossierActif() && !reliefGrossier.pret()) reliefGrossier.telecharger().catch(() => { /* erreur gardée dans l'état */ }); }
+setTimeout(lancerReliefGrossier, 20000).unref();
+setInterval(lancerReliefGrossier, 3600000).unref();
+// Cache du relief sur le disque : espace occupé, purge, plafond (zones les moins récemment utilisées d'abord)
+const cacheRelief = creerCacheRelief({
+  dossier: path.dirname(config.fichierBase), journal, grossier: reliefGrossier,
+  verrous: () => new Set(precharge.enCours && precharge.courant ? [String(precharge.courant).toUpperCase()] : []),
+  enMemoire: () => reliefsEtude,
+  liberer: (code) => { const v = reliefsEtude.get(code); if (v) { try { v.arreter(); } catch { /* déjà */ } reliefsEtude.delete(code); } },
+  nomZone: (code) => nomDepartement(code),
+  codePrincipal: config.departement.code,
+});
+const plafondRelief = () => Math.max(0, Number(reliefPublic.plafondGo) || 0);
+// Plafond suspendu pendant « Préparer toute la France / la zone » : sinon il supprimait les zones à peine préparées
+const appliquerPlafondRelief = () => { if (precharge.enCours) return; try { cacheRelief.appliquerPlafond(plafondRelief()); } catch (e) { journal('[Relief] plafond :', e.message); } };
+setInterval(appliquerPlafondRelief, 3600000).unref();
 const reliefSurDisque = (code) => ['mnt-' + code + '.bin', 'sommets-osm-' + code + '.json'].every((f) => fs.existsSync(path.join(path.dirname(config.fichierBase), f)));
 // Paquet « relief France » : relief IGN, points hauts, accès, sites et communes de chaque département, en un fichier
 // tar.gz. Fabriqué depuis une carte qui a tout préparé (Gestion › Réglages), publié sur GitHub, installé par les autres.
@@ -490,15 +599,19 @@ function kodyDoPrzygotowania() {
   const odl = (c) => { const m = /^MN(\d\d)E(\d{3})$/.exec(c); return m ? (Number(m[1]) + 0.5 - cLat) ** 2 + ((Number(m[2]) + 0.5 - cLon) * 0.65) ** 2 : 99; };
   return l.sort((a, b) => odl(a) - odl(b));
 }
+// Carte hors de France : zone de la carte (carré de 1°) ; PL: lista kwadratów do przygotowania = kodyDoPrzygotowania()
+const carteMonde = () => estCodeMonde(config.departement.code);
+const codesAPreparer = () => kodyDoPrzygotowania();
 async function prechargerFrance() {
   if (precharge.enCours) return;
+  const monde = carteMonde();
   const codes = kodyDoPrzygotowania().filter((c) => c !== String(config.departement.code).toUpperCase());
   // Gardé sur disque : après un redémarrage de la carte (mise à jour), la préparation reprend où elle en était
   reliefPublic.preparation = true; try { ecrireSur(fReliefPublic, JSON.stringify(reliefPublic)); } catch { /* lecture seule */ }
   Object.assign(precharge, { enCours: true, arret: false, total: codes.length, faits: 0, deja: 0, erreurs: [], courant: null, etape: null, aCompleter: [], debut: Date.now(), fin: null });
-  journal(`[Relief] préparation de toute la France : ${codes.length} départements`);
+  journal(monde ? `[Relief] préparation de la zone et de ses voisins : ${codes.length} carrés de 1°` : `[Relief] préparation de toute la France : ${codes.length} départements`);
   // D'abord le paquet « relief France » publié sur GitHub (un seul téléchargement), s'il manque des départements
-  if (!horsFrance() && codes.some((c) => !reliefSurDisque(c))) {
+  if (!monde && codes.some((c) => !reliefSurDisque(c))) {
     precharge.courant = 'paquet';
     try { const n = await importerPaquetFrance(); journal(`[Relief] paquet France : ${n} fichier(s) installé(s)`); } catch (e) { journal(`[Relief] paquet France indisponible (${e.message}) : téléchargement département par département`); if (!/HTTP 404/.test(e.message)) precharge.erreurs.push({ code: 'paquet', erreur: e.message }); }
   }
@@ -543,9 +656,9 @@ async function prechargerFrance() {
   if (!precharge.arret && reliefPublic.activerFrance) {
     reliefPublic.couverture = 'france'; reliefPublic.activerFrance = false;
     try { ecrireSur(fReliefPublic, JSON.stringify(reliefPublic)); } catch { /* lecture seule */ }
-    journal('[Relief] toute la France prête : la carte publique calcule maintenant dans tous les départements');
+    journal(monde ? '[Relief] zone et voisins prêts : la carte publique calcule maintenant n’importe où dans le monde' : '[Relief] toute la France prête : la carte publique calcule maintenant dans tous les départements');
   }
-  journal(`[Relief] préparation de la France ${precharge.arret ? 'arrêtée' : 'terminée'} : ${precharge.faits}/${precharge.total} (${precharge.erreurs.length} erreur(s))`);
+  journal(monde ? `[Relief] préparation de la zone ${precharge.arret ? 'arrêtée' : 'terminée'} : ${precharge.faits}/${precharge.total} (${precharge.erreurs.length} erreur(s))` : `[Relief] préparation de la France ${precharge.arret ? 'arrêtée' : 'terminée'} : ${precharge.faits}/${precharge.total} (${precharge.erreurs.length} erreur(s))`);
   Object.assign(precharge, { enCours: false, courant: null, fin: Date.now() });
   if (!redemarrageEnCours) { reliefPublic.preparation = false; try { ecrireSur(fReliefPublic, JSON.stringify(reliefPublic)); } catch { /* lecture seule */ } }
 }
@@ -616,12 +729,14 @@ function Rdep(req, depForce) {
     journal(`[Relief] étude de la zone ${dep} : chargement du relief ${estCodeMonde(dep) ? 'Copernicus' : 'IGN'} et des points hauts`);
     reliefsEtude.set(dep, creerRelief(config, journal, { ...fournisseursRelief, envDefaut: () => { const c = relief.calibration(); return c && c.perteEnvironnementDb != null ? c.perteEnvironnementDb : null; } }, { code: dep }));
   } else { const v = reliefsEtude.get(dep); reliefsEtude.delete(dep); reliefsEtude.set(dep, v); }
+  cacheRelief.noterUtilisation(dep);
   return reliefsEtude.get(dep);
 }
 
 // Relief d'un département déjà préparé sur le disque : il s'ouvre en une à deux secondes. On attend qu'il soit prêt
 // plutôt que de répondre « en cours de chargement » (le navigateur ne réessayait que 20 s plus tard).
-async function reliefPret(RR, ms = 12000) {
+// approx : le relief grossier (en attendant le précis) suffit pour ce calcul
+async function reliefPret(RR, ms = 12000, approx = false) {
   const fin = Date.now() + ms;
   // Relief prêt et, pour un département préparé, ses points hauts aussi (sinon « 0 point haut évalué »)
   const fini = () => RR.pret() && (!RR.code || !reliefSurDisque(RR.code) || (RR.etat().sommets || 0) > 0);
@@ -630,7 +745,7 @@ async function reliefPret(RR, ms = 12000) {
     if (e.mnt === 'erreur' || (RR.code && !reliefSurDisque(RR.code))) break; // téléchargement IGN : plusieurs minutes, inutile d'attendre ici
     await new Promise((ok) => setTimeout(ok, 200));
   }
-  return RR.pret();
+  return RR.pret() || (approx && !!RR.utilisable && RR.utilisable());
 }
 const messageChargement = (RR) => (RR.code && reliefSurDisque(RR.code)
   ? `Relief de la zone ${RR.code} : ouverture en cours, quelques secondes`
@@ -639,7 +754,7 @@ app.get('/api/relief/france', (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
   const kody = kodyDoPrzygotowania();
   const surDisque = kody.filter((c) => c === String(config.departement.code).toUpperCase() || reliefSurDisque(c)).length;
-  res.set('Cache-Control', 'no-store').json({ couverture: reliefPublic.couverture, surDisque, total: kody.length, horsFrance: horsFrance(), precharge: { ...precharge, instance: undefined } });
+  res.set('Cache-Control', 'no-store').json({ monde: carteMonde(), couverture: reliefPublic.couverture, surDisque, total: kody.length, horsFrance: horsFrance(), precharge: { ...precharge, instance: undefined } });
 });
 app.get('/api/relief/france/paquet', (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
@@ -653,7 +768,7 @@ app.post('/api/relief/france', (req, res) => {
     if (!['departement', 'france'].includes(b.couverture)) return res.status(400).json({ erreur: 'choix invalide' });
     reliefPublic.couverture = b.couverture;
     try { ecrireSur(fReliefPublic, JSON.stringify(reliefPublic)); } catch (e) { return res.status(500).json({ erreur: e.message }); }
-    journal(`[Relief] couverture de la carte publique : ${b.couverture === 'france' ? 'toute la France' : 'département de la carte'} (${utilisateur(req).identifiant})`);
+    journal(`[Relief] couverture de la carte publique : ${b.couverture === 'france' ? (carteMonde() ? 'n’importe où dans le monde' : 'toute la France') : (carteMonde() ? 'zone de la carte' : 'département de la carte')} (${utilisateur(req).identifiant})`);
   }
   if (b.precharger === true) {
     if (b.activer) { reliefPublic.activerFrance = true; try { ecrireSur(fReliefPublic, JSON.stringify(reliefPublic)); } catch { /* lecture seule */ } }
@@ -661,6 +776,62 @@ app.post('/api/relief/france', (req, res) => {
   }
   if (b.precharger === false && precharge.enCours) precharge.arret = true;
   res.json({ ok: true, couverture: reliefPublic.couverture });
+});
+// ---- Cache du relief (administrateur) : espace occupé, purge, plafond, relief grossier mondial -------------------
+function etatCacheRelief() {
+  const inv = cacheRelief.inventaire(plafondRelief());
+  const g = reliefGrossier.etat();
+  return { ...inv, principale: { ...inv.principale, code: String(config.departement.code).toUpperCase(), nom: config.zoneNom || null },
+    grossier: { ...inv.grossier, actif: grossierActif(), defaut: GROSSIER_DEFAUT, source: g.source, minutes: g.minutes } };
+}
+app.get('/api/relief/cache', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  res.set('Cache-Control', 'no-store').json(etatCacheRelief());
+});
+// { grossier: true|false } active ou coupe le relief grossier ; { plafondGo: N } (0 = sans plafond) ;
+// { telechargerGrossier: true } relance son téléchargement ; { purger: { codes | tout | joursInactifs, grossier } }
+app.post('/api/relief/cache', async (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  const b = req.body || {}, qui = utilisateur(req).identifiant;
+  let modifie = false;
+  if (b.grossier !== undefined) {
+    if (typeof b.grossier !== 'boolean') return res.status(400).json({ erreur: 'choix invalide' });
+    reliefPublic.grossier = b.grossier; modifie = true;
+    journal(`[Relief] relief grossier mondial ${b.grossier ? 'activé' : 'désactivé'} (${qui})`);
+    if (b.grossier) lancerReliefGrossier(); else reliefGrossier.arreter();
+  }
+  if (b.plafondGo !== undefined) {
+    const n = Number(b.plafondGo);
+    if (!Number.isFinite(n) || n < 0 || n > 10000) return res.status(400).json({ erreur: 'Plafond invalide (0 à 10 000 Go, 0 = sans plafond)' });
+    reliefPublic.plafondGo = Math.round(n * 10) / 10; modifie = true;
+    journal(`[Relief] plafond du cache du relief : ${reliefPublic.plafondGo ? reliefPublic.plafondGo + ' Go' : 'aucun'} (${qui})`);
+  }
+  if (modifie) { try { ecrireSur(fReliefPublic, JSON.stringify(reliefPublic)); } catch (e) { return res.status(500).json({ erreur: e.message }); } }
+  if (modifie && reliefPublic.plafondGo) appliquerPlafondRelief();
+  if (b.telechargerGrossier === true) {
+    if (!grossierActif()) return res.status(409).json({ erreur: 'Relief grossier désactivé : activez-le d’abord' });
+    lancerReliefGrossier();
+  }
+  let purge = null;
+  if (b.purger && typeof b.purger === 'object') {
+    const p = b.purger;
+    const o = {
+      tout: p.tout === true,
+      codes: Array.isArray(p.codes) ? p.codes.slice(0, 500).map(String).filter((c) => /^((\d{2}|2A|2B)|M[NS]\d{2}[EW]\d{3})$/i.test(c)) : null,
+      joursInactifs: p.joursInactifs !== undefined && Number.isFinite(Number(p.joursInactifs)) ? Math.min(3650, Math.max(0, Number(p.joursInactifs))) : null,
+      grossier: p.grossier === true,
+    };
+    if (!o.tout && !o.codes && o.joursInactifs == null && !o.grossier) return res.status(400).json({ erreur: 'Rien à purger' });
+    // Relief mondial supprimé : l'option est décochée en même temps, sinon l'essai horaire le retéléchargeait (≈ 19 Mo)
+    if (o.grossier && grossierActif()) {
+      reliefPublic.grossier = false; reliefGrossier.arreter();
+      journal(`[Relief] relief grossier mondial désactivé avec sa suppression (${qui})`);
+      try { ecrireSur(fReliefPublic, JSON.stringify(reliefPublic)); } catch (e) { return res.status(500).json({ erreur: e.message }); }
+    }
+    try { purge = await cacheRelief.purger(o, qui); } catch (e) { return res.status(500).json({ erreur: e.message }); }
+    cacheTerrain.clear();
+  }
+  res.json({ ok: true, purge, ...etatCacheRelief() });
 });
 app.get('/api/relief/etat', (req, res) => res.json({ ...R(req).etat(), emprise: R(req).emprise() }));
 app.get('/api/relief/sommets', (req, res) => {
@@ -710,10 +881,20 @@ app.get('/api/relief/relier', async (req, res) => {
   if (q.hA) o.hauteurA = Math.min(Math.max(Number(q.hA) || 2, 0.5), 60);
   if (q.hB) o.hauteurB = Math.min(Math.max(Number(q.hB) || 2, 0.5), 60);
   if (q.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
-  const RR = R(req, a, b); await reliefPret(RR);
+  const RR = R(req, a, b); await reliefPret(RR, 12000, true);
   try { res.json(RR.relierPoints(a, b, o)); } catch (e) { res.status(503).json({ erreur: e.message }); }
 });
 const cacheCouverture = new Map();
+// Calculs asynchrones : N demandes identiques simultanées (plusieurs onglets, double clic) ne lancent plus N calculs
+// (mémoire × N dans un conteneur de 512 Mo) ; la promesse en cours est partagée par clé puis retirée.
+const calculPartage = require('./calcul-partage').creerCalculPartage().partager;
+function garderCouverture(cle, r) {
+  r.id = crypto.randomBytes(6).toString('hex');
+  if (!r.approximatif) cacheCouverture.set(cle, r); // relief grossier : jamais gardé comme un résultat précis
+  cacheCouverture.set(r.id, r);
+  if (cacheCouverture.size > 60) cacheCouverture.delete(cacheCouverture.keys().next().value);
+  return r;
+}
 const calculsPublics = new Map();
 function limiterCalcul(ip) {
   const t = Date.now(), l = (calculsPublics.get(ip) || []).filter((x) => t - x < 15 * 60000);
@@ -726,25 +907,26 @@ app.get('/api/relief/couverture', async (req, res) => {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return res.status(400).json({ erreur: 'Point invalide' });
   const RR = R(req, { lat, lon });
   if (!dansEmprise({ lat, lon }, RR.emprise())) return res.status(400).json({ erreur: estMembre(req) ? 'Point hors du relief disponible' : 'Point hors de la zone couverte par le modèle de relief (département et ses abords)' });
-  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
+  if (!(await reliefPret(RR, 12000, true))) return res.status(503).json({ erreur: messageChargement(RR) });
   const o = optsRelief(req.query);
   // PL: tryb=rpt → zasięg do innych repeaterów: odbiornik na maszcie 10 m z anteną 5 dBi, małe straty terenu, do 100 km
   if (req.query.tryb === 'rpt' && RR.envRpt) { o.env = RR.envRpt(); o.ht = 10; o.gb = 5; o.rayonKm = 150; }
   const cle = JSON.stringify([RR.code, lat.toFixed(4), lon.toFixed(4), o, (RR.calibration() || {}).date]);
-  let r = cacheCouverture.get(cle);
+  let r = RR.pret() ? cacheCouverture.get(cle) : null;
   if (!r) {
     // Visiteurs non connectés (carte publique) : 20 nouveaux calculs par quart d'heure au plus
     if (!estMembre(req) && limiterCalcul(req.ip)) return res.status(429).json({ erreur: 'Trop de calculs de couverture : réessayez dans quelques minutes' });
-    r = RR.couverturePng({ lat, lon }, o);
-    // PL: mieszkańcy w zasięgu (companion przy ziemi; w trybie RPT nie ma sensu)
-    if (req.query.tryb !== 'rpt' && String(process.env.CARTE_RESEAUX || '').toLowerCase() === 'meshcore') { try { r.ludnosc = ludnoscWZasiegu(RR, r, miejscowosciGotowe(RR)); } catch { /* bez ludności */ } }
-    delete r.marges;
-    r.id = crypto.randomBytes(6).toString('hex');
-    cacheCouverture.set(cle, r);
-    cacheCouverture.set(r.id, r);
-    if (cacheCouverture.size > 60) cacheCouverture.delete(cacheCouverture.keys().next().value);
+    try {
+      r = await calculPartage(cle, async () => {
+        const x = await RR.couverturePng({ lat, lon }, o);
+        // PL: mieszkańcy w zasięgu (companion przy ziemi; w trybie RPT nie ma sensu)
+        if (req.query.tryb !== 'rpt' && String(process.env.CARTE_RESEAUX || '').toLowerCase() === 'meshcore') { try { x.ludnosc = ludnoscWZasiegu(RR, x, miejscowosciGotowe(RR)); } catch { /* bez ludności */ } }
+        delete x.marges;
+        return garderCouverture(cle, x);
+      });
+    } catch (e) { return res.status(503).json({ erreur: e.message }); }
   }
-  res.json({ image: `/api/relief/couverture/${r.id}.png`, emprise: RR.emprise(), departement: RR.etat().departement, surfaceKm2: r.surfaceKm2, surfaceZoneKm2: r.surfaceZoneKm2, pctZone: r.pctZone, sol: r.sol, env: r.env, rayonKm: r.rayonKm, ludnosc: r.ludnosc || null });
+  res.json({ image: `/api/relief/couverture/${r.id}.png`, emprise: RR.emprise(), departement: RR.etat().departement, surfaceKm2: r.surfaceKm2, surfaceZoneKm2: r.surfaceZoneKm2, pctZone: r.pctZone, sol: r.sol, env: r.env, rayonKm: r.rayonKm, approximatif: !!r.approximatif, reliefApprox: r.reliefApprox || null, ludnosc: r.ludnosc || null });
 });
 // Couverture cumulée : ?pts=lat,lon[,hauteur];lat,lon[,hauteur];… (2 à 10 sites)
 app.get('/api/relief/couverture-multi', async (req, res) => {
@@ -752,17 +934,14 @@ app.get('/api/relief/couverture-multi', async (req, res) => {
     .map(([lat, lon, h]) => ({ lat, lon, h: Number.isFinite(h) ? Math.min(Math.max(h, 0.5), 100) : undefined }));
   if (!sites.length) return res.status(400).json({ erreur: 'Aucun site' });
   const RR = R(req, ...sites);
-  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
+  if (!(await reliefPret(RR, 12000, true))) return res.status(503).json({ erreur: messageChargement(RR) });
   const o = optsRelief(req.query);
   const cle = JSON.stringify(['multi', RR.code, sites, o, (RR.calibration() || {}).date]);
-  let r = cacheCouverture.get(cle);
+  let r = RR.pret() ? cacheCouverture.get(cle) : null;
   if (!r) {
-    r = RR.couverturePngMulti(sites, o);
-    r.id = crypto.randomBytes(6).toString('hex');
-    cacheCouverture.set(cle, r); cacheCouverture.set(r.id, r);
-    if (cacheCouverture.size > 60) cacheCouverture.delete(cacheCouverture.keys().next().value);
+    try { r = await calculPartage(cle, async () => garderCouverture(cle, await RR.couverturePngMulti(sites, o))); } catch (e) { return res.status(503).json({ erreur: e.message }); }
   }
-  res.json({ image: `/api/relief/couverture/${r.id}.png`, emprise: RR.emprise(), departement: RR.etat().departement, surfaceKm2: r.surfaceKm2, surfaceZoneKm2: r.surfaceZoneKm2, pctZone: r.pctZone, sites: r.sites, env: r.env, rayonKm: r.rayonKm });
+  res.json({ image: `/api/relief/couverture/${r.id}.png`, emprise: RR.emprise(), departement: RR.etat().departement, surfaceKm2: r.surfaceKm2, surfaceZoneKm2: r.surfaceZoneKm2, pctZone: r.pctZone, sites: r.sites, env: r.env, rayonKm: r.rayonKm, approximatif: !!r.approximatif, reliefApprox: r.reliefApprox || null });
 });
 // PL: ludność w zasięgu repeaterów MeshCore (model terenu, ta sama mapa co warstwa „Zasięg”)
 // Miejscowości z OpenStreetMap (place=city|town|village|hamlet z tagiem population) w prostokącie strefy, zapis w /data
@@ -794,7 +973,7 @@ async function obliczLudnosc(RR, o) {
   if (!(await reliefPret(RR))) { const e = new Error(messageChargement(RR)); e.kod = 503; throw e; }
   const miejsca = await miejscowosciStrefy(RR);
   o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR';
-  const r = couvertureReseauCachee(RR, o, 'meshcore');
+  const r = await couvertureReseauCachee(RR, o, 'meshcore');
   if (r.vide) return { vide: true };
   const suma = (l) => l.reduce((t, x) => t + x.population, 0);
   const wStrefie = [], dobry = [], graniczny = [], poza = [];
@@ -860,28 +1039,24 @@ app.get('/api/export/ludnosc.json', async (req, res) => {
   }
 });
 // Couverture actuelle du réseau (relais et passerelles détectés) : ?reseau=meshcore pour les répéteurs MeshCore
-function couvertureReseauCachee(RR, o, reseauCle) {
+async function couvertureReseauCachee(RR, o, reseauCle) {
   const versionFiches = Object.values(installations.toutes()).reduce((m, f) => Math.max(m, f.maj || 0), 0);
   const cle = JSON.stringify(['reseau', RR.code, reseauCle, o.hn || 10, Math.floor(Date.now() / 600000), (RR.calibration() || {}).date, versionFiches]);
-  let r = cacheCouverture.get(cle);
+  let r = RR.pret() ? cacheCouverture.get(cle) : null;
   if (!r) {
-    r = RR.couvertureReseau(o);
-    if (r.vide) return r;
-    r.id = crypto.randomBytes(6).toString('hex');
-    cacheCouverture.set(cle, r); cacheCouverture.set(r.id, r);
-    if (cacheCouverture.size > 60) cacheCouverture.delete(cacheCouverture.keys().next().value);
+    r = await calculPartage(cle, async () => { const x = await RR.couvertureReseau(o); return x.vide ? x : garderCouverture(cle, x); });
   }
   return r;
 }
 app.get('/api/relief/couverture-reseau', async (req, res) => {
   const RR = R(req);
-  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
+  if (!(await reliefPret(RR, 12000, true))) return res.status(503).json({ erreur: messageChargement(RR) });
   const o = optsRelief(req.query);
   if (req.query.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
   if (req.query.hn) o.hn = Math.min(Math.max(Number(req.query.hn) || 10, 0.5), 60);
   // La calibration (pertes d'environnement) fait partie de la clé : un calcul fait avant elle serait trop optimiste
   let r;
-  try { r = couvertureReseauCachee(RR, o, req.query.reseau || 'mt'); } catch (e) { return res.status(503).json({ erreur: e.message }); }
+  try { r = await couvertureReseauCachee(RR, o, req.query.reseau || 'mt'); } catch (e) { return res.status(503).json({ erreur: e.message }); }
   if (r.vide) return res.json({ noeuds: [], vide: true });
   const { image, ...reste } = r;
   res.json({ ...reste, image: `/api/relief/couverture/${r.id}.png`, emprise: RR.emprise() });
@@ -966,7 +1141,7 @@ app.get('/api/relief/budget', async (req, res) => {
 // Simulation « et si… » : { retirer: [num…], ajouter: [{ lat, lon, h, nom }…] }
 app.post('/api/relief/simulation', async (req, res) => {
   const RR = R(req);
-  if (!(await reliefPret(RR))) return res.status(503).json({ erreur: messageChargement(RR) });
+  if (!(await reliefPret(RR, 12000, true))) return res.status(503).json({ erreur: messageChargement(RR) });
   const b = req.body || {};
   const o = optsRelief(req.query);
   if (req.query.reseau === 'meshcore') { o.noeuds = repeteursMc(); o.preset = o.preset || 'MESHCORE_FR'; }
@@ -974,7 +1149,7 @@ app.post('/api/relief/simulation', async (req, res) => {
   let villes = [];
   try { villes = await villesDepartement(RR.code); } catch (e) { journal('[Simulation] villes :', e.message); }
   try {
-    const r = RR.simuler({ retirer: Array.isArray(b.retirer) ? b.retirer.slice(0, 50) : [], ajouter: Array.isArray(b.ajouter) ? b.ajouter.slice(0, 10).map((a) => ({ lat: Number(a.lat), lon: Number(a.lon), h: a.h != null ? Math.min(Math.max(Number(a.h) || 10, 0.5), 60) : undefined, nom: a.nom ? String(a.nom).slice(0, 60) : undefined })) : [], villes }, o);
+    const r = await RR.simuler({ retirer: Array.isArray(b.retirer) ? b.retirer.slice(0, 50) : [], ajouter: Array.isArray(b.ajouter) ? b.ajouter.slice(0, 10).map((a) => ({ lat: Number(a.lat), lon: Number(a.lon), h: a.h != null ? Math.min(Math.max(Number(a.h) || 10, 0.5), 60) : undefined, nom: a.nom ? String(a.nom).slice(0, 60) : undefined })) : [], villes }, o);
     const id = crypto.randomBytes(6).toString('hex');
     cacheCouverture.set(id, { image: r.image });
     if (cacheCouverture.size > 60) cacheCouverture.delete(cacheCouverture.keys().next().value);
@@ -1177,6 +1352,9 @@ app.post('/api/ecoutes', (req, res) => {
 app.delete('/api/ecoutes', (req, res) => {
   if (!exigerAdmin(req, res)) return;
   const b = req.body || {};
+  // Passerelle d'un membre coupée par un administrateur : elle ne peut pas se relier de nouveau pendant 12 h
+  const p = passerellesNav.get(b.protocole === 'meshcore' ? String(b.cle || '') : String(b.hote || ''));
+  if (p && !p.admin) { passerellesBloquees.set(p.compteId, Date.now() + 12 * 3600000); audit.noter(nomCompte(utilisateur(req)), req.ip, 'passerelle coupée', `passerelle de ${p.compte}, refusée pendant 12 h`); }
   if (b.protocole === 'meshcore') ecoutes.retirerCompanion(String(b.cle || ''));
   else ecoutes.retirerRadio(String(b.hote || ''), Number(b.port) || 0);
   res.json(ecoutes.liste());
@@ -1485,14 +1663,16 @@ app.post('/api/trafic/corriger', (req, res) => {
   const taches = [], refus = [];
   for (const num of nums) {
     try {
-      let params;
+      let params, mesures = null;
       if (b.ignorerMqtt) params = { lora: { ignoreMqtt: true } };
       else {
         const e = r.bavards.find((x) => x.num === num);
         if (!e) { refus.push({ num, raison: 'plus trop bavard sur 24 h' }); continue; }
         params = obtenirControle().correctifs(e);
+        // Intervalles mesurés avant la correction : le résumé de l'opération affichera « avant → après »
+        mesures = obtenirControle().mesures(e, 24);
       }
-      taches.push(administration.lancer('modifier', [num], params, u.identifiant, { insister: true }).id);
+      taches.push(administration.lancer('modifier', [num], params, u.identifiant, { insister: true, mesures }).id);
     } catch (e) { refus.push({ num, raison: e.message }); }
   }
   res.json({ taches, refus });
@@ -1504,7 +1684,8 @@ const obtenirNouveaux = () => (nouveaux = nouveaux || creerNouveaux(stockage, co
 app.get('/api/noeuds-nouveaux', (req, res) => {
   obtenirNouveaux();
   const r = nouveaux.lister(Number(req.query.jours) || 7);
-  if (!estMembre(req)) for (const n of r.noeuds) { const v = reseau.vueNoeud(stockage.q.noeud.get(n.num), false); n.lat = v.lat; n.lon = v.lon; }
+  // Résultat partagé (gardé 4 min) : la vue publique en est une copie, positions des particuliers arrondies
+  if (!estMembre(req)) return res.json({ ...r, noeuds: r.noeuds.map((n) => { const f = stockage.q.noeud.get(n.num); const v = f ? reseau.vueNoeud(f, false) : { lat: null, lon: null }; return { ...n, lat: v.lat, lon: v.lon }; }) });
   res.json(r);
 });
 
@@ -1526,7 +1707,7 @@ app.post('/api/admin-noeuds/conformite-auto', (req, res) => {
 let favorisPlan = null, modeles = null, renumerotation = null;
 const obtenirFavoris = () => favorisPlan || (favorisPlan = require('./favoris').creerFavoris({ stockage, config, administration }));
 const obtenirModeles = () => modeles || (modeles = require('./modeles').creerModeles(path.dirname(config.fichierBase), { ROLES: administration.ROLES, REDIFFUSIONS: administration.REDIFFUSIONS }));
-const obtenirRenumerotation = () => renumerotation || (renumerotation = require('./renumerotation').creerRenumerotation({ stockage, config, installations, comptes, administration, journal }));
+const obtenirRenumerotation = () => renumerotation || (renumerotation = require('./renumerotation').creerRenumerotation({ stockage, config, installations, comptes, administration, journal, autres: () => ({ equipes, suivis, responsables, secteursAlerte }) }));
 app.get('/api/admin-noeuds/favoris', (req, res) => {
   if (!estGestion(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
   const p = obtenirFavoris().plan({ jours: Math.min(30, Math.max(1, Number(req.query.jours) || 7)) });
@@ -1593,7 +1774,22 @@ app.get('/api/admin-noeuds/v28', (req, res) => {
 app.post('/api/admin-noeuds/fusion', (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
   const u = utilisateur(req), b = req.body || {};
-  try { res.json(obtenirRenumerotation().fusionner(Number(b.ancien), Number(b.nouveau), u.identifiant)); } catch (e) { res.status(400).json({ erreur: e.message }); }
+  try {
+    const h = obtenirRenumerotation().fusionner(Number(b.ancien), Number(b.nouveau), u.identifiant, { force: b.force === true });
+    viderCacheNoeuds();
+    audit.noter(nomCompte(u), req.ip, 'fusion de nœuds (2.8)', `${h.idAncien} → ${h.idNouveau}${h.force ? ' (forcée)' : ''}`, true);
+    res.json(h);
+  } catch (e) { res.status(400).json({ erreur: e.message }); }
+});
+app.post('/api/admin-noeuds/fusion/annuler', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  const u = utilisateur(req), b = req.body || {};
+  try {
+    const h = obtenirRenumerotation().annuler(Number(b.heure), Number(b.ancien), Number(b.nouveau), u.identifiant);
+    viderCacheNoeuds();
+    audit.noter(nomCompte(u), req.ip, 'annulation de fusion (2.8)', `${h.idAncien} ← ${h.idNouveau}`, true);
+    res.json(h);
+  } catch (e) { res.status(400).json({ erreur: e.message }); }
 });
 
 // Rapport hebdomadaire (membres) : page imprimable des 7 derniers jours, archives du lundi
@@ -1619,7 +1815,8 @@ function obtenirRapport() {
 }
 app.get('/rapport', (req, res) => {
   if (!estMembre(req)) return res.status(401).send('Connexion requise : connectez-vous sur la carte puis rouvrez cette page.');
-  try { res.set('Cache-Control', 'no-store').type('html').send(obtenirRapport().construire()); } catch (e) { res.status(500).send('Rapport indisponible : ' + e.message); }
+  // Démonstration (visiteur sans compte) : sans les alertes réservées aux membres (équipes, secteurs, urgence…)
+  try { res.set('Cache-Control', 'no-store').type('html').send(obtenirRapport().construire({ alertes: req.demoLecture ? alertesPubliques(dernieresAlertes) : null })); } catch (e) { res.status(500).send('Rapport indisponible : ' + e.message); }
 });
 app.get('/api/rapports', (req, res) => {
   if (!estMembre(req)) return res.status(401).json({ erreur: 'Connexion requise' });
@@ -1691,7 +1888,7 @@ function preparerTrame(p, membre) {
   p = reseau.vueTrame(p, membre);
   return {
     rowid: p.rowid, idPaquet: p.id_paquet, de: p.de, vers: p.vers, canal: p.canal, port: p.port, nomPort: p.nom_port, portnum: p.portnum,
-    heure: p.heure, hopDepart: p.hop_depart, sauts: p.sauts, dechiffre: !!p.dechiffre, pki: !!p.pki, signe: !!p.signe, viaMqtt: !!p.via_mqtt, taille: p.taille,
+    heure: p.heure, hopDepart: p.hop_depart, sauts: p.sauts, dechiffre: !!p.dechiffre, pki: !!p.pki, signe: !!p.signe, signature: p.signature ?? null, viaMqtt: !!p.via_mqtt, taille: p.taille,
     resume: p.resume, texte: membre ? p.texte : undefined, nbReceptions: p.nb_receptions,
     contenu: p.contenu ? JSON.parse(p.contenu) : null,
     receptions: JSON.parse(p.receptions || '[]').sort((a, b) => a.heure - b.heure),
@@ -2031,13 +2228,15 @@ app.get('/api/paquets', (req, res) => {
 });
 
 app.get('/api/etat', (req, res) => {
-  res.json({ stats: reseau.statistiques(), alertes: estAdmin(req) ? dernieresAlertes : alertesPubliques(dernieresAlertes), meshmonitor: sourceMM ? sourceMM.etat() : null, radio: sourceRadio ? sourceRadio.etat() : null, ecoutes: resumeEcoutes() });
+  res.json({ stats: reseau.statistiques(), alertes: estMembre(req) ? dernieresAlertes : alertesPubliques(dernieresAlertes), meshmonitor: sourceMM ? sourceMM.etat() : null, radio: sourceRadio ? sourceRadio.etat() : null, ecoutes: resumeEcoutes() });
 });
 
+// Canaux Meshtastic publics (clé par défaut) : les seuls lisibles en démonstration (messages, recherche)
+const canauxPublicsMt = () => config.canaux.filter((c) => !c.cle || c.cle === 'AQ==' || c.cle === '1PG7OiApB1nwvP+rz05pAQ==').map((c) => c.nom);
 app.get('/api/messages', (req, res) => {
   if (!estMembre(req)) return res.status(401).json({ erreur: 'Connexion requise' });
   // Démonstration : canaux publics (clé par défaut) seulement, jamais les messages directs
-  const publics = new Set(config.canaux.filter((c) => !c.cle || c.cle === 'AQ==' || c.cle === '1PG7OiApB1nwvP+rz05pAQ==').map((c) => c.nom));
+  const publics = new Set(canauxPublicsMt());
   const garder = (m) => !req.demoLecture || (m.vers === 0xffffffff && publics.has(m.canal));
   const limite = Math.min(Number(req.query.limite) || 300, 2000);
   // ?canal=nom : un seul canal ; ?direct=1 : messages directs seulement ; sinon les derniers, tous canaux confondus
@@ -2049,6 +2248,38 @@ app.get('/api/messages', (req, res) => {
     try { entendus = JSON.parse(m.entendus || '[]'); } catch { /* vide */ }
     return { ...m, entendus, accuse: a ? { statut: a.statut, detail: a.detail || null, heure: a.heureAccuse || null, dest: a.dest } : null };
   }));
+});
+
+// Recherche dans les messages (Meshtastic et MeshCore) : mots du texte, nom ou identifiant de l'expéditeur (et du
+// destinataire d'un message direct). Mêmes droits que /api/messages et /api/mc/messages : membres connectés ;
+// démonstration : canaux publics seulement, jamais les messages directs.
+// Débit : une recherche lit plusieurs index et bloque le serveur quelques millisecondes (better-sqlite3 est
+// synchrone : il n'y a jamais deux recherches en même temps, mais une rafale ferait attendre tout le monde).
+// Même principe que « tentatives » ci-dessus : 30 requêtes par minute et par adresse, 10 en démonstration.
+const recherchesParIp = new Map();
+function limiterRecherche(ip, max) {
+  const maintenant = Date.now();
+  const t = (recherchesParIp.get(ip) || []).filter((x) => maintenant - x < 60000);
+  if (t.length >= max) { recherchesParIp.set(ip, t); return true; }
+  t.push(maintenant);
+  recherchesParIp.set(ip, t);
+  return false;
+}
+setInterval(() => { const limite = Date.now() - 60000; for (const [ip, t] of recherchesParIp) if (!t.some((x) => x > limite)) recherchesParIp.delete(ip); }, 60000).unref();
+app.get('/api/messages/recherche', (req, res) => {
+  if (!estMembre(req)) return res.status(401).json({ erreur: 'Connexion requise' });
+  if (!rechercheMessages.disponible()) return res.status(503).set('Cache-Control', 'no-store').json({ erreur: 'Recherche indisponible : index impossible à créer (disque plein ou base en lecture seule), voir le journal' });
+  // Compteur séparé pour la démonstration : un visiteur derrière le même NAT ne bloque pas un membre connecté
+  if (limiterRecherche((req.demoLecture ? 'demo:' : '') + req.ip, req.demoLecture ? 10 : 30)) return res.status(429).set('Retry-After', '60').json({ erreur: 'Trop de recherches, réessayez dans une minute' });
+  try {
+    res.set('Cache-Control', 'no-store').json(rechercheMessages.chercher({
+      q: String(req.query.q || ''), demo: !!req.demoLecture, publics: canauxPublicsMt(),
+      avant: String(req.query.avant || '').slice(0, 40), limite: Number(req.query.limite) || 100,
+    }));
+  } catch (e) {
+    journal('[Recherche] échec :', e.message);
+    res.status(400).json({ erreur: 'Recherche impossible : essayez d’autres mots' });
+  }
 });
 
 // Notifications de l'application Android (service en arrière-plan, écran éteint) : ce qui mérite de réveiller le
@@ -2085,7 +2316,7 @@ app.post('/api/connexion', (req, res) => {
     audit.noter(String(b0.identifiant || '').slice(0, 32) || null, req.ip, 'connexion refusée', `bloqué (${bl.type === 'ip' ? 'adresse' : 'compte'}) jusqu’à ${heureBlocage(bl.jusqua)}`, false);
     return res.status(429).json({ erreur: `Trop d’échecs de connexion : ${bl.type === 'ip' ? 'cette adresse est bloquée' : 'ce compte est suspendu'} jusqu’à ${heureBlocage(bl.jusqua)}. Un administrateur peut débloquer.`, bloqueJusqua: bl.jusqua });
   }
-  if (limiter(req.ip)) return res.status(429).json({ erreur: 'Trop de tentatives, réessayez dans 15 minutes' });
+  if (limiter(req.ip, false)) return res.status(429).json({ erreur: 'Trop de tentatives, réessayez dans 15 minutes' });
   try {
     const b = req.body || {};
     const c = comptes.connecter(b.identifiant, b.motDePasse, b.code);
@@ -2100,6 +2331,7 @@ app.post('/api/connexion', (req, res) => {
     if (!(e.codeRequis && !b.code)) audit.noter(String(b.identifiant || '').slice(0, 32) || null, req.ip, 'connexion refusée', e.message, false);
     // Mauvais mot de passe ou mauvais code : un échec compté (un code simplement demandé ne compte pas)
     if (/incorrect/i.test(e.message)) {
+      limiter(req.ip); // seuls les échecs remplissent le compteur des 15 minutes
       const r = blocages.echec(req.ip, b.identifiant);
       if (r.blocage) {
         audit.noter(String(b.identifiant || '').slice(0, 32) || null, req.ip, 'blocage', `${r.blocage.type === 'ip' ? 'adresse bloquée' : 'compte suspendu'} ${Math.round(r.blocage.duree / 60000)} min après ${blocages.MAX_ECHECS} échecs`, false);
@@ -2130,6 +2362,51 @@ app.post('/api/inscription', (req, res) => {
     else rafraichirEtat();
     res.json({ ok: true, enAttente: statut !== 'actif' });
   } catch (e) { res.status(400).json({ erreur: e.message }); }
+});
+
+// ---- Mot de passe oublié ----
+// Par e-mail si le serveur SMTP et l'adresse publique de la carte sont réglés (lien valable 1 h), sinon demande
+// signalée aux administrateurs, qui créent un lien (24 h) et le transmettent eux-mêmes. La réponse est la même que
+// le compte existe ou non, pour ne pas révéler les comptes.
+app.get('/api/mot-de-passe/oubli', (req, res) => res.json({ courriel: courriel.actif() }));
+app.post('/api/mot-de-passe/oubli', async (req, res) => {
+  if (limiter('mdp:' + req.ip)) return res.status(429).json({ erreur: 'Trop de tentatives, réessayez dans 15 minutes' });
+  const b = req.body || {}, saisi = String(b.identifiant || '').slice(0, 32) || null;
+  const reponse = { ok: true, courriel: courriel.actif() };
+  const c = comptes.trouverPourOubli(b.identifiant);
+  if (!c) { audit.noter(saisi, req.ip, 'mot de passe oublié', 'aucun compte actif correspondant', false); return res.json(reponse); }
+  if (courriel.actif() && c.email) {
+    try {
+      const { jeton } = comptes.creerReinit(c.id, 3600000, 'e-mail');
+      const lien = `${courriel.adresseCarte()}/?reinit=${jeton}`;
+      const trMail = (x) => (LANGUE_SERVEUR === 'en' ? require('./traduction').traduire(x) : x); // e-mail dans la langue du serveur
+      await courriel.envoyer({ a: c.email, sujet: trMail('Carte live : nouveau mot de passe'), texte: [`Bonjour ${c.identifiant},`, '', `Une demande de nouveau mot de passe a été faite pour votre compte sur la carte ${courriel.adresseCarte()}.`, '', 'Pour choisir un nouveau mot de passe, ouvrez ce lien (valable 1 heure, une seule fois) :', lien, '', 'Si vous n’avez rien demandé, ignorez ce message : votre mot de passe actuel reste valable.'].map(trMail).join('\n') });
+      audit.noter(nomCompte(c), req.ip, 'mot de passe oublié', 'lien envoyé par e-mail', true);
+      journal(`Mot de passe oublié : lien envoyé par e-mail à ${c.identifiant}`);
+      return res.json(reponse);
+    } catch (e) { journal('[e-mail] envoi impossible, demande transmise aux administrateurs :', e.message); }
+  }
+  comptes.noterDemandeReinit(c.id);
+  audit.noter(nomCompte(c), req.ip, 'mot de passe oublié', 'demande transmise aux administrateurs', true);
+  journal(`Mot de passe oublié : ${c.identifiant} demande un lien de réinitialisation (Gérer › Comptes)`);
+  res.json(reponse);
+});
+app.post('/api/mot-de-passe/reinitialiser', (req, res) => {
+  if (limiter('reinit:' + req.ip)) return res.status(429).json({ erreur: 'Trop de tentatives, réessayez dans 15 minutes' });
+  try {
+    const b = req.body || {};
+    const c = comptes.reinitialiser(b.jeton, b.nouveau);
+    audit.noter(nomCompte(c), req.ip, 'mot de passe réinitialisé', null, true);
+    journal(`Mot de passe réinitialisé : ${c.identifiant}`);
+    // Sans double authentification, la personne est connectée tout de suite ; avec, elle se connecte avec son code
+    if (!c.deuxFacteurs) ouvrirSession(req, res, c);
+    res.json({ ok: true, identifiant: c.identifiant, connecte: !c.deuxFacteurs });
+  } catch (e) { res.status(400).json({ erreur: e.message }); }
+});
+app.post('/api/compte/email', (req, res) => {
+  const u = utilisateur(req);
+  if (!u) return res.status(401).json({ erreur: 'Connexion requise' });
+  try { comptes.changerEmail(u.id, (req.body || {}).email); res.json({ ok: true }); } catch (e) { res.status(400).json({ erreur: e.message }); }
 });
 
 app.get('/api/compte', (req, res) => res.json(utilisateur(req)));
@@ -2209,6 +2486,18 @@ app.post('/api/comptes/:id', (req, res) => {
     if (b.noeuds !== undefined) comptes.changerNoeuds(id, b.noeuds);
     if (b.retirerDeuxFacteurs) comptes.retirerDeuxFacteurs(id, null, true);
     if (b.deconnecter) comptes.deconnecterPartout(id);
+    if (b.identifiant !== undefined || b.indicatif !== undefined || b.email !== undefined) {
+      const avant = comptes.lister().find((c) => c.id === id);
+      const c = comptes.modifierFiche(id, { identifiant: b.identifiant, indicatif: b.indicatif, email: b.email });
+      if (avant && avant.identifiant !== c.identifiant) journal(`Compte renommé : ${avant.identifiant} → ${c.identifiant}`);
+      audit.noter(nomCompte(utilisateur(req)), req.ip, 'fiche de compte', `${c.identifiant} modifiée`, true);
+    }
+    // Lien de nouveau mot de passe (24 h, usage unique), que l'administrateur transmet lui-même
+    if (b.lienReinit) {
+      const r = comptes.creerReinit(id, 24 * 3600000, 'administrateur');
+      audit.noter(nomCompte(utilisateur(req)), req.ip, 'lien de mot de passe', `créé pour le compte ${id}`, true);
+      return res.json({ ok: true, jeton: r.jeton, expire: r.expire });
+    }
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ erreur: e.message }); }
 });
@@ -2425,6 +2714,54 @@ app.get('/api/sf8', async (req, res) => {
   res.set('Cache-Control', 'public, max-age=300');
   res.json({ ok: true, ts: sf8.ts, nodes: sf8.nodes, blad: sf8Blad });
 });
+// Nœuds rangés par département, d'après la position que chacun a retransmise (test du point dans le polygone,
+// contours nationaux). Le GeoJSON des départements pèse plus de 500 ko : le calcul reste ici, le navigateur ne
+// reçoit que le code du département de chaque nœud. Le département d'un nœud n'est recalculé que si sa position
+// change, et la réponse entière est gardée 30 s (une frappe dans la recherche ne relance aucun calcul).
+const depDeNoeud = new Map(); // num -> { lat, lon, dep }
+const depDeNoeudMc = new Map(); // clé publique MeshCore -> { lat, lon, dep }
+let cacheDepNoeuds = null;
+// Position MeshCore exploitable : une annonce sans GPS donne souvent 0,0 (ou rien) ; hors bornes = paquet abîmé
+const positionMcValide = (n) => n.lat != null && n.lon != null && Number.isFinite(n.lat) && Number.isFinite(n.lon)
+  && Math.abs(n.lat) <= 90 && Math.abs(n.lon) <= 180 && (Math.abs(n.lat) > 0.0001 || Math.abs(n.lon) > 0.0001);
+app.get('/api/noeuds-par-departement', (req, res) => {
+  if (!estMembre(req)) return res.status(401).json({ erreur: 'Connexion requise' });
+  if (!cacheDepNoeuds || Date.now() - cacheDepNoeuds.heure > 30000) {
+    if (depDeNoeud.size > 100000) depDeNoeud.clear(); // nœuds supprimés depuis longtemps : on repart de zéro
+    const parNoeud = {}, sansPosition = [], horsDepartements = [], nb = {};
+    for (const n of stockage.q.noeuds.all()) {
+      const num = n.num >>> 0;
+      if (n.lat == null || n.lon == null) { sansPosition.push(num); continue; }
+      let c = depDeNoeud.get(num);
+      if (!c || c.lat !== n.lat || c.lon !== n.lon) { c = { lat: n.lat, lon: n.lon, dep: departementDuPoint(n.lat, n.lon) }; depDeNoeud.set(num, c); }
+      if (!c.dep) { horsDepartements.push(num); continue; } // position connue, mais hors de France
+      parNoeud[num] = c.dep;
+      nb[c.dep] = (nb[c.dep] || 0) + 1;
+    }
+    // Nœuds MeshCore : même règle, d'après la position de leur dernière annonce (advert). Rangés à part, par clé
+    // publique : le navigateur choisit d'afficher Meshtastic, MeshCore ou les deux.
+    let mcIdx = null;
+    const nbMc = {};
+    if (config.meshcore.actif) {
+      if (depDeNoeudMc.size > 100000) depDeNoeudMc.clear();
+      mcIdx = { parNoeud: {}, sansPosition: [], horsDepartements: [] };
+      for (const n of reseauMc.q.noeuds.all()) {
+        if (!n.cle) continue;
+        if (!positionMcValide(n)) { mcIdx.sansPosition.push(n.cle); continue; }
+        let c = depDeNoeudMc.get(n.cle);
+        if (!c || c.lat !== n.lat || c.lon !== n.lon) { c = { lat: n.lat, lon: n.lon, dep: departementDuPoint(n.lat, n.lon) }; depDeNoeudMc.set(n.cle, c); }
+        if (!c.dep) { mcIdx.horsDepartements.push(n.cle); continue; }
+        mcIdx.parNoeud[n.cle] = c.dep;
+        nbMc[c.dep] = (nbMc[c.dep] || 0) + 1;
+      }
+    }
+    // nb = nœuds Meshtastic (inchangé pour le registre des relais), nbMc = nœuds MeshCore
+    const departements = [...new Set([...Object.keys(nb), ...Object.keys(nbMc)])].sort()
+      .map((code) => ({ code, nom: (listeDepartements.find((d) => d.code === code) || {}).nom || code, nb: nb[code] || 0, nbMc: nbMc[code] || 0 }));
+    cacheDepNoeuds = { heure: Date.now(), corps: { monde: carteMonde(), departements, parNoeud, sansPosition, horsDepartements, mc: mcIdx } };
+  }
+  res.set('Cache-Control', 'private, no-cache').json(cacheDepNoeuds.corps);
+});
 
 // ---- Fond de carte hors ligne (PMTiles OpenStreetMap) et relief ombré calculé sur place ----------------------
 const fondsHorsLigne = require('./fonds').creerFonds({ config, departements: () => listeDepartements, journal });
@@ -2517,8 +2854,12 @@ function preparerReglages(b, existants = {}) {
       const lignes = b.mqtt.brokers.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
       if (lignes.length > 5) throw new Error('5 brokers supplémentaires au plus');
       m.brokers = lignes.map((l) => {
-        const [u, racine] = l.split('|').map((x) => (x || '').trim());
-        if (!/^(mqtts?|wss?):\/\/[^\s]+$/.test(u)) throw new Error(`Broker « ${masquerUrl(u)} » : adresse mqtt://, mqtts://, ws:// ou wss:// attendue`);
+        const [brut, racine] = l.split('|').map((x) => (x || '').trim());
+        // « serveur:8883 » ou « nom:mdp@serveur » sans début : on ajoute mqtts://
+        const u = /^[a-z][a-z0-9+.-]*:\/\//i.test(brut) || /\s/.test(brut) || !brut ? brut : 'mqtts://' + brut;
+        // Les serveurs LetsMesh n'ouvrent la lecture qu'avec un jeton signé par une radio MeshCore : la carte ne sait pas en fournir
+        if (/(^|[.@/])letsmesh\.net(:|\/|$)/i.test(u)) throw new Error(`Broker « ${masquerUrl(u)} » : ce serveur exige un jeton signé par une radio MeshCore (pas d’identifiant ni de mot de passe), il ne peut pas être branché ici`);
+        if (!/^(mqtts?|wss?):\/\/[^\s]+$/.test(u)) throw new Error(`Broker « ${masquerUrl(u)} » : adresse attendue, par exemple mqtts://nom:motdepasse@serveur:8883 (ou mqtt://, ws://, wss://)`);
         let url = u;
         const masque = u.match(/^([a-z]+:\/\/)([^:@/]*):\*\*\*@(.+)$/i);
         if (masque) {
@@ -2759,7 +3100,8 @@ app.get('/api/mc/noeuds', (req, res) => {
   const membre = estMembre(req), maintenant = Date.now();
   // ?depuis=heure : seulement les nœuds modifiés depuis (le flux national compte des milliers de nœuds)
   const depuis = Number(req.query.depuis) || 0;
-  if (depuis) return res.json({ heure: maintenant, noeuds: reseauMc.q.noeudsDepuis.all(depuis - 5000).map((n) => reseauMc.vueNoeud(n, membre, maintenant)) });
+  res.set('Cache-Control', 'private, no-cache').set('Vary', 'Cookie').set('X-Heure', String(maintenant)); // repère pris sur l'heure serveur
+  if (depuis) return res.json({ heure: maintenant, noeuds: reseauMc.q.noeudsDepuis.all(Math.min(depuis, maintenant) - 5000).map((n) => reseauMc.vueNoeud(n, membre, maintenant)) });
   res.json(reseauMc.q.noeuds.all().map((n) => reseauMc.vueNoeud(n, membre, maintenant)));
 });
 app.get('/api/mc/noeuds/:cle', (req, res) => {
@@ -2827,10 +3169,13 @@ function etatMc(admin) {
   if (admin) {
     e.companion = { ...c, canaux: companion.canaux() };
     e.republication = publicateurMc.etat();
-    e.reglages = { iata: config.meshcore.iata, racine: config.meshcore.racine, republier: config.meshcore.republier, canaux: config.meshcore.canaux.join('\n'), perimetre: config.meshcore.perimetre, liensOctetsMin: config.meshcore.liensOctetsMin, iataVoisins: config.meshcore.iataVoisins.join(', '), supervisionHeures: config.meshcore.supervisionHeures, horsPerimetre: compteurMc.horsPerimetre || 0 };
+    e.reglages = { iata: config.meshcore.iata, racine: config.meshcore.racine, republier: config.meshcore.republier, canaux: config.meshcore.canaux.join('\n'), perimetre: config.meshcore.perimetre, liensOctetsMin: config.meshcore.liensOctetsMin, iataVoisins: config.meshcore.iataVoisins.join(', '), supervisionHeures: config.meshcore.supervisionHeures, plafondReleveMin: config.meshcore.plafondReleveMin, plafondLectureMin: config.meshcore.plafondLectureMin, horsPerimetre: compteurMc.horsPerimetre || 0 };
     e.agents = agents.liste();
     e.ecoutes = ecoutes.liste().meshcore;
+    e.corescope = { ...corescope.etat(), texte: ecrireSourcesCs(config.meshcore.corescope.sources), connues: INSTANCES_CS };
   }
+  // Crédit public : d'où viennent les données MeshCore affichées
+  e.observatoires = config.meshcore.corescope.sources.map((x) => { try { return new URL(x.url).host; } catch { return x.url; } });
   return e;
 }
 app.get('/api/mc/etat', (req, res) => { if (!exigerMc(res)) return; res.set('Cache-Control', 'no-store').json(etatMc(estAdmin(req))); });
@@ -3176,6 +3521,16 @@ app.post('/api/mc/reglages', (req, res) => {
   if ([1, 2, 3].includes(Number(b.liensOctetsMin))) m.liensOctetsMin = Number(b.liensOctetsMin);
   if (typeof b.iataVoisins === 'string') m.iataVoisins = b.iataVoisins.split(/[,;\s]+/).map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z0-9]{2,8}$/.test(x)).slice(0, 20);
   if (b.supervisionHeures !== undefined) { const h = Number(b.supervisionHeures); if (!Number.isInteger(h) || h < 0 || h > 48) return res.status(400).json({ erreur: 'Supervision : 0 à 48 heures' }); m.supervisionHeures = h; }
+  if (b.plafondReleveMin !== undefined) { const n = Number(b.plafondReleveMin); if (!Number.isInteger(n) || n < 1 || n > 30) return res.status(400).json({ erreur: 'Délai maximal d’un relevé : 1 à 30 minutes' }); m.plafondReleveMin = n; }
+  if (b.plafondLectureMin !== undefined) { const n = Number(b.plafondLectureMin); if (!Number.isInteger(n) || n < 5 || n > 240) return res.status(400).json({ erreur: 'Délai maximal d’une lecture complète : 5 à 240 minutes' }); m.plafondLectureMin = n; }
+  if (typeof b.corescope === 'string') {
+    const l = require('./meshcore/corescope').lireSources(b.corescope);
+    const lignes = b.corescope.split(/[;\n]+/).map((x) => x.trim()).filter(Boolean);
+    if (l.length !== lignes.length) return res.status(400).json({ erreur: 'Observatoire CoreScope : une adresse https://… par ligne, éventuellement suivie de =CODE,CODE (5 au plus)' });
+    m.corescope = { ...(m.corescope || {}), sources: l };
+  }
+  if (b.corescopeMax !== undefined) { const n = Number(b.corescopeMax); if (!Number.isInteger(n) || n < 5 || n > 600) return res.status(400).json({ erreur: 'Plafond CoreScope : 5 à 600 paquets par minute' }); m.corescope = { ...(m.corescope || {}), maxParMinute: n }; }
+  if (b.corescopeIntervalle !== undefined) { const n = Number(b.corescopeIntervalle); if (!Number.isInteger(n) || n < 10 || n > 300) return res.status(400).json({ erreur: 'Intervalle CoreScope : 10 à 300 secondes' }); m.corescope = { ...(m.corescope || {}), intervalleS: n }; }
   if (typeof b.canaux === 'string') {
     const l = b.canaux.split(/[;\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 20);
     const ok = preparerCanauxMc(l);
@@ -3184,6 +3539,15 @@ app.post('/api/mc/reglages', (req, res) => {
   }
   res.json({ ok: true, redemarrage: true });
   enregistrerReglagesEtRedemarrer({ ...config.reglages, meshcore: m }, u.identifiant);
+});
+
+// Essai d'un observatoire CoreScope avant de l'enregistrer (débit réel, nombre de nœuds, codes de zone vus)
+app.post('/api/mc/corescope/tester', async (req, res) => {
+  const u = utilisateur(req);
+  if (!u || u.role !== 'admin') return res.status(401).json({ erreur: 'Connexion admin requise' });
+  const b = req.body || {};
+  const regions = String(b.regions || '').split(/[,\s]+/).filter(Boolean);
+  try { res.json(await testerCoreScope(String(b.url || ''), regions)); } catch (e) { res.status(400).json({ erreur: e.message }); }
 });
 
 app.get('/sante', (req, res) => res.json({ ok: true, mqtt: clientMqtt && clientMqtt.connected }));
@@ -3212,13 +3576,50 @@ const wssModule = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 })
 // Modules reliés par une page : un « ping » toutes les 25 s garde la liaison ouverte à travers les proxys
 // inversés (nginx, Traefik, Cloudflare coupent souvent une WebSocket silencieuse au bout de 60 à 100 s)
 setInterval(() => { for (const ws of wssModule.clients) { try { ws.ping(); } catch { /* fermée */ } } }, 25000);
+// Passerelle d'un membre : un compte validé relie sa radio depuis son navigateur. Elle n'est jamais module principal
+// (pas d'envoi, pas d'administration des autres nœuds) : elle ajoute ce qu'elle entend à la carte, comme une passerelle
+// MQTT. Débit limité, deux radios par compte au plus, coupure par un administrateur (refusée ensuite pendant 12 h).
+const passerelleMembresActive = () => String(process.env.PASSERELLE_MEMBRES || 'oui').toLowerCase() !== 'non';
+const passerellesNav = new Map(); // hôte virtuel → { compteId, compte, admin, protocole, role, source, depuis }
+const passerellesBloquees = new Map(); // compte → fin du blocage
+const PASSERELLES_PAR_COMPTE = 2, PASSERELLES_MAX = 30;
+function refusPasserelle(req) {
+  const u = utilisateur(req);
+  if (!u) return 'connexion requise';
+  if (u.role === 'admin') return null;
+  if (!passerelleMembresActive()) return 'passerelles des membres désactivées sur cette carte';
+  const b = passerellesBloquees.get(u.id);
+  if (b && b > Date.now()) return 'passerelle coupée par un administrateur';
+  const miennes = [...passerellesNav.values()].filter((x) => x.compteId === u.id).length;
+  if (miennes >= PASSERELLES_PAR_COMPTE) return `${PASSERELLES_PAR_COMPTE} radios au plus par compte`;
+  if ([...passerellesNav.values()].filter((x) => !x.admin).length >= PASSERELLES_MAX) return 'trop de passerelles reliées en ce moment';
+  return null;
+}
 serveur.on('upgrade', (req, socket, tete) => {
   const chemin = (req.url || '').split('?')[0];
+  const refus = (raison) => { socket.write(`HTTP/1.1 403 Forbidden\r\nX-Refus: ${encodeURIComponent(raison || 'refusé')}\r\n\r\n`); socket.destroy(); };
   if (chemin === '/ws') wss.handleUpgrade(req, socket, tete, (ws) => wss.emit('connection', ws, req));
-  else if (chemin === '/ws/module' && estAdmin(req)) wssModule.handleUpgrade(req, socket, tete, (ws) => wssModule.emit('connection', ws, req));
-  else if (chemin === '/ws/meshcore' && estAdmin(req) && config.meshcore.actif) wssModule.handleUpgrade(req, socket, tete, (ws) => brancherCompanionNavigateur(ws, req));
-  else { socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); }
+  else if (chemin === '/ws/module' || (chemin === '/ws/meshcore' && config.meshcore.actif)) {
+    const r = refusPasserelle(req);
+    if (r) return refus(r);
+    wssModule.handleUpgrade(req, socket, tete, (ws) => (chemin === '/ws/module' ? wssModule.emit('connection', ws, req) : brancherCompanionNavigateur(ws, req)));
+  } else refus();
 });
+// Hôte, compte et rôle d'une passerelle de page : envoyés à la page (trame texte, ignorée par le relais du flux)
+function noterPasserelle(ws, hote, u, protocole, role, source) {
+  passerellesNav.set(hote, { compteId: u.id, compte: nomCompte(u), admin: u.role === 'admin', protocole, role, source, depuis: Date.now() });
+  ws.on('close', () => { const p = passerellesNav.get(hote); if (p && p.compteId === u.id) passerellesNav.delete(hote); });
+  try { ws.send(JSON.stringify({ genre: 'passerelle', hote, role })); } catch { /* fermée */ }
+}
+// Débit d'une passerelle de membre : au-delà, la liaison est coupée (une radio normale reste très en dessous)
+function limiterDebit(ws, octetsParMinute) {
+  let fenetre = Date.now(), octets = 0;
+  ws.on('message', (d) => {
+    if (Date.now() - fenetre > 60000) { fenetre = Date.now(); octets = 0; }
+    octets += d.length || d.byteLength || 0;
+    if (octets > octetsParMinute) { journal(`passerelle coupée : débit trop élevé (${Math.round(octets / 1024)} Ko/min)`); try { ws.close(1008, 'débit trop élevé'); } catch { /* déjà */ } }
+  });
+}
 const { Duplex } = require('stream');
 // Flux duplex au-dessus d'une WebSocket, avec les méthodes d'un socket TCP utilisées par le module radio
 function fluxWebSocket(ws) {
@@ -3238,19 +3639,29 @@ function fluxWebSocket(ws) {
 }
 wssModule.on('connection', (ws, req) => {
   const u = utilisateur(req);
+  if (!u) { ws.close(1008, 'connexion requise'); return; }
+  const admin = u.role === 'admin';
   const q = new URL(req.url, 'http://x').searchParams;
-  const nom = (q.get('nom') || `Navigateur ${u ? u.identifiant : ''}`).slice(0, 40);
+  // Le nom d'une passerelle de membre porte son identifiant : elle ne peut pas prendre la place d'un autre module
+  const base = (q.get('nom') || `Navigateur ${u.identifiant}`).slice(0, 40);
+  const nom = admin ? base : `${base} · ${u.identifiant}`.slice(0, 60);
   const source = (q.get('source') || 'USB').slice(0, 40);
-  brancherModuleFlux(fluxWebSocket(ws), nom, source + ' (navigateur)', (req.socket.remoteAddress || '').replace(/^::ffff:/, ''), q.get('role') === 'ecoute' ? 'ecoute' : 'principal');
+  const role = admin && q.get('role') !== 'ecoute' ? 'principal' : 'ecoute';
+  if (!admin) limiterDebit(ws, 512 * 1024);
+  try {
+    const hote = brancherModuleFlux(fluxWebSocket(ws), nom, source + ' (navigateur)', (req.socket.remoteAddress || '').replace(/^::ffff:/, ''), role, undefined, admin ? null : u.id, admin ? null : nomCompte(u));
+    noterPasserelle(ws, hote, u, 'meshtastic', role, source);
+    if (!admin) audit.noter(nomCompte(u), (req.socket.remoteAddress || '').replace(/^::ffff:/, ''), 'passerelle reliée', `radio « ${base} » (${source})`);
+  } catch (e) { journal('passerelle refusée :', e.message); try { ws.close(1008, String(e.message).slice(0, 100)); } catch { /* déjà */ } }
 });
 // Module Meshtastic déjà ouvert (page web ou agent 1.7 « direct ») : principal tant que le flux reste ouvert, puis
 // retour au module utilisé avant ; ou passerelle d'écoute en plus du principal
-function brancherModuleFlux(flux, nom, source, ip, role, version) {
+function brancherModuleFlux(flux, nom, source, ip, role, version, proprietaire = null, compte = null) {
   if (role === 'ecoute') {
-    const h = agents.ajouterVirtuel(nom, source, flux, ip, version);
-    ecoutes.ajouterRadio(h, 1, nom, { navigateur: true, source });
+    const h = agents.ajouterVirtuel(nom, source, flux, ip, version, proprietaire);
+    ecoutes.ajouterRadio(h, 1, nom, { navigateur: true, source, compte });
     flux.on('close', () => { ecoutes.retirerRadio(h, 1); rafraichirEtat(); diffuser({ genre: 'statut' }); });
-    return;
+    return h;
   }
   const precedent = sourceRadio.modules().actif;
   const hote = agents.ajouterVirtuel(nom, source, flux, ip, version);
@@ -3266,24 +3677,34 @@ function brancherModuleFlux(flux, nom, source, ip, role, version) {
     rafraichirEtat(); diffuser({ genre: 'statut' });
   });
   rafraichirEtat(); diffuser({ genre: 'statut' });
+  return hote;
 }
 // Companion MeshCore branché sur le PC de l'utilisateur, relayé par la page
 function brancherCompanionNavigateur(ws, req) {
   const u = utilisateur(req);
+  if (!u) { ws.close(1008, 'connexion requise'); return; }
+  const admin = u.role === 'admin';
   const q = new URL(req.url, 'http://x').searchParams;
   const source = q.get('source') === 'Bluetooth' ? 'Bluetooth' : 'USB';
-  const nom = (q.get('nom') || `${source} ${u ? u.identifiant : ''}`).slice(0, 40);
-  brancherCompanionFlux(fluxWebSocket(ws), nom, source, q.get('role') === 'ecoute' ? 'ecoute' : 'principal');
+  const base = (q.get('nom') || `${source} ${u.identifiant}`).slice(0, 40);
+  const nom = admin ? base : `${base} · ${u.identifiant}`.slice(0, 60);
+  const role = admin && q.get('role') !== 'ecoute' ? 'principal' : 'ecoute';
+  if (!admin) limiterDebit(ws, 512 * 1024);
+  try {
+    brancherCompanionFlux(fluxWebSocket(ws), nom, source, role, admin ? null : nomCompte(u));
+    noterPasserelle(ws, 'nav:' + nom, u, 'meshcore', role, source);
+  } catch (e) { try { ws.close(1008, String(e.message).slice(0, 100)); } catch { /* déjà */ } }
 }
 // Companion MeshCore déjà ouvert (page web ou agent 1.7 « direct ») : principal tant que le flux reste ouvert, ou en écoute
-function brancherCompanionFlux(flux, nom, source, role) {
+function brancherCompanionFlux(flux, nom, source, role, compte = null) {
   if (!config.meshcore.actif) throw new Error('companion MeshCore reconnu, mais MeshCore n’est pas activé dans cette carte');
-  if (role === 'ecoute') ecoutes.ajouterCompanion(null, nom, { navigateur: flux, source });
+  if (role === 'ecoute') ecoutes.ajouterCompanion(null, nom, { navigateur: flux, source, compte });
   else companion.brancherNavigateur(flux, nom, source);
   diffuserEtatMc();
 }
 wss.on('connection', (ws, req) => {
   ws.admin = estMembre(req);
+  ws.gestion = estGestion(req); // alertes des secteurs et journal de crise : gestionnaires et administrateurs seulement
   ws.vivant = true;
   ws.on('pong', () => (ws.vivant = true));
   ws.send(JSON.stringify({ genre: 'bienvenue', admin: ws.admin, mqtt: !!(clientMqtt && clientMqtt.connected) }));
@@ -3323,12 +3744,65 @@ function versPasserelleRadio(evt) {
   } catch (e) { journal('[Passerelle]', e.message); }
 }
 function diffuser(message) {
+  const t0 = performance.now();
+  if (message.genre === 'noeud-supprime') viderCacheNoeuds();
   verPasserelle(message);
-  // Vue publique : sans texte, positions des nœuds de particuliers arrondies
-  const vue = message.genre === 'etat' && message.alertes ? { ...message, alertes: alertesPubliques(message.alertes) } : message;
-  const pub = JSON.stringify(reseau.vueTrame(vue.texte !== undefined ? { ...vue, texte: undefined } : vue, false));
-  const adm = JSON.stringify(message);
-  for (const ws of wss.clients) if (ws.readyState === 1) ws.send(ws.admin ? adm : pub);
+  // Vue publique : sans texte, positions des nœuds de particuliers arrondies. Chaque vue est sérialisée une seule fois
+  // (et seulement si un navigateur de ce genre est connecté), puis la même chaîne part vers tous les navigateurs
+  let pub = null, adm = null;
+  for (const ws of wss.clients) {
+    if (ws.readyState !== 1) continue;
+    if (ws.admin) { if (adm === null) adm = JSON.stringify(message); ws.send(adm); }
+    else {
+      if (pub === null) {
+        const vue = message.genre === 'etat' && message.alertes ? { ...message, alertes: alertesPubliques(message.alertes) } : message;
+        pub = JSON.stringify(reseau.vueTrame(vue.texte !== undefined ? { ...vue, texte: undefined } : vue, false));
+      }
+      ws.send(pub);
+    }
+  }
+  noterTache(message.genre === 'etat' || message.genre === 'mc-etat' ? 'diffusion de l’état aux navigateurs' : 'diffusion d’un paquet aux navigateurs', performance.now() - t0);
+}
+// Message réservé aux comptes connectés (positions des intervenants, demandes d'aide, mode urgence) : rien vers le public
+function diffuserMembres(message) {
+  const t = JSON.stringify(message);
+  const gestion = message.genre === 'secteur-alerte' || message.genre === 'urgence-evt';
+  for (const ws of wss.clients) if (ws.readyState === 1 && ws.admin && (!gestion || ws.gestion)) ws.send(t);
+}
+// Secteurs d'alerte et mode urgence : positions reçues (un paquet vu par plusieurs passerelles compte une fois)
+// et messages de détresse pendant une crise
+let dernierPaquetCrise = 0, modulesCrisePrets = false; // dernier paquet Meshtastic reçu (toutes sources) ; secteurs et urgence créés
+const sosVus = new Map(); // nœud -> heure du dernier message de détresse noté (un par nœud par 5 min)
+// Nœud de la carte elle-même ou d'un module en écoute : ses messages (alertes envoyées par la carte) ne sont pas des détresses
+function noeudDeLaCarte(num) {
+  try { if (sourceRadio.infos().noeudLocal === num) return true; } catch { /* pas de module */ }
+  try { return resumeEcoutes().some((x) => x.noeud === num); } catch { return false; }
+}
+// Nœud concerné par la carte : surveillé, dans la zone, ou membre d'une équipe → détresse « critique » ; sinon « attention »
+function noeudConcerne(num) {
+  try { if (equipes.estMembre(num)) return true; } catch { /* pas encore prêt */ }
+  try {
+    const n = stockage.q.noeud.get(num >>> 0);
+    if (!n) return false;
+    if (reseau.estSurveille(n)) return true;
+    const z = config.zone;
+    return !!(z && n.lat != null && n.lat >= z[0] && n.lat <= z[2] && n.lon >= z[1] && n.lon <= z[3]);
+  } catch { return false; }
+}
+function crisePaquet(evt) {
+  dernierPaquetCrise = Date.now();
+  try {
+    if (evt.port === 'position' && evt.position && evt.position.lat != null && evt.de != null) secteursAlerte.position('mt:' + (evt.de >>> 0), { lat: evt.position.lat, lon: evt.position.lon, precision: evt.position.precision, heureFix: evt.position.heureFix || null, id: evt.idPaquet });
+    if (evt.port === 'texte' && evt.texte && evt.de != null && urgence.actif() && RE_SOS.test(evt.texte)) {
+      const de = evt.de >>> 0, t = Date.now();
+      if (noeudDeLaCarte(de) || t - (sosVus.get(de) || 0) < 300000) return;
+      sosVus.set(de, t);
+      if (sosVus.size > 2000) for (const [k, v] of sosVus) { if (t - v > 300000) sosVus.delete(k); }
+      const concerne = noeudConcerne(de);
+      const qui = `${nomNoeudServeur(de)}${evt.canal ? ` (canal ${evt.canal})` : ''}`, txt = String(evt.texte).replace(/\u0007/g, '🔔').slice(0, 200);
+      urgence.noter({ cle: `msg:${de}:${evt.idPaquet}`, type: 'message', niveau: concerne ? 'critique' : 'attention', texte: concerne ? `Message de détresse de ${qui} : ${txt}` : `Message de détresse possible de ${qui} (nœud hors zone, expéditeur non vérifiable) : ${txt}`, noeud: de });
+    }
+  } catch (e) { if (modulesCrisePrets || !(e instanceof ReferenceError)) journal('[Secteurs]', e.message); } // pas encore créés au démarrage
 }
 
 // ---- MQTT -----------------------------------------------------------------
@@ -3363,15 +3837,17 @@ const tylkoMeshCore = config.meshcore.actif && config.carte.reseaux === 'meshcor
 const sujets = [...(tylkoMeshCore ? [] : [config.mqtt.racine + '/#', ...config.mqtt.sujetsSupplementaires]), ...(config.meshcore.actif ? [config.meshcore.racine + '/#'] : [])];
 const prefixeMc = config.meshcore.racine + '/';
 let compteurMc = { recus: 0, observations: 0, erreurs: 0 };
+// Décision { dans, pos } : pos = vrai quand elle repose sur la position connue de l'observateur (sûre), faux quand
+// elle ne repose que sur le code de zone du sujet (provisoire : la clé du sujet peut différer de l'origin_id du JSON)
 function dansPerimetreMc(cleObs, iata) {
   const p = config.meshcore.perimetre;
-  if (p === 'national') return true;
+  if (p === 'national') return { dans: true, pos: true };
   const z = p === 'voisins' ? ((zoneVoisins() || {}).bbox || config.zone) : config.zone;
   const pos = reseauMc.positionDe(cleObs);
-  if (pos) return pos.lat >= z[0] - 0.05 && pos.lat <= z[2] + 0.05 && pos.lon >= z[1] - 0.05 && pos.lon <= z[3] + 0.05;
+  if (pos) return { dans: pos.lat >= z[0] - 0.05 && pos.lat <= z[2] + 0.05 && pos.lon >= z[1] - 0.05 && pos.lon <= z[3] + 0.05, pos: true };
   // Position inconnue : code de zone du sujet (le nôtre ou ceux déclarés voisins)
   const code = String(iata || '').toUpperCase();
-  return code === config.meshcore.iata || config.meshcore.iataVoisins.includes(code);
+  return { dans: code === config.meshcore.iata || config.meshcore.iataVoisins.includes(code), pos: false };
 }
 // Paquet MeshCore intégré ; un message de canal déchiffré depuis le paquet brut (observateur MQTT ou companion)
 // part aussi comme « mc-message » : les cartes des membres le comptent dans les non-lus et rafraîchissent la liste
@@ -3379,8 +3855,26 @@ function diffuserSortieMc(sortie) {
   diffuser(sortie);
   if (sortie.nouveauMessage && sortie.texte) diffuser({ genre: 'mc-message', id: sortie.nouveauMessage, sens: 'recu', canal: sortie.canal, texte: sortie.texte, nomDe: sortie.expediteur, heure: Date.now(), dejaPasserelle: true });
 }
+// Décision de périmètre par observateur gardée 60 s : le flux national envoie des centaines de milliers de paquets
+// d'observateurs lointains, rejetés d'après le sujet MQTT seul, sans lire le JSON ni chercher leur position à chaque fois
+const perimetreObs = new Map();
+function obsDansPerimetre(cle, iata) {
+  const t = Date.now(), k = cle + '|' + iata;
+  let d = perimetreObs.get(k);
+  if (d && t - d.heure < 60000) return d;
+  d = { ...dansPerimetreMc(cle, iata), heure: t };
+  if (perimetreObs.size > 5000) perimetreObs.clear();
+  perimetreObs.set(k, d);
+  return d;
+}
 function messageMc(topic, message) {
   compteurMc.recus++;
+  if (config.meshcore.perimetre !== 'national') {
+    // Rejet d'après le sujet seul, uniquement quand la décision repose sur une position connue ; sinon le JSON est lu
+    // (son origin_id fait foi) et la décision se prend plus bas
+    const s = RE_SUJET_MC.exec(topic);
+    if (s && s[4] === 'packets') { const d = obsDansPerimetre(s[3].toUpperCase(), s[2]); if (!d.dans && d.pos) { compteurMc.horsPerimetre = (compteurMc.horsPerimetre || 0) + 1; return; } }
+  }
   const m = lireMessageMc(topic, message);
   if (!m) return;
   if (m.genre === 'erreur') { compteurMc.erreurs++; return; }
@@ -3388,10 +3882,13 @@ function messageMc(topic, message) {
   if (m.cle === moi) return; // nos propres republications
   if (m.genre === 'statut') { reseauMc.noterObservateur(m.cle, { nom: m.nom, etat: m.etat, details: m.details }); planifierEtatMc(); return; }
   // Filtre à la source : on ne garde que ce qu'ont capté les observateurs du périmètre choisi
-  if (!dansPerimetreMc(m.cle, m.iata)) { compteurMc.horsPerimetre = (compteurMc.horsPerimetre || 0) + 1; return; }
+  const d = obsDansPerimetre(m.cle, m.iata);
+  if (!d.dans) { compteurMc.horsPerimetre = (compteurMc.horsPerimetre || 0) + 1; return; }
   if (m.nom) reseauMc.noterObservateur(m.cle, { nom: m.nom, details: { iata: m.iata } });
   const sortie = reseauMc.integrer(m.obs);
   if (sortie) { compteurMc.observations++; diffuserSortieMc(sortie); }
+  // Décision provisoire (code de zone) et position de l'observateur connue depuis : la décision est reprise au prochain paquet
+  if (!d.pos && reseauMc.positionDe(m.cle)) perimetreObs.delete(m.cle + '|' + m.iata);
 }
 clientMqtt.on('connect', () => {
   statsMqtt.depuis = Date.now();
@@ -3443,12 +3940,24 @@ const brokersSup = config.mqtt.brokers.map((b) => {
   c.on('message', (topic, message) => { etatB.messages++; traiterMessageMqtt(topic, message); });
   return { client: c, etat: etatB };
 });
+// Chaque message est chronométré (décodage et écriture en base) : total et maximum par minute dans la santé de la carte
 function traiterMessageMqtt(topic, message) {
-  if ((brokersSup.length || config.mqtt.dedoublonner) && dejaVuMqtt(topic, message)) { compteur.doublons = (compteur.doublons || 0) + 1; return; }
-  compteur.recus++;
-  if (config.meshcore.actif && topic.startsWith(prefixeMc)) { compteurMc.recusMqtt = (compteurMc.recusMqtt || 0) + 1; try { messageMc(topic, message); } catch (e) { compteurMc.erreurs++; journal('Erreur MeshCore :', e.message, topic); } return; }
-  noterMessageMqtt(topic);
-  traiterEnveloppeMt(topic, message);
+  const t0 = performance.now();
+  let nom = 'message MQTT Meshtastic';
+  try {
+    if ((brokersSup.length || config.mqtt.dedoublonner) && dejaVuMqtt(topic, message)) { compteur.doublons = (compteur.doublons || 0) + 1; nom = 'message MQTT en double'; return; }
+    compteur.recus++;
+    if (config.meshcore.actif && topic.startsWith(prefixeMc)) {
+      compteurMc.recusMqtt = (compteurMc.recusMqtt || 0) + 1;
+      const hors = compteurMc.horsPerimetre || 0;
+      nom = 'message MQTT MeshCore';
+      try { messageMc(topic, message); } catch (e) { compteurMc.erreurs++; journal('Erreur MeshCore :', e.message, topic); }
+      if ((compteurMc.horsPerimetre || 0) !== hors) nom = 'message MeshCore hors périmètre';
+      return;
+    }
+    noterMessageMqtt(topic);
+    traiterEnveloppeMt(topic, message);
+  } finally { noterTache(nom, performance.now() - t0); }
 }
 // Enveloppe Meshtastic (MQTT, ou paquet du réseau local remis sous forme d'enveloppe) : décodage puis carte
 function traiterEnveloppeMt(topic, message) {
@@ -3458,8 +3967,8 @@ function traiterEnveloppeMt(topic, message) {
     if (evt.genre === 'erreur') { compteur.erreurs++; return; }
     if (evt.port === 'waypoint' && evt.pointRepere) { try { signalements.recu(evt); } catch { /* pas encore prêt */ } }
     versPasserelleRadio(evt);
-    if (evt.port === 'texte' && evt.texte && /^Pager ACK/i.test(evt.texte)) { try { signalements.texteRecu(evt); } catch { /* pas encore prêt */ } } if (evt.port === 'texte' && evt.texte) { try { equipes.texteRecu(evt); } catch { /* pas encore prêt */ } }
-    if (evt.port === 'position' && evt.position && evt.position.lat != null) { try { const d = administration.reponsePosition(evt.de); if (d != null) diffuser({ genre: 'position-reponse', num: evt.de >>> 0, lat: evt.position.lat, lon: evt.position.lon, delai: d }); } catch { /* pas encore prêt */ } }
+    if (evt.port === 'texte' && evt.texte && /^Pager ACK/i.test(evt.texte)) { try { signalements.texteRecu(evt); } catch { /* pas encore prêt */ } } if (evt.port === 'texte' && evt.texte) { try { equipes.texteRecu(evt); } catch { /* pas encore prêt */ } } crisePaquet(evt);
+    if (evt.port === 'position' && evt.position && evt.position.lat != null) { try { const d = administration.reponsePosition(evt.de); if (d != null) diffuserMembres({ genre: 'position-reponse', num: evt.de >>> 0, lat: evt.position.lat, lon: evt.position.lon, delai: d }); } catch { /* pas encore prêt */ } }
     const sortie = reseau.integrer(evt);
     try { autresPresets.noterPaquet(evt); } catch { /* pas encore prêt */ }
     if (sortie) { compteur.decodes++; diffuser(sortie); }
@@ -3549,7 +4058,8 @@ let dernieresAlertes = [];
 // Alertes des services internes (adresses, messages d'erreur) réservées aux administrateurs
 function alertesPubliques(l) {
   const lorawanPublic = (() => { try { return lorawan.etat().public; } catch { return false; } })();
-  return l.filter((a) => a.type !== 'service' && (a.type !== 'lorawan' || lorawanPublic));
+  // Équipes, secteurs d'alerte et mode urgence : noms et positions d'intervenants, réservés aux comptes connectés
+  return l.filter((a) => a.type !== 'service' && a.type !== 'equipe' && a.type !== 'secteur' && a.type !== 'urgence' && (a.type !== 'lorawan' || lorawanPublic));
 }
 // Services de fond en échec prolongé : visibles dans les alertes de la carte, pas seulement dans le journal du serveur
 const enEchecDepuis = {};
@@ -3580,25 +4090,34 @@ function alertesServices() {
   return l;
 }
 function rafraichirEtat() {
-  dernieresAlertes = reseau.calculerAlertes();
+  viderCacheNoeuds(60000); // liste des nœuds plus demandée depuis une minute : mémoire rendue
+  dernieresAlertes = chronoTache('alertes Meshtastic', () => reseau.calculerAlertes());
   try { if (typeof equipes !== 'undefined') dernieresAlertes = [...dernieresAlertes, ...equipes.alertes((n) => { const r = reqNomSig.get(n >>> 0); return r && (r.nom_long || r.nom_court); })]; } catch { /* équipes pas encore prêtes */ }
   if (passerelle) { try { dernieresAlertes = [...dernieresAlertes, ...passerelle.alertes()]; } catch (e) { journal('[Passerelle]', e.message); } }
   try { dernieresAlertes = [...dernieresAlertes, ...alertesServices()]; } catch (e) { journal('alertes des services :', e.message); }
   try { dernieresAlertes = [...dernieresAlertes, ...lorawan.alertes()]; } catch (e) { if (!(e instanceof ReferenceError)) journal('[LoRaWAN]', e.message); }
   try { dernieresAlertes = [...dernieresAlertes, ...rivieres.alertes()]; } catch (e) { if (!(e instanceof ReferenceError)) journal('[Rivières]', e.message); } // pas encore créé au démarrage
   try { if (!fonctionMasquee('feux')) dernieresAlertes = [...dernieresAlertes, ...feux.alertes()]; } catch (e) { if (!(e instanceof ReferenceError)) journal('[Feux]', e.message); } // pas encore créé au démarrage
-  diffuser({ genre: 'etat', stats: reseau.statistiques(), alertes: dernieresAlertes, meshmonitor: typeof sourceMM !== 'undefined' && sourceMM ? sourceMM.etat() : null, radio: typeof sourceRadio !== 'undefined' && sourceRadio ? sourceRadio.etat() : null, ecoutes: resumeEcoutes() });
+  try { dernieresAlertes = [...dernieresAlertes, ...secteursAlerte.alertes()]; } catch (e) { if (!(e instanceof ReferenceError)) journal('[Secteurs]', e.message); }
+  try {
+    if (urgence.actif()) {
+      const u = urgence.etat();
+      dernieresAlertes = [{ cle: 'urgence:' + u.id, type: 'urgence', niveau: 'critique', depuis: u.debut, message: `Mode urgence en cours${u.motif ? ' : ' + u.motif : ''}` }, ...dernieresAlertes];
+      noterAlertesCrise([...dernieresAlertes, ...(config.meshcore.actif ? alertesMc : [])]);
+    }
+  } catch (e) { if (!(e instanceof ReferenceError)) journal('[Urgence]', e.message); }
+  diffuser({ genre: 'etat', stats: chronoTache('statistiques Meshtastic', () => reseau.statistiques()), alertes: dernieresAlertes, meshmonitor: typeof sourceMM !== 'undefined' && sourceMM ? sourceMM.etat() : null, radio: typeof sourceRadio !== 'undefined' && sourceRadio ? sourceRadio.etat() : null, ecoutes: resumeEcoutes() });
 }
 setInterval(rafraichirEtat, 30000);
 let minuterieEtatMc = null;
 function diffuserEtatMc() {
   if (!config.meshcore.actif) return;
   const c = companion.etat();
-  alertesMc = reseauMc.calculerAlertes({ administres: adminMc.memorises(), companion: { cible: c.cible || c.navigateur, connecte: c.connecte, nom: c.nom, cle: c.cle, erreur: c.erreur } });
+  alertesMc = chronoTache('alertes MeshCore', () => reseauMc.calculerAlertes({ administres: adminMc.memorises(), companion: { cible: c.cible || c.navigateur, connecte: c.connecte, nom: c.nom, cle: c.cle, erreur: c.erreur } }));
   try { alertesMc = [...alertesMc, ...capteursMc.alertes(nomNoeudMc)]; } catch (e) { journal('alertes des capteurs :', e.message); }
   try { if (typeof maintenanceMc !== 'undefined') alertesMc = [...alertesMc, ...maintenanceMc.alertes()]; } catch (e) { journal('alertes de maintenance :', e.message); }
   try { alertesMc = [...alertesMc, ...adminMc.alertesSupervision()]; } catch (e) { journal('alertes de supervision :', e.message); }
-  diffuser({ genre: 'mc-etat', ...etatMc(false) });
+  diffuser({ genre: 'mc-etat', ...chronoTache('état MeshCore', () => etatMc(false)) });
 }
 function planifierEtatMc() { if (!minuterieEtatMc) minuterieEtatMc = setTimeout(() => { minuterieEtatMc = null; diffuserEtatMc(); }, 15000); } // statuts d'observateurs fréquents : au plus toutes les 15 s
 setInterval(diffuserEtatMc, 30000);
@@ -3670,6 +4189,17 @@ const companion = creerCompanion(config, {
 require('./meshcore/paquet').ajouterRegions(String(process.env.MESHCORE_REGIONS || '').split(/[,;\s]+/));
 setInterval(() => { try { const z = companion.etat().zoneDefaut; if (z) require('./meshcore/paquet').ajouterRegions([z]); } catch { /* ignore */ } }, 60000);
 if (config.meshcore.actif) companion.demarrer();
+// Observatoires MeshCore publics (CoreScope) : paquets bruts lus sur leur API REST, traités comme un flux MQTT
+const { creerCoreScope, testerCoreScope, ecrireSources: ecrireSourcesCs, INSTANCES_CONNUES: INSTANCES_CS } = require('./meshcore/corescope');
+const corescope = creerCoreScope({
+  ...config.meshcore.corescope,
+  integrer: (obs) => { const sortie = reseauMc.integrer(obs); if (sortie) diffuserSortieMc(sortie); return sortie; },
+  noterObservateur: (cle, info) => reseauMc.noterObservateur(cle, info),
+  importerNoeuds: (liste) => { reseauMc.importerContacts(liste); diffuser({ genre: 'mc-noeuds' }); },
+  apres: () => planifierEtatMc(),
+  journal: (...a) => journal('[MeshCore]', ...a),
+});
+if (config.meshcore.actif) corescope.demarrer();
 // Canaux MeshCore déchiffrés : ceux des réglages, plus ceux lus dans le companion principal et les companions en écoute
 function majCanauxMc() {
   const tous = [...canauxMc];
@@ -3766,8 +4296,8 @@ const sourceRadio = creerSourceRadio(stockage, config, canaux, {
   integrerEvenement: (evt) => {
     if (evt.port === 'waypoint' && evt.pointRepere) { try { signalements.recu(evt); } catch { /* pas encore prêt */ } }
     versPasserelleRadio(evt);
-    if (evt.port === 'texte' && evt.texte && /^Pager ACK/i.test(evt.texte)) { try { signalements.texteRecu(evt); } catch { /* pas encore prêt */ } } if (evt.port === 'texte' && evt.texte) { try { equipes.texteRecu(evt); } catch { /* pas encore prêt */ } }
-    if (evt.port === 'position' && evt.position && evt.position.lat != null) { try { const d = administration.reponsePosition(evt.de); if (d != null) diffuser({ genre: 'position-reponse', num: evt.de >>> 0, lat: evt.position.lat, lon: evt.position.lon, delai: d }); } catch { /* pas encore prêt */ } }
+    if (evt.port === 'texte' && evt.texte && /^Pager ACK/i.test(evt.texte)) { try { signalements.texteRecu(evt); } catch { /* pas encore prêt */ } } if (evt.port === 'texte' && evt.texte) { try { equipes.texteRecu(evt); } catch { /* pas encore prêt */ } } crisePaquet(evt);
+    if (evt.port === 'position' && evt.position && evt.position.lat != null) { try { const d = administration.reponsePosition(evt.de); if (d != null) diffuserMembres({ genre: 'position-reponse', num: evt.de >>> 0, lat: evt.position.lat, lon: evt.position.lon, delai: d }); } catch { /* pas encore prêt */ } }
     const sortie = reseau.integrer(evt);
     try { autresPresets.noterPaquet(evt); } catch { /* pas encore prêt */ }
     if (sortie) { compteur.decodes++; diffuser({ ...sortie, viaRadio: true }); }
@@ -3786,8 +4316,8 @@ const ecoutes = creerEcoutes({
     integrerEvenement: (evt) => {
       if (evt.port === 'waypoint' && evt.pointRepere) { try { signalements.recu(evt); } catch { /* pas encore prêt */ } }
     versPasserelleRadio(evt);
-    if (evt.port === 'texte' && evt.texte && /^Pager ACK/i.test(evt.texte)) { try { signalements.texteRecu(evt); } catch { /* pas encore prêt */ } } if (evt.port === 'texte' && evt.texte) { try { equipes.texteRecu(evt); } catch { /* pas encore prêt */ } }
-    if (evt.port === 'position' && evt.position && evt.position.lat != null) { try { const d = administration.reponsePosition(evt.de); if (d != null) diffuser({ genre: 'position-reponse', num: evt.de >>> 0, lat: evt.position.lat, lon: evt.position.lon, delai: d }); } catch { /* pas encore prêt */ } }
+    if (evt.port === 'texte' && evt.texte && /^Pager ACK/i.test(evt.texte)) { try { signalements.texteRecu(evt); } catch { /* pas encore prêt */ } } if (evt.port === 'texte' && evt.texte) { try { equipes.texteRecu(evt); } catch { /* pas encore prêt */ } } crisePaquet(evt);
+    if (evt.port === 'position' && evt.position && evt.position.lat != null) { try { const d = administration.reponsePosition(evt.de); if (d != null) diffuserMembres({ genre: 'position-reponse', num: evt.de >>> 0, lat: evt.position.lat, lon: evt.position.lon, delai: d }); } catch { /* pas encore prêt */ } }
     const sortie = reseau.integrer(evt);
     try { autresPresets.noterPaquet(evt); } catch { /* pas encore prêt */ }
       if (sortie) { compteur.decodes++; diffuser({ ...sortie, viaRadio: true }); }
@@ -3801,14 +4331,87 @@ ecoutes.demarrer();
 const administration = creerAdministration(sourceRadio, stockage);
 // ---- Équipes : canal chiffré par équipe, posé ou retiré à distance (administrateur) ----
 const reqPosEquipe = stockage.db.prepare('SELECT lat, lon, heure_position FROM noeuds WHERE num = ?');
-const equipes = require('./equipes').creerEquipes({ config, administration, journal, diffuser, nomDe: (n) => { const r = reqNomSig.get(n >>> 0); return r && (r.nom_long || r.nom_court); }, positionDe: (num) => { try { const r = reqPosEquipe.get(num >>> 0); return r && r.lat != null ? { lat: r.lat, lon: r.lon, heure: r.heure_position || 0 } : null; } catch { return null; } } });
+const equipes = require('./equipes').creerEquipes({ config, administration, journal,
+  diffuser: (m) => {
+    if (m.genre !== 'equipe-sos') return diffuser(m);
+    diffuserMembres(m);
+    try { urgence.noter({ cle: `equipe-sos:${m.equipe}:${m.id}`, type: 'sos', niveau: 'critique', texte: `Demande d’aide de ${m.nom} (équipe ${m.nomEquipe}) : ${m.texte}`, noeud: m.num, lat: m.position ? m.position.lat : null, lon: m.position ? m.position.lon : null }); } catch { /* urgence pas encore prête */ }
+  },
+  surZone: (id, zone, auteur) => secteursAlerte.zoneEquipe(id, zone, auteur),
+  secteursDe: (id) => secteursAlerte.resumeEquipe(id),
+  surSuppression: (id) => { const n = secteursAlerte.equipeSupprimee(id); if (n) { journal(`[Secteurs] ${n} secteur(s) désactivé(s) : équipe supprimée`); planifierRafraichir(); } },
+  nomDe: (n) => { const r = reqNomSig.get(n >>> 0); return r && (r.nom_long || r.nom_court); }, positionDe: (num) => { try { const r = reqPosEquipe.get(num >>> 0); return r && r.lat != null ? { lat: r.lat, lon: r.lon, heure: r.heure_position || 0 } : null; } catch { return null; } } });
+// ---- Jeux de canaux (carte) et passerelles des membres ---------------------------------------------------
+// Une communauté décrit les canaux que ses membres doivent avoir ; un membre qui relie sa radio depuis son navigateur
+// les y écrit en un clic. Les clés restent sur le serveur (chiffrées) : une page n'en voit jamais que le nom.
+const jeuxCanaux = require('./jeux-canaux').creerJeuxCanaux({ config, chiffreur: equipes.chiffreur, journal });
+const { planifier: planifierCanaux } = require('./jeux-canaux');
+function jeuxPour(u) {
+  const l = [{ ...jeuxCanaux.vue('carte', u.role === 'admin'), titre: config.carte.titre || 'Carte live', modifiable: u.role === 'admin' }];
+  return l.filter((j) => j.canaux.length || j.modifiable);
+}
+const routeCompte = (f) => async (req, res) => {
+  const u = utilisateur(req);
+  if (!u) return res.status(401).json({ erreur: 'Connexion requise' });
+  try { res.set('Cache-Control', 'no-store').json(await f(req, req.body || {}, u)); } catch (e) { res.status(400).json({ erreur: e.message }); }
+};
+app.get('/api/jeux-canaux', routeCompte((req, b, u) => ({ jeux: jeuxPour(u) })));
+app.put('/api/jeux-canaux/carte', (req, res) => {
+  if (!exigerAdmin(req, res)) return;
+  try { res.json(jeuxCanaux.definir('carte', (req.body || {}).canaux, nomCompte(utilisateur(req)))); } catch (e) { res.status(400).json({ erreur: e.message }); }
+});
+// Portées qu'un compte a le droit d'écrire sur sa radio
+function porteesPermises(u) {
+  const l = ['carte'];
+  return l;
+}
+// Radio d'une passerelle de page, si elle appartient à ce compte (un administrateur : aussi le module principal)
+function radioDePasserelle(u, hote) {
+  const p = passerellesNav.get(String(hote || ''));
+  if (!p || p.protocole !== 'meshtastic' || (p.compteId !== u.id && u.role !== 'admin')) throw new Error('Radio introuvable : reliez-la depuis cette page (Outils › Connecter un module)');
+  const a = sourceRadio.modules().actif;
+  const r = p.role === 'principal' ? (a && a.hote === hote ? sourceRadio : null) : ecoutes.radio(hote, 1);
+  if (!r) throw new Error('Radio déconnectée');
+  return { p, r };
+}
+app.get('/api/passerelle/miennes', routeCompte((req, b, u) => ({
+  actif: u.role === 'admin' || passerelleMembresActive(),
+  refus: refusPasserelle(req),
+  passerelles: [...passerellesNav.entries()].filter(([, p]) => p.compteId === u.id).map(([hote, p]) => {
+    let radio = null;
+    try { if (p.protocole === 'meshtastic') { const { r } = radioDePasserelle(u, hote); const e = r.etat(); radio = { connecte: !!e.connecte && e.noeudLocal != null, noeud: e.noeudLocal, nom: e.nomLocal, paquets: e.paquets || 0, canaux: e.noeudLocal != null ? r.canauxDetail() : [] }; } } catch { /* déconnectée */ }
+    return { hote, protocole: p.protocole, role: p.role, source: p.source, depuis: p.depuis, radio };
+  }),
+})));
+app.post('/api/passerelle/canaux', routeCompte(async (req, b, u) => {
+  const { p, r } = radioDePasserelle(u, b.hote);
+  const permises = new Set(porteesPermises(u));
+  const ajouts = [];
+  for (const x of Array.isArray(b.ajouter) ? b.ajouter : []) {
+    if (!permises.has(String(x.portee))) throw new Error('Jeu de canaux non autorisé pour ce compte');
+    const c = jeuxCanaux.canal(String(x.portee), x.id);
+    if (!c) throw new Error('Canal supprimé entre-temps : rouvrez la liste');
+    if (!ajouts.some((a) => a.nom === c.nom)) ajouts.push(c);
+  }
+  const liberer = (Array.isArray(b.liberer) ? b.liberer : []).map(Number).filter((i) => Number.isInteger(i) && i >= 1 && i <= 7);
+  if (!ajouts.length && !liberer.length) throw new Error('Rien à écrire');
+  const plan = planifierCanaux(r.canauxBruts(), ajouts, liberer);
+  if (plan.manque) throw new Error(`Place insuffisante : libérez encore ${plan.manque} emplacement(s)`);
+  if (!plan.ops.length) return { canaux: r.canauxDetail(), journal: ['canaux déjà présents : rien à écrire'], deja: plan.deja };
+  const j = [];
+  const canaux = await r.ecrireCanauxLocal(plan.ops, (t) => j.push(t));
+  audit.noter(nomCompte(u), req.ip, 'canaux écrits sur sa radio', `${p.source} : ${ajouts.map((a) => a.nom).join(', ')}${liberer.length ? ` ; libérés ${liberer.join(', ')}` : ''}`, true);
+  return { canaux, journal: j, deja: plan.deja };
+}));
 const routeEquipe = (f) => (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
   try { res.set('Cache-Control', 'no-store').json(f(req, req.body || {}, nomCompte(utilisateur(req)))); } catch (e) { res.status(400).json({ erreur: e.message }); }
 };
-app.get('/api/equipes', routeEquipe(() => ({ equipes: equipes.liste(), sourceCle: equipes.sourceCle(), module: administration.infos() })));
+// Démonstration (visiteur sans compte) : ni demandes d'aide, ni positions des intervenants, ni secteurs, ni zones
+const equipeDemo = (e) => ({ ...e, sos: [], secteurs: [], zone: null, recherche: null, membres: e.membres.map((m) => ({ ...m, position: null, horsZone: false })) });
+app.get('/api/equipes', routeEquipe((req) => ({ equipes: req.demoLecture ? equipes.liste().map(equipeDemo) : equipes.liste(), sourceCle: equipes.sourceCle(), module: administration.infos() })));
 app.post('/api/equipes', routeEquipe((req, b, a) => equipes.creer(b, a)));
-app.patch('/api/equipes/:id', routeEquipe((req, b) => equipes.modifier(req.params.id, b)));
+app.patch('/api/equipes/:id', routeEquipe((req, b, a) => equipes.modifier(req.params.id, b, a)));
 app.post('/api/equipes/:id/membres', routeEquipe((req, b, a) => equipes.membres(req.params.id, b, a)));
 app.post('/api/equipes/:id/reappliquer', routeEquipe((req, b, a) => equipes.reappliquer(req.params.id, a)));
 app.post('/api/equipes/:id/recherche', routeEquipe((req, b, a) => equipes.recherche(req.params.id, b, a)));
@@ -3825,6 +4428,116 @@ app.get('/api/equipes/:id/export', routeEquipe((req, b, a) => {
   return x;
 }));
 const reqNomSig = stockage.db.prepare('SELECT nom_court, nom_long FROM noeuds WHERE num = ?');
+// ---- Secteurs d'alerte (géorepérage) des équipes de terrain : voir secteurs.js ----------------------------------
+const { RE_SOS } = require('./equipes');
+let minutRafraichir = null;
+const planifierRafraichir = () => { if (!minutRafraichir) minutRafraichir = setTimeout(() => { minutRafraichir = null; rafraichirEtat(); }, 1500); };
+const secteursAlerte = require('./secteurs').creerSecteurs({
+  config, journal,
+  diffuser: (m) => (m.genre === 'secteurs' ? diffuser(m) : diffuserMembres(m)),
+  membresEquipe: (id) => equipes.membresDe(id),
+  nomEquipe: (id) => equipes.nomDe(id),
+  nomDe: (k) => (k.startsWith('mt:') ? nomNoeudServeur(Number(k.slice(3))) : nomNoeudMc(k.slice(3)) || null),
+  positionDe: (num) => { const r = reqPosEquipe.get(num >>> 0); return r && r.lat != null ? { lat: r.lat, lon: r.lon, heure: r.heure_position || 0 } : null; },
+  // Option d'un secteur : alerte courte sur un canal LoRa (module de la carte), au plus une toutes les 30 s
+  envoyerLora: (texte, canal) => administration.envoyerTexte({ texte, canal }, 'secteurs'),
+  suiviMinDe: (id) => equipes.suiviDe(id),
+  // Dernière réception d'un paquet, toutes sources (MQTT, module radio, agents, UDP) : sans rien depuis 10 min, la
+  // surveillance des pertes de contact est suspendue (c'est la carte qui n'entend plus, pas les intervenants)
+  derniereReception: () => Math.max(statsMqtt.dernierMessage || 0, dernierPaquetCrise),
+  // Au premier signe de sortie, position fraîche demandée au nœud (une fois par 10 min) : l'alerte n'attend pas le prochain suivi
+  demanderPosition: (num, motif) => administration.demanderPosition(num, motif),
+  surEvenement: (e) => {
+    if ((['sortie', 'entree', 'silence'].includes(e.type) && e.alerte !== false) || ['imprecise', 'perimee', 'flux', 'flux-retour', 'desactivation'].includes(e.type)) planifierRafraichir();
+    if (['creation', 'modification', 'suppression', 'imprecise', 'perimee', 'desactivation'].includes(e.type) && !urgence.actif()) return;
+    const genre = e.type === 'sortie' ? 'dehors' : e.type === 'entree' ? 'dedans' : e.type;
+    const noeud = e.noeud && e.noeud.startsWith('mt:') ? Number(e.noeud.slice(3)) : e.noeud ? e.noeud.slice(3) : null;
+    urgence.noter({ cle: `secteur:${e.secteur}:${e.noeud}:${genre}:${e.heure}`, type: 'secteur', niveau: e.niveau, texte: e.message, noeud, lat: e.lat ?? null, lon: e.lon ?? null, auteur: e.auteur || null });
+  },
+});
+reseauMc.ecouterPositions((p) => secteursAlerte.position('mc:' + p.cle, { lat: p.lat, lon: p.lon, heure: p.heure, id: p.id }));
+// Anciennes zones de sécurité des équipes (cercle) : reprises une fois en secteurs d'alerte rattachés à l'équipe
+{
+  const m = equipes.zonesAMigrer();
+  let ok = true;
+  for (const z of m.liste) {
+    try { secteursAlerte.zoneEquipe(z.id, z.zone, 'reprise automatique'); journal(`[Secteurs] zone de sécurité de l’équipe « ${z.nom} » reprise en secteur d’alerte`); } catch (e) { ok = false; journal('[Secteurs] zone de sécurité non reprise :', e.message); }
+  }
+  if (m.liste.length && ok && !m.valider()) journal('[Secteurs] zones de sécurité reprises, mais le fichier des équipes n’a pas pu être mis à jour : elles seront reprises de nouveau au prochain démarrage (secteur existant mis à jour, pas dupliqué)');
+}
+// ---- Mode urgence : configuration de crise de la carte, voir urgence.js ----------------------------------------
+const urgence = require('./urgence').creerUrgence({ config, journal, diffuser: diffuserMembres });
+modulesCrisePrets = true; // à partir d'ici, une ReferenceError dans crisePaquet est un vrai bug, journalisé
+// Pendant une crise, l'état du réseau (alertes, compteurs) part toutes les 10 s au lieu de 30 s
+setInterval(() => { try { if (urgence.actif()) rafraichirEtat(); } catch (e) { journal('[Urgence]', e.message); } }, 10000).unref();
+const OUTILS_CRISE = ['signalements', 'main-courante']; // remis en service pendant une crise s'ils étaient masqués
+// Alertes critiques nouvelles notées au journal de la crise (chacune une seule fois)
+// Sur un gros flux (carte monde), les centaines d'alertes « muet » de nœuds lointains restent hors du journal de crise :
+// seules celles des nœuds concernés (surveillés, dans la zone, membres d'équipe), des secteurs et des équipes y entrent
+function noterAlertesCrise(l) {
+  for (const a of l) {
+    if (a.niveau !== 'critique' || a.type === 'urgence') continue;
+    if (a.type !== 'secteur' && a.type !== 'equipe' && a.type !== 'service' && a.noeud != null && typeof a.noeud === 'number' && !noeudConcerne(a.noeud)) continue;
+    urgence.noter({ cle: a.cle || `${a.type}:${a.noeud ?? a.num ?? a.nom}:${a.depuis || ''}`, type: a.type === 'secteur' ? 'secteur' : 'alerte', niveau: 'critique', texte: a.message, noeud: a.noeud ?? null });
+  }
+}
+function tableauCrise() {
+  let eqs = [];
+  try { eqs = equipes.liste(); } catch { /* équipes illisibles */ }
+  const sos = [], membres = [];
+  for (const e of eqs) {
+    for (const x of e.sos) if (!x.pris) sos.push({ id: x.id, num: x.num, nom: x.nom, texte: x.texte, heure: x.heure, position: x.position, equipe: e.id, nomEquipe: e.nom });
+    for (const m of e.membres) if (m.etat === 'membre') membres.push({ num: m.num, nom: nomNoeudServeur(m.num), equipe: e.nom, position: m.position, sansNouvelle: m.sansNouvelle });
+  }
+  const secteurs = secteursAlerte.liste().filter((s) => s.actif).map((s) => ({ id: s.id, nom: s.nom, forme: s.forme, centre: s.centre, rayon: s.rayon, points: s.points, sens: s.sens, nomEquipe: s.nomEquipe, dehors: s.dehors,
+    membres: s.membres.filter((m) => m.derniere || m.silence).map((m) => ({ cle: m.cle, nom: m.nom, etat: m.etat, silence: m.silence, derniere: m.derniere })) }));
+  return {
+    sos, membres, secteurs, alertesSecteurs: secteursAlerte.alertes(),
+    critiques: [...dernieresAlertes, ...(config.meshcore.actif ? alertesMc : [])].filter((a) => a.niveau === 'critique' && a.type !== 'urgence' && a.type !== 'secteur' && a.type !== 'equipe').slice(0, 30),
+    evenements: urgence.evenements(null, 150), archives: urgence.archives(),
+  };
+}
+const routeGestion = (f, ecriture) => (req, res) => {
+  const u = utilisateur(req);
+  if (!estGestion(req) || (ecriture && !u)) return res.status(401).json({ erreur: 'Connexion gestionnaire requise' });
+  try { res.set('Cache-Control', 'no-store').json(f(req, req.body || {}, nomCompte(u) || 'démonstration')); } catch (e) { res.status(400).json({ erreur: e.message }); }
+};
+const routeAdminSecteur = (f) => (req, res) => {
+  const u = utilisateur(req);
+  if (!u || u.role !== 'admin') return res.status(401).json({ erreur: 'Connexion admin requise' });
+  try { res.set('Cache-Control', 'no-store').json(f(req, req.body || {}, nomCompte(u))); } catch (e) { res.status(400).json({ erreur: e.message }); }
+};
+app.get('/api/secteurs', routeGestion((req) => ({ secteurs: secteursAlerte.liste(), equipes: (() => { try { return equipes.liste().map((e) => ({ id: e.id, nom: e.nom, nbMembres: e.nbMembres })); } catch { return []; } })(), modifiable: estAdmin(req) && !req.demoLecture })));
+app.post('/api/secteurs', routeAdminSecteur((req, b, a) => { const s = secteursAlerte.creer(b, a); audit.noter(a, req.ip, 'secteur d’alerte créé', s.nom, true); return s; }));
+app.patch('/api/secteurs/:id', routeAdminSecteur((req, b, a) => secteursAlerte.modifier(String(req.params.id), b, a)));
+app.delete('/api/secteurs/:id', routeAdminSecteur((req, b, a) => { const s = secteursAlerte.secteur(String(req.params.id)); secteursAlerte.supprimer(s.id, a); audit.noter(a, req.ip, 'secteur d’alerte supprimé', s.nom, true); planifierRafraichir(); return { ok: true }; }));
+app.get('/api/secteurs/journal', routeGestion((req) => ({ evenements: secteursAlerte.journal({ secteur: req.query.secteur ? String(req.query.secteur) : null, limite: req.query.limite }) })));
+app.get('/api/secteurs/journal.csv', (req, res) => {
+  if (!estGestion(req)) return res.status(401).json({ erreur: 'Connexion gestionnaire requise' });
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="journal-secteurs.csv"', 'Cache-Control': 'no-store' }).send('\ufeff' + secteursAlerte.csv({ secteur: req.query.secteur ? String(req.query.secteur) : null }));
+});
+app.get('/api/urgence', (req, res) => {
+  if (!estMembre(req)) return res.status(401).json({ erreur: 'Connexion requise' });
+  const e = urgence.etat();
+  res.set('Cache-Control', 'no-store').json(estGestion(req) ? { ...e, tableau: tableauCrise() } : e);
+});
+// Activer ou terminer le mode urgence : administrateur seulement (les gestionnaires lisent le tableau et notent au journal)
+app.post('/api/urgence', (req, res, suite) => { const u = utilisateur(req); if (u && u.role === 'gestionnaire') return res.status(403).json({ erreur: 'Seul un administrateur active ou termine le mode urgence' }); suite(); }, routeAdminSecteur((req, b, a) => {
+  const r = b.actif ? urgence.activer({ motif: b.motif }, a) : urgence.desactiver(a);
+  audit.noter(a, req.ip, b.actif ? 'mode urgence activé' : 'mode urgence terminé', b.actif ? String(b.motif || '').slice(0, 140) : `${r.derniere.nb} événement(s)`, true);
+  if (b.actif) noterAlertesCrise([...dernieresAlertes, ...(config.meshcore.actif ? alertesMc : [])]); // situation au déclenchement
+  diffuser({ genre: 'fonctions-masquees', masquees: masqueesEffectives() });
+  rafraichirEtat();
+  return r;
+}));
+app.post('/api/urgence/note', routeGestion((req, b, a) => urgence.note(b.texte, a), true));
+app.get('/api/urgence/journal.csv', (req, res) => {
+  if (!estGestion(req)) return res.status(401).json({ erreur: 'Connexion gestionnaire requise' });
+  try {
+    const x = urgence.csv(req.query.crise ? String(req.query.crise) : null);
+    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${x.nom}"`, 'Cache-Control': 'no-store' }).send('\ufeff' + x.texte);
+  } catch (e) { res.status(404).json({ erreur: e.message }); }
+});
 // Demande de position à un ou plusieurs nœuds (gestionnaire) : le nœud répond avec sa position
 app.post('/api/demander-position', async (req, res) => {
   const u = utilisateur(req);
@@ -4066,7 +4779,13 @@ const FONCTIONS_MASQUABLES = ['signalements', 'vigipirate', 'fr-alert', 'main-co
 const fFonctionsMasquees = path.join(path.dirname(config.fichierBase), 'fonctions-masquees.json');
 let fonctionsMasquees = new Set(String(process.env.FONCTIONS_MASQUEES || '').split(/[,;\s]+/).map((x) => x.trim().toLowerCase()).filter((x) => FONCTIONS_MASQUABLES.includes(x)));
 try { fonctionsMasquees = new Set(lireJson(fFonctionsMasquees).filter((x) => FONCTIONS_MASQUABLES.includes(x))); } catch { /* valeur du .env */ }
-const fonctionMasquee = (f) => fonctionsMasquees.has(f);
+// Pendant une crise, les outils de crise masqués (signalements, main courante) reviennent ; le réglage ne change pas
+function masqueesEffectives() {
+  let crise = false;
+  try { crise = urgence.actif(); } catch { /* pas encore créé */ }
+  return [...fonctionsMasquees].filter((f) => !(crise && OUTILS_CRISE.includes(f)));
+}
+const fonctionMasquee = (f) => masqueesEffectives().includes(f);
 app.post('/api/fonctions-masquees', (req, res) => {
   if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
   const l = Array.isArray((req.body || {}).masquees) ? req.body.masquees.filter((x) => FONCTIONS_MASQUABLES.includes(x)) : null;
@@ -4074,7 +4793,7 @@ app.post('/api/fonctions-masquees', (req, res) => {
   fonctionsMasquees = new Set(l);
   try { ecrireSur(fFonctionsMasquees, JSON.stringify([...fonctionsMasquees])); } catch (e) { return res.status(500).json({ erreur: e.message }); }
   journal(`Fonctions masquées par ${nomCompte(utilisateur(req))} : ${l.join(', ') || 'aucune'}`);
-  diffuser({ genre: 'fonctions-masquees', masquees: [...fonctionsMasquees] });
+  diffuser({ genre: 'fonctions-masquees', masquees: masqueesEffectives() });
   res.json({ masquees: [...fonctionsMasquees] });
 });
 const alertesOff = require('./alertes-officielles').creerAlertesOfficielles({
@@ -4092,6 +4811,10 @@ const alertesOff = require('./alertes-officielles').creerAlertesOfficielles({
     let b = Buffer.from(texte, 'utf8');
     if (b.length > 130) texte = b.subarray(0, 127).toString('utf8').replace(/\uFFFD+$/, '') + '…';
     await companion.envoyerCanal(c.index, texte);
+    // Noté comme envoyé : son écho relayé par les répéteurs n'est plus compté comme un message reçu (non lu)
+    const e = companion.etat();
+    reseauMc.noterMessage({ sens: 'envoye', genre: 'canal', canal: c.nom, indexCanal: c.index, de: e.cle, nomDe: e.nom, texte, statut: 'envoye', auteur: 'alertes', region: e.zoneDefaut == null ? null : e.zoneDefaut || '-' });
+    diffuser({ genre: 'mc-message', confirmation: true });
   },
   envoyer: async (nomCanal, texte) => {
     const i = sourceRadio.infos();
@@ -4105,7 +4828,19 @@ const alertesOff = require('./alertes-officielles').creerAlertesOfficielles({
 });
 app.get('/api/alertes-officielles', (req, res) => res.set('Cache-Control', 'no-store').json({ ...alertesOff.etat(), niveauxVigipirate: alertesOff.NIVEAUX_VIGIPIRATE, ...(estAdmin(req) ? { departements: listeDepartements.map((d) => ({ code: d.code, nom: d.nom })), voisins: ((zoneVoisins() || {}).departements || []).map((d) => d.code), departementCarte: String(config.departement.code), canauxMc: config.meshcore.actif ? companion.canaux().map((c) => c.nom) : [] } : {}),
   // Canaux proposés pour l'envoi à la demande (gestionnaires) : ceux du companion MeshCore et du module Meshtastic
-  ...(estGestion(req) ? { envoi: { canauxMc: config.meshcore.actif ? companion.canaux().map((c) => c.nom).filter(Boolean) : [], canauxMt: (() => { try { const i = sourceRadio.infos(); return i.connecte ? (i.canaux || []).map((c) => c.nom).filter(Boolean) : []; } catch { return []; } })() } } : {}),
+  ...(estGestion(req) ? { envoi: (() => {
+    const canauxMc2 = config.meshcore.actif ? companion.canaux().map((c) => c.nom).filter(Boolean) : [];
+    let infosMt = { connecte: false, canaux: [] };
+    try { infosMt = sourceRadio.infos(); } catch { /* pas de module */ }
+    const canauxMt = infosMt.connecte ? (infosMt.canaux || []).map((c) => c.nom).filter(Boolean) : [];
+    // Pourquoi le bouton 📡 n'apparaît pas : dit à l'écran au lieu de le cacher en silence
+    const pourquoi = [];
+    if (!canauxMc2.length && !canauxMt.length) {
+      if (config.meshcore.actif) { let pret = false; try { pret = !!companion.etat().pret; } catch { /* */ } pourquoi.push(pret ? 'companion MeshCore relié mais sans canal nommé' : 'companion MeshCore non relié'); }
+      pourquoi.push(infosMt.connecte ? 'module Meshtastic relié mais sans canal nommé' : 'module Meshtastic non relié');
+    }
+    return { canauxMc: canauxMc2, canauxMt, pourquoi };
+  })() } : {}),
   fonctionsMasquees: [...fonctionsMasquees] }));
 // ---- Feux actifs vus par satellite (NASA FIRMS) : couche de la carte, alertes sur la zone, envoi radio à la demande ----
 const feux = require('./feux').creerFeux({ config, journal, diffuser });
@@ -4324,6 +5059,9 @@ function presetReseau() {
 }
 const fournisseursRelief = {
   presetCourant: presetReseau,
+  // Relief grossier mondial en attendant le relief précis (null si désactivé ou pas encore téléchargé)
+  reliefGrossier: () => (grossierActif() ? reliefGrossier : null),
+  apresTelechargement: () => setTimeout(appliquerPlafondRelief, 5000).unref(),
   // Relais / passerelles positionnés et entendus dans les dernières 24 h (un relais muet ne couvre plus rien)
   noeudsReseau: () => {
     const limite = Date.now() - 24 * 3600000;
@@ -4358,7 +5096,7 @@ const relief = creerRelief(config, journal, fournisseursRelief);
 
 // ---- Maintenance : charge radio, autonomie, firmwares, rôles -------------------------------------
 const maintenance = creerMaintenance({ stockage, config, reseau, installations, journal });
-app.get('/api/maintenance/:quoi', (req, res) => {
+app.get('/api/maintenance/:quoi', async (req, res) => {
   if (!estMembre(req)) return res.status(401).json({ erreur: 'Connexion requise' });
   const q = req.params.quoi;
   try {
@@ -4367,7 +5105,7 @@ app.get('/api/maintenance/:quoi', (req, res) => {
     if (q === 'firmwares') return res.json(maintenance.firmwares());
     if (q === 'roles') {
       let couv = null;
-      try { if (relief.pret()) couv = couvertureReseauCachee(relief, optsRelief({}), 'mt'); } catch { /* relief pas prêt */ }
+      try { if (relief.pret()) couv = await couvertureReseauCachee(relief, optsRelief({}), 'mt'); } catch { /* relief pas prêt */ }
       return res.json({ ...maintenance.roles(couv && !couv.vide ? couv : null, relief.sommets()), relief: !!couv });
     }
     res.status(404).json({ erreur: 'Inconnu' });
@@ -4406,6 +5144,32 @@ app.post('/api/federation/partenaires', async (req, res) => {
 });
 app.delete('/api/federation/partenaires', (req, res) => { if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' }); federation.retirer(String(req.query.url || '')); res.json({ ok: true }); });
 
+// ---- Mur des donateurs (HelloAsso + GitHub Sponsors, voir src/donateurs.js) -------------------------------
+// Public : jamais de clé, jamais d'e-mail, d'adresse ni de date, noms anonymisés et montants masqués par défaut ;
+// liens « Faire un don » tirés des réglages (absents si la source est désactivée)
+app.get('/api/donateurs', (req, res) => {
+  try { res.set('Cache-Control', 'max-age=60').json({ liste: donateurs.liste(), liens: donateurs.liens() }); }
+  catch (e) { journal('[Donateurs] liste :', e.message); res.status(500).json({ erreur: 'Mur des donateurs indisponible' }); }
+});
+app.get('/api/donateurs/reglages', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  res.set('Cache-Control', 'no-store').json(donateurs.etat());
+});
+// Un enregistrement impossible (disque plein, volume en lecture seule) répond 500 : le réglage n'est pas pris
+const erreurDonateurs = (res, e) => res.status(e.code === 'SAUVEGARDE' ? 500 : 400).json({ erreur: e.message });
+app.post('/api/donateurs/reglages', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  try { res.json(donateurs.regler(req.body || {})); } catch (e) { erreurDonateurs(res, e); }
+});
+app.post('/api/donateurs/manuel', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  try { res.json(donateurs.manuelAjouter(req.body || {})); } catch (e) { erreurDonateurs(res, e); }
+});
+app.delete('/api/donateurs/manuel/:id', (req, res) => {
+  if (!estAdmin(req)) return res.status(401).json({ erreur: 'Connexion admin requise' });
+  try { donateurs.manuelRetirer(String(req.params.id)); res.json({ ok: true }); } catch (e) { erreurDonateurs(res, e); }
+});
+
 // ---- Exports et intégrations (GeoJSON, Prometheus/Grafana, Home Assistant) ------------------------
 const exportsCarte = creerExports({ config, stockage, reseau, reseauMc, maintenance, santeCarte: { etat: () => santeCarte.etat() }, relief, alertes: () => dernieresAlertes, alertesMc: () => (config.meshcore.actif ? alertesMc : []), adminMc });
 const exporter = (f, type) => (req, res) => {
@@ -4423,10 +5187,10 @@ app.get('/api/export/relais.gpx', exporter(() => exportsCarte.relaisGpx(), 'appl
 // Statystyki MeshCore dla strony meshcoresouth.pl (czytane z przeglądarki, CORS *). Bez kluczy companionów i treści.
 const statystykiPl = config.meshcore.actif ? require('./statystyki-pl').creerStatystyki({
   db: stockage.db, config, journal,
-  liczPokrycie: () => {
+  liczPokrycie: async () => {
     if (!relief.pret()) return null;
     const o = optsRelief({}); o.noeuds = repeteursMc(); o.preset = 'MESHCORE_FR';
-    const r = couvertureReseauCachee(relief, o, 'meshcore');
+    const r = await couvertureReseauCachee(relief, o, 'meshcore');
     return r && !r.vide ? r : null;
   },
 }) : null;
@@ -4647,14 +5411,20 @@ app.post('/api/historique/compacter', (req, res) => {
 { const m = sourceRadio.modules(); journal(m.actif ? `Module radio actif : ${m.actif.hote}:${m.actif.port}` : 'Aucun module radio actif (choix depuis la carte, onglet Réseau)'); }
 setTimeout(rafraichirEtat, 2000);
 
-setInterval(() => {
-  const n = stockage.purger(config.retentionJours, config.messagesRetentionJours) + reseauMc.purger(config.retentionJours, config.meshcore.retentionPaquetsJours);
-  reseau.nettoyer();
+// Purge horaire : la purge Meshtastic avance par lots (la carte reste réactive), puis MeshCore et le nettoyage
+async function purgeHoraire() {
+  const t0 = Date.now();
+  const nMt = await stockage.purger(config.retentionJours, config.messagesRetentionJours);
+  const n = nMt + chronoTache('purge MeshCore', () => reseauMc.purger(config.retentionJours, config.meshcore.retentionPaquetsJours));
+  chronoTache('nettoyage des liens impossibles', () => reseau.nettoyer());
+  return { n, dureeS: Math.round((Date.now() - t0) / 100) / 10 };
+}
+setInterval(() => purgeHoraire().then(({ n, dureeS }) => {
   // Compteurs séparés : un broker peut ne porter que du MeshCore (Meshtastic « 0 traité » est alors normal)
   const mcR = compteurMc.recusMqtt || 0;
-  journal(`Purge : ${n} lignes de plus de ${config.retentionJours} jours supprimées · MQTT Meshtastic : ${compteur.recus - mcR} reçus, ${compteur.decodes} traités, ${compteur.erreurs} erreurs${config.meshcore.actif ? ` · MeshCore : ${mcR} reçus, ${compteurMc.observations} observations gardées, ${compteurMc.horsPerimetre || 0} hors périmètre` : ''} (depuis le démarrage)`);
-}, 3600000);
-stockage.purger(config.retentionJours, config.messagesRetentionJours);
+  journal(`Purge : ${n} lignes de plus de ${config.retentionJours} jours supprimées · MQTT Meshtastic : ${compteur.recus - mcR} reçus, ${compteur.decodes} traités, ${compteur.erreurs} erreurs${config.meshcore.actif ? ` · MeshCore : ${mcR} reçus, ${compteurMc.observations} observations gardées, ${compteurMc.horsPerimetre || 0} hors périmètre` : ''} (depuis le démarrage), purge en ${dureeS} s`);
+}).catch((e) => journal('Purge impossible :', e.message)), 3600000);
+stockage.purger(config.retentionJours, config.messagesRetentionJours).catch((e) => journal('Purge impossible :', e.message));
 setTimeout(() => reseauMc.purger(config.retentionJours, config.meshcore.retentionPaquetsJours), 60000);
 {
   const n = reseau.nettoyer();
@@ -4668,6 +5438,7 @@ process.on('unhandledRejection', (e) => { console.error(new Date().toISOString()
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     journal('Arrêt…');
+    try { secteursAlerte.arreter(); urgence.arreter(); } catch { /* rien à enregistrer */ }
     publicateurMc.fermer();
     clientMqtt.end(true);
     stockage.db.close();

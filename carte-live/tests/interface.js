@@ -30,7 +30,7 @@ fs.writeFileSync(path.join(donnees, 'feux.json'), JSON.stringify({ maj: Date.now
 ] }));
 function demarrerServeur() {
   serveur = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server.js')], {
-    env: { ...process.env, PORT: String(PORT), FICHIER_BASE: path.join(donnees, 'carte-live.db'), MQTT_URL: 'mqtt://127.0.0.1:1', DEPARTEMENT: '43', MESHCORE: 'oui', ADMIN_MOT_DE_PASSE: '', AGENTS_PORT: String(PORT + 5) },
+    env: { ...process.env, PORT: String(PORT), FICHIER_BASE: path.join(donnees, 'carte-live.db'), MQTT_URL: 'mqtt://127.0.0.1:1', DEPARTEMENT: '43', MESHCORE: 'oui', ADMIN_MOT_DE_PASSE: '', AGENTS_PORT: String(PORT + 5), SMTP_HOTE: 'fichier', CARTE_ADRESSE: 'https://carte.essai', STATS_PAYS: 'non', RELIEF_MONDE_ERDDAP: 'http://127.0.0.1:1/erddap' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const log = fs.createWriteStream(path.join(sorties, 'serveur.log'));
@@ -179,6 +179,24 @@ async function essaiCarteFrancais(contexte) {
     return /etiquette-auto/.test(src) && /🤖 automatique/.test(src);
   }).catch(() => false);
   if (auto) ok('programmer : opérations automatiques signalées'); else ko('programmer : étiquette « automatique » absente');
+  // 3 bis. Alertes des capteurs réglés à la main : visibles même hors de la zone ; les autres restent filtrées
+  const hz = await page.evaluate(() => {
+    const CLE = 'AA'.repeat(32);
+    const avant = (mc.etat && mc.etat.alertes) || [];
+    mc.noeuds.set(CLE, { cle: CLE, nom: 'Abri lointain', role: 'capteur', lat: 10, lon: 10, statut: 'actif' });
+    const d = Date.now() - 11 * 3600000;
+    mc.etat = { ...(mc.etat || {}), alertes: [
+      { cle: 'mc-capteur-retard:' + CLE, noeud: CLE, type: 'releve', niveau: 'attention', nom: 'Abri lointain', depuis: d, message: 'Abri lointain : aucun relev\u00e9 automatique re\u00e7u depuis hier' },
+      { cle: 'mc-capteur:' + CLE + ':tension:1', noeud: CLE, type: 'capteur', niveau: 'attention', nom: 'Abri lointain', depuis: d, message: 'Abri lointain \u00b7 Tension ADC : 3,20 V (sous 3,4 V)' },
+      { cle: 'mc-muet:' + CLE, noeud: CLE, type: 'muet', niveau: 'critique', nom: 'Abri lointain', depuis: d, message: 'R\u00e9p\u00e9teur MeshCore Abri lointain non entendu depuis 30 h' },
+    ] };
+    mcMajAlertes();
+    const t = document.querySelector('#alertes-mc').textContent;
+    const r = { horsZone: !mcDansZone(mc.noeuds.get(CLE)), pastille: (document.querySelector('#nb-alertes-mc') || {}).textContent, retard: /aucun relev\u00e9 automatique/.test(t), seuil: /Tension ADC/.test(t), muet: /non entendu depuis/.test(t) };
+    mc.noeuds.delete(CLE); mc.etat = { ...mc.etat, alertes: avant }; mcMajAlertes(); // la page est rendue \u00e0 son \u00e9tat d'avant
+    return r;
+  }).catch((e) => ({ erreur: e.message }));
+  if (hz.horsZone && hz.retard && hz.seuil && !hz.muet && hz.pastille === '2') ok('alertes des capteurs réglés à la main : visibles hors zone, les autres toujours filtrées'); else ko('alertes hors zone : ' + JSON.stringify(hz));
   // 4. Réglages avancés (variables du .env) : liste, fiche, refus d'une valeur hors bornes (sans redémarrer)
   const va = await page.evaluate(async () => {
     const l = await fetch('/api/reglages/variables').then((x) => x.json());
@@ -441,7 +459,19 @@ async function essaiAdministrationALaDemande(navig, cookie) {
     }, f);
     if (!/^ERREUR/.test(t) && t.includes(attendu)) ok(`${f} : écran ouvert`); else ko(`${f} : ${t.slice(0, 140)}`);
   }
-  for (const pan of ['comptes', 'journal', 'sauvegardes', 'reglages']) {
+  // Cache du relief : espace occupé, purge, plafond et relief mondial dans l'écran du relief
+  const cacheRel = await page.evaluate(async () => {
+    await ficheFrance();
+    for (let k = 0; k < 30 && !(document.querySelector('#bloc-cache-relief h3')); k++) await new Promise((r) => setTimeout(r, 200));
+    const b = document.querySelector('#bloc-cache-relief');
+    return b ? { titre: b.textContent.includes('Relief téléchargé'), purge: !!b.querySelector('#cr-tout'), plafond: !!b.querySelector('#cr-plafond'), grossier: !!b.querySelector('#cr-grossier') } : null;
+  });
+  if (cacheRel && cacheRel.titre && cacheRel.purge && cacheRel.plafond && cacheRel.grossier) ok('relief : espace occupé, purge, plafond et relief mondial affichés'); else ko('cache du relief : ' + JSON.stringify(cacheRel));
+  const purgeVide = await page.evaluate(async () => { const r = await postJson('/api/relief/cache', { purger: { joursInactifs: 30 } }); return r && r.purge && Array.isArray(r.purge.supprimees) && r.principale && r.principale.code; });
+  if (purgeVide) ok('purge du relief : réponse correcte, zone de la carte gardée'); else ko('purge du relief : réponse inattendue');
+  const refuse = await fetch(BASE + '/api/relief/cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purger: { tout: true } }) });
+  if (refuse.status === 401) ok('purge du relief refusée sans connexion admin'); else ko('purge du relief sans connexion : HTTP ' + refuse.status);
+  for (const pan of ['comptes', 'journal', 'sauvegardes', 'reglages', 'frequentation']) {
     const t = await page.evaluate(async (p) => { await ouvrirDlg(p); await new Promise((r) => setTimeout(r, 700)); const x = document.querySelector(`#pan-${p}`); const v = x ? x.textContent.trim().length : 0; document.querySelectorAll('dialog[open]').forEach((d) => d.close()); return v; }, pan);
     if (t > 20) ok(`gestion › ${pan} : rempli`); else ko(`gestion › ${pan} vide`);
   }
@@ -504,6 +534,217 @@ async function essaiProfil3D(navig) {
   bilanErreurs(erreurs, 'profil 3D');
   await contexte.close();
 }
+async function essaiMotDePasseOublie(navig, cookie) {
+  console.log('Mot de passe oublié (e-mail, lien de l’administrateur)');
+  const H = { 'Content-Type': 'application/json', Cookie: `${cookie.name}=${cookie.value}` };
+  const appel = async (m, url, b, h = H) => { const r = await fetch(BASE + url, { method: m, headers: h, body: b ? JSON.stringify(b) : undefined }); return { statut: r.status, j: await r.json().catch(() => ({})), cookie: r.headers.get('set-cookie') }; };
+  const SANS = { 'Content-Type': 'application/json' };
+  const a1 = (await appel('POST', '/api/comptes', { identifiant: 'oubli-mail', motDePasse: 'Ancien-mdp-2026', email: 'oubli@exemple.fr' })).j;
+  const a2 = (await appel('POST', '/api/comptes', { identifiant: 'oubli-admin', motDePasse: 'Ancien-mdp-2026' })).j;
+  // Par e-mail : lien écrit dans courriels-essai (SMTP_HOTE=fichier), même réponse pour un compte inconnu
+  const dossier = path.join(donnees, 'courriels-essai');
+  const etat = (await appel('GET', '/api/mot-de-passe/oubli', null, SANS)).j;
+  const r1 = await appel('POST', '/api/mot-de-passe/oubli', { identifiant: 'oubli@exemple.fr' }, SANS);
+  const inconnu = await appel('POST', '/api/mot-de-passe/oubli', { identifiant: 'personne-de-ce-nom' }, SANS);
+  const mails = fs.existsSync(dossier) ? fs.readdirSync(dossier) : [];
+  const mail = mails.length ? JSON.parse(fs.readFileSync(path.join(dossier, mails[mails.length - 1]), 'utf8')) : {};
+  const jeton = (/https:\/\/carte\.essai\/\?reinit=([\w-]+)/.exec(mail.text || '') || [])[1];
+  if (etat.courriel && r1.statut === 200 && JSON.stringify(r1.j) === JSON.stringify(inconnu.j) && mails.length === 1 && mail.to && mail.to[0].address === 'oubli@exemple.fr' && jeton) ok('mot de passe oublié : lien envoyé par e-mail, même réponse pour un compte inconnu'); else ko('oubli par e-mail : ' + JSON.stringify({ etat, r1: r1.j, inconnu: inconnu.j, mails: mails.length, to: mail.to }));
+  const court = await appel('POST', '/api/mot-de-passe/reinitialiser', { jeton, nouveau: 'court' }, SANS);
+  const bon = await appel('POST', '/api/mot-de-passe/reinitialiser', { jeton, nouveau: 'Nouveau-mdp-2026' }, SANS);
+  const encore = await appel('POST', '/api/mot-de-passe/reinitialiser', { jeton, nouveau: 'Autre-mdp-2026!' }, SANS);
+  const ancien = await appel('POST', '/api/connexion', { identifiant: 'oubli-mail', motDePasse: 'Ancien-mdp-2026' }, SANS);
+  const nouveau = await appel('POST', '/api/connexion', { identifiant: 'oubli-mail', motDePasse: 'Nouveau-mdp-2026' }, SANS);
+  if (court.statut === 400 && bon.statut === 200 && bon.j.connecte && /gaulix_session=/.test(bon.cookie || '') && encore.statut === 400 && ancien.statut === 401 && nouveau.statut === 200) ok('mot de passe oublié : nouveau mot de passe par le lien, lien à usage unique, ancien refusé'); else ko('réinitialisation : ' + JSON.stringify({ court: court.statut, bon: bon.j, encore: encore.statut, ancien: ancien.statut, nouveau: nouveau.statut }));
+  // Sans e-mail : demande signalée aux administrateurs, qui créent le lien
+  await appel('POST', '/api/mot-de-passe/oubli', { identifiant: 'oubli-admin' }, SANS);
+  const liste = (await appel('GET', '/api/comptes')).j;
+  const vu = liste.find((c) => c.id === a2.id) || {};
+  const lien = (await appel('POST', '/api/comptes/' + a2.id, { lienReinit: true })).j;
+  const parAdmin = await appel('POST', '/api/mot-de-passe/reinitialiser', { jeton: lien.jeton, nouveau: 'Admin-donne-2026' }, SANS);
+  const apres = ((await appel('GET', '/api/comptes')).j.find((c) => c.id === a2.id) || {});
+  if (vu.reinitDemande && lien.jeton && parAdmin.statut === 200 && !apres.reinitDemande && fs.readdirSync(dossier).length === 1) ok('mot de passe oublié sans e-mail : demande visible des administrateurs, lien créé par l’administrateur'); else ko('oubli sans e-mail : ' + JSON.stringify({ demande: vu.reinitDemande, lien: !!lien.jeton, parAdmin: parAdmin.j, apres: apres.reinitDemande }));
+  // Interface : lien « Mot de passe oublié ? » et page du lien reçu
+  const ctx = await navig.newContext({ viewport: { width: 1200, height: 850 }, locale: 'fr-FR' });
+  await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  const { page } = await ouvrir(ctx, '/');
+  await page.waitForTimeout(1200);
+  await page.click('#btn-admin');
+  await page.waitForTimeout(400);
+  await page.click('#btn-oubli');
+  await page.waitForTimeout(500);
+  await page.fill('#form-oubli input[name=identifiant]', 'oubli-admin');
+  await page.click('#form-oubli button[type=submit]');
+  await page.waitForTimeout(800);
+  const note = await page.textContent('#note-oubli');
+  const l2 = (await appel('POST', '/api/comptes/' + a2.id, { lienReinit: true })).j;
+  await page.goto(BASE + '/?reinit=' + l2.jeton);
+  await page.waitForTimeout(1800);
+  const visible = await page.evaluate(() => !document.querySelector('#form-reinit').hidden && document.querySelector('#dlg-compte').open && !/reinit=/.test(location.search));
+  await page.fill('#form-reinit input[name=nouveau]', 'Via-la-page-2026');
+  await page.fill('#form-reinit input[name=confirmation]', 'Via-la-page-2026');
+  await Promise.all([page.waitForNavigation({ timeout: 8000 }).catch(() => {}), page.click('#form-reinit button[type=submit]')]);
+  await page.waitForTimeout(1500);
+  const connecte = await page.evaluate(async () => (await (await fetch('/api/compte')).json() || {}).identifiant);
+  if (/Demande envoyée/.test(note) && visible && connecte === 'oubli-admin') ok('page : « Mot de passe oublié ? », lien reçu, nouveau mot de passe et connexion'); else ko('page mot de passe oublié : ' + JSON.stringify({ note, visible, connecte }));
+  await ctx.close();
+  // Identifiant « NOM Prénom » et fiche modifiée par l'administrateur
+  const f1 = await appel('POST', '/api/comptes', { identifiant: '  DELAGE   Fabrice ', indicatif: 'f1ukz', motDePasse: 'Provisoire-2026' });
+  const ren = await appel('POST', '/api/comptes/' + f1.j.id, { identifiant: 'Fabrice D\u2019Elage', indicatif: 'F1UKZ', email: 'fabrice@exemple.fr' });
+  const pris = await appel('POST', '/api/comptes/' + f1.j.id, { identifiant: 'oubli-mail' });
+  const fiche = ((await appel('GET', '/api/comptes')).j.find((c) => c.id === f1.j.id) || {});
+  const cx = await appel('POST', '/api/connexion', { identifiant: 'fabrice d\u2019elage', motDePasse: 'Provisoire-2026' }, SANS);
+  if (f1.statut === 200 && f1.j.identifiant === 'DELAGE Fabrice' && ren.statut === 200 && pris.statut === 400 && fiche.identifiant === 'Fabrice D\u2019Elage' && fiche.email === 'fabrice@exemple.fr' && cx.statut === 200) ok('comptes : identifiant « NOM Prénom », renommé par l’administrateur (doublon refusé), connexion avec le nouveau nom'); else ko('identifiant NOM Prénom : ' + JSON.stringify({ f1: f1.j, ren: ren.j, pris: pris.statut, fiche, cx: cx.statut }));
+  for (const id of [a1.id, a2.id, f1.j.id]) await appel('DELETE', '/api/comptes/' + id);
+}
+
+async function essaiFrequentation(navig, cookie) {
+  console.log('Fréquentation (visiteurs, pays, provenance)');
+  const H = { Cookie: `${cookie.name}=${cookie.value}` };
+  const avant = await (await fetch(BASE + '/api/frequentation?jours=7', { headers: H })).json();
+  const ua = 'Mozilla/5.0 (Windows NT 10.0) Essai/1.0';
+  for (let k = 0; k < 3; k++) await fetch(BASE + '/', { headers: { 'User-Agent': ua, Referer: 'https://l.facebook.com/l.php?u=x' } });
+  await fetch(BASE + '/', { headers: { 'User-Agent': 'Googlebot/2.1' } });
+  await fetch(BASE + '/', { headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 14) CarteLiveAndroid/2.28.12' } });
+  const f = await (await fetch(BASE + '/api/frequentation?jours=7', { headers: H })).json();
+  const page = (n) => (f.pages.find((x) => x.page === n) || {}).visites || 0;
+  const pageAv = (n) => (avant.pages.find((x) => x.page === n) || {}).visites || 0;
+  const fb = (f.provenances.find((x) => x.provenance === 'facebook.com') || {}).visites || 0;
+  const lan = f.pays.find((x) => x.pays === 'LAN');
+  const anonyme = await fetch(BASE + '/api/frequentation');
+  if (page('carte') - pageAv('carte') === 3 && page('appli Android') - pageAv('appli Android') === 1 && fb >= 3 && lan && f.aujourdhui.visiteurs - avant.aujourdhui.visiteurs === 2 && anonyme.status === 401 && !JSON.stringify(f).includes('127.0.0.1')) ok('fréquentation : pages, visiteurs uniques du jour, provenance Facebook, réseau local, robots ignorés, sans adresse IP, réservé aux administrateurs');
+  else ko('fréquentation : ' + JSON.stringify({ pages: f.pages, avant: avant.pages, fb, lan, v: [avant.aujourdhui, f.aujourdhui], anonyme: anonyme.status }));
+  const ctx = await navig.newContext({ viewport: { width: 1366, height: 800 }, locale: 'fr-FR' });
+  await ctx.addCookies([cookie]);
+  await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  const { page: pg, erreurs } = await ouvrir(ctx, '/');
+  await pg.waitForTimeout(800);
+  const e = await pg.evaluate(async () => { await ouvrirDlg('frequentation'); await new Promise((r) => setTimeout(r, 1200)); const z = document.querySelector('#pan-frequentation'); return { cartes: z.querySelectorAll('.carte-freq').length, colonnes: z.querySelectorAll('.colonne-freq').length, fb: /facebook\.com/.test(z.textContent), lan: /Réseau local/.test(z.textContent), deborde: document.querySelector('#dlg-gestion').scrollWidth - document.querySelector('#dlg-gestion').clientWidth }; });
+  await capture(pg, 'frequentation');
+  if (e.cartes === 4 && e.colonnes === 30 && e.fb && e.lan && e.deborde <= 2 && !erreurs.length) ok('Gérer › Fréquentation : chiffres, visiteurs par jour, pays et provenance'); else ko('écran fréquentation : ' + JSON.stringify({ ...e, erreurs }));
+  await ctx.close();
+}
+
+// Passerelle d'un membre : sa radio (simulée derrière la WebSocket de la page) reste en écoute, porte son identifiant,
+// ne remplace aucun module ; il y écrit les canaux de la carte et de son ADRASEC (clés jamais montrées), avec place libérée.
+function fausseRadio(ws, num) {
+  const { racine } = require('../src/decodeur');
+  const FromRadio = racine.lookupType('meshtastic.FromRadio'), ToRadio = racine.lookupType('meshtastic.ToRadio'), Admin = racine.lookupType('meshtastic.AdminMessage');
+  const cle = (n) => Buffer.alloc(32, n);
+  const canaux = [
+    { index: 0, role: 1, settings: { name: '', psk: Buffer.from([1]) } },
+    { index: 1, role: 2, settings: { name: 'Fr_Balise', psk: Buffer.from([1]) } },
+    { index: 2, role: 2, settings: { name: 'Perso', psk: cle(7), moduleSettings: { positionPrecision: 13 } } },
+    ...[3, 4, 5, 6, 7].map((i) => ({ index: i, role: 0, settings: {} })),
+  ];
+  const ordres = [];
+  const envoyer = (o) => { const c = FromRadio.encode(FromRadio.create(o)).finish(); const t = Buffer.from([0x94, 0xc3, c.length >> 8, c.length & 255]); ws.send(Buffer.concat([t, Buffer.from(c)])); };
+  let tampon = Buffer.alloc(0);
+  ws.on('message', (d, binaire) => {
+    if (!binaire) return;
+    tampon = Buffer.concat([tampon, Buffer.from(d)]);
+    for (;;) {
+      const i = tampon.indexOf(Buffer.from([0x94, 0xc3]));
+      if (i < 0) { tampon = tampon.subarray(Math.max(0, tampon.length - 1)); break; }
+      tampon = tampon.subarray(i);
+      if (tampon.length < 4) break;
+      const n = tampon.readUInt16BE(2); if (tampon.length < 4 + n) break;
+      const tr = ToRadio.decode(tampon.subarray(4, 4 + n)); tampon = tampon.subarray(4 + n);
+      if (tr.wantConfigId) {
+        envoyer({ myInfo: { myNodeNum: num } });
+        envoyer({ nodeInfo: { num, user: { id: '!' + num.toString(16), longName: 'Radio de Paul', shortName: 'PAUL' } } });
+        envoyer({ config: { lora: { modemPreset: 0, hopLimit: 3, region: 3 } } });
+        for (const c of canaux) envoyer({ channel: c });
+        envoyer({ configCompleteId: tr.wantConfigId });
+      } else if (tr.packet && tr.packet.decoded && tr.packet.decoded.portnum === 6) {
+        const a = Admin.decode(tr.packet.decoded.payload);
+        ordres.push({ vers: tr.packet.to >>> 0, a: Object.keys(Admin.toObject(a)).filter((k) => a[k] != null)[0] });
+        if (a.setChannel) canaux[a.setChannel.index] = Admin.toObject(a, { defaults: false }).setChannel;
+      }
+    }
+  });
+  return { canaux, ordres };
+}
+async function essaiPasserelleMembre(navig, cookie) {
+  console.log('Member gateway and channel set');
+  const WebSocket = require('ws');
+  const HA = { 'Content-Type': 'application/json', Cookie: `${cookie.name}=${cookie.value}` };
+  const appelA = async (m, url, b) => { const r = await fetch(BASE + url, { method: m, headers: HA, body: b ? JSON.stringify(b) : undefined }); return { statut: r.status, j: await r.json().catch(() => ({})) }; };
+  const paul = (await appelA('POST', '/api/comptes', { identifiant: 'Paul passerelle', motDePasse: 'Essai-paul-2026!!' })).j;
+  const cx = await fetch(BASE + '/api/connexion', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifiant: 'Paul passerelle', motDePasse: 'Essai-paul-2026!!' }) });
+  const cookieP = (cx.headers.get('set-cookie') || '').split(';')[0];
+  const HP = { 'Content-Type': 'application/json', Cookie: cookieP };
+  const appelP = async (m, url, b) => { const r = await fetch(BASE + url, { method: m, headers: HP, body: b ? JSON.stringify(b) : undefined }); return { statut: r.status, j: await r.json().catch(() => ({})) }; };
+  // Jeu de canaux de la carte (administrateur)
+  const jc = await appelA('PUT', '/api/jeux-canaux/carte', { canaux: [{ nom: 'ADRASEC43', cle: 'aleatoire', positions: true }, { nom: 'Alerte', cle: 'publique' }, { nom: 'Fr_EMCOM', cle: 'publique' }] });
+  const ja = jc;
+  const refusP = await appelP('PUT', '/api/jeux-canaux/carte', { canaux: [] });
+  const mauvais = await appelA('PUT', '/api/jeux-canaux/carte', { canaux: [{ nom: 'Accentué_é', cle: 'publique' }] });
+  const vueP = await appelP('GET', '/api/jeux-canaux');
+  const texte = JSON.stringify([jc.j, ja.j, vueP.j]);
+  const adr = (vueP.j.jeux || []).find((x) => x.portee === 'carte');
+  if (jc.statut === 200 && ja.statut === 200 && refusP.statut === 401 && mauvais.statut === 400 && adr && adr.canaux.length === 3 && !adr.modifiable && !adr.canaux[0].empreinte && ja.j.canaux[0].empreinte && !/psk|"cle"|[A-Za-z0-9+/]{40,}={0,2}/.test(texte)) ok('channel set: set by the administrator, keys never sent back (fingerprint for whoever edits it)');
+  else ko('jeux de canaux : ' + JSON.stringify({ jc: jc.statut, ja: ja.statut, refusP: refusP.statut, mauvais: mauvais.statut, adr }).slice(0, 400));
+  // Radio de Paul reliée par « sa page » : demande « principal », reçoit « en écoute » avec son identifiant
+  const ws = new WebSocket(BASE.replace('http', 'ws') + '/ws/module?nom=Radio%20USB&source=USB&role=principal', { headers: { Cookie: cookieP } });
+  const premier = new Promise((r) => ws.on('message', (d, bin) => { if (!bin) r(JSON.parse(d.toString())); }));
+  await new Promise((r, k) => { ws.once('open', r); ws.once('error', k); });
+  const radio = fausseRadio(ws, 0x11223344);
+  const info = await Promise.race([premier, new Promise((r) => setTimeout(() => r({}), 3000))]);
+  let mien = null;
+  for (let k = 0; k < 30; k++) { mien = (await appelP('GET', '/api/passerelle/miennes')).j; if (mien.passerelles && mien.passerelles[0] && mien.passerelles[0].radio && mien.passerelles[0].radio.connecte) break; await new Promise((r) => setTimeout(r, 300)); }
+  const p0 = mien.passerelles && mien.passerelles[0];
+  const ecA = await appelA('GET', '/api/ecoutes');
+  const vueAdmin = (ecA.j.meshtastic || []).find((x) => x.hote === info.hote);
+  const anonyme = await new Promise((r) => { const w = new WebSocket(BASE.replace('http', 'ws') + '/ws/module'); w.on('open', () => { w.close(); r('ouverte'); }); w.on('error', () => r('refusée')); w.on('unexpected-response', () => r('refusée')); });
+  if (info.role === 'ecoute' && /paul-passerelle/.test(info.hote || '') && p0 && p0.radio.connecte && p0.radio.canaux.length === 8 && p0.radio.canaux[2].chiffrement === 'prive' && !JSON.stringify(mien).includes('BwcH') && vueAdmin && /Paul passerelle/.test(vueAdmin.compte) && anonyme === 'refusée') ok('member gateway: listening only, named after the account, seen by the administrator, channels read without keys, refused without an account');
+  else ko('passerelle membre : ' + JSON.stringify({ info, p0, vueAdmin, anonyme }).slice(0, 500));
+  // Page de Paul : « Devenir passerelle » et le panneau des canaux de sa radio
+  const ctx = await navig.newContext({ viewport: { width: 1366, height: 860 }, locale: 'fr-FR' });
+  const [n, v] = cookieP.split('=');
+  await ctx.addCookies([{ name: n, value: v, domain: '127.0.0.1', path: '/' }]);
+  await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  const { page, erreurs } = await ouvrir(ctx, '/');
+  await page.waitForTimeout(800);
+  const e1 = await page.evaluate(async (hote) => {
+    const bouton = document.querySelector('#outil-connecter').textContent;
+    moduleNav.etat = 'relie'; moduleNav.hote = hote; moduleNav.type = 'usb'; moduleNav.role = 'ecoute';
+    await ouvrirConnexion();
+    await new Promise((r) => setTimeout(r, 1500));
+    const z = document.querySelector('#cx-canaux');
+    const cases = [...z.querySelectorAll('[data-ajout]')].map((x) => x.dataset.nom + (x.checked ? '+' : ''));
+    return { bouton, titre: document.querySelector('#fiche-contenu h2').textContent, serie: !!document.querySelector('[data-cx="serie"]'), role: document.querySelector('#cx-role').hidden, grille: z.querySelectorAll('.case-canal').length, cases, clair: !z.querySelector('.avert-clair').hidden, liberer: !z.querySelector('.liberer-canaux').hidden, bouton2: !!document.querySelector('#cx-ecrire') };
+  }, info.hote);
+  await capture(page, 'passerelle-membre');
+  if (/Devenir passerelle/.test(e1.bouton) && /Devenir passerelle/.test(e1.titre) && !e1.serie && e1.role && e1.grille === 8 && e1.cases.join(',') === 'ADRASEC43+,Alerte+,Fr_EMCOM+' && e1.clair && !e1.liberer && e1.bouton2 && !erreurs.length) ok('member page: “Become a gateway”, radio channels and set to tick, unencrypted warning');
+  else ko('page passerelle : ' + JSON.stringify({ ...e1, erreurs }));
+  // Écriture : 3 canaux à ajouter, 5 places libres ; « Perso » (clé privée, précision 13) reste à sa place
+  const w1 = await appelP('POST', '/api/passerelle/canaux', { hote: info.hote, ajouter: adr.canaux.map((c) => ({ portee: 'carte', id: c.id })) });
+  const noms = radio.canaux.map((c) => (c.role ? (c.settings && c.settings.name) || '' : '-'));
+  const k3 = radio.canaux.find((c) => c.settings && c.settings.name === 'ADRASEC43');
+  const versLui = radio.ordres.every((o) => o.vers === 0x11223344);
+  // Radio pleine : il faut libérer ; refus clair puis écriture avec un emplacement libéré
+  const autre = (await appelA('PUT', '/api/jeux-canaux/carte', { canaux: [...adr.canaux.map((c) => ({ id: c.id, nom: c.nom, cle: '' })), { nom: 'C6', cle: 'publique' }, { nom: 'C7', cle: 'publique' }, { nom: 'C8', cle: 'aleatoire' }] })).j;
+  const ids = (nm) => autre.canaux.filter((c) => nm.includes(c.nom)).map((c) => ({ portee: 'carte', id: c.id }));
+  const plein = await appelP('POST', '/api/passerelle/canaux', { hote: info.hote, ajouter: ids(['C6', 'C7', 'C8']) });
+  const libere = await appelP('POST', '/api/passerelle/canaux', { hote: info.hote, ajouter: ids(['C6', 'C7', 'C8']), liberer: [1] });
+  const noms2 = radio.canaux.map((c) => (c.role ? (c.settings && c.settings.name) || '' : '-'));
+  const perso = radio.canaux.find((c) => c.settings && c.settings.name === 'Perso');
+  const autreCompte = await appelA('POST', '/api/passerelle/canaux', { hote: 'agent-inconnu', ajouter: ids(['C6']) });
+  if (w1.statut === 200 && noms.join(',') === ',Fr_Balise,Perso,ADRASEC43,Alerte,Fr_EMCOM,-,-' && k3 && Buffer.from(k3.settings.psk).length === 32 && k3.settings.moduleSettings.positionPrecision === 32 && versLui && radio.ordres[0].a === 'beginEditSettings'
+    && plein.statut === 400 && /libérez encore 1/.test(plein.j.erreur) && libere.statut === 200 && noms2.join(',') === ',Perso,ADRASEC43,Alerte,Fr_EMCOM,C6,C7,C8' && perso.settings.moduleSettings.positionPrecision === 13 && Buffer.from(perso.settings.psk).equals(Buffer.alloc(32, 7)) && autreCompte.statut === 400)
+    ok('channels written to the member’s radio: added, private key, slot freed on request, kept channel moved intact, read back');
+  else ko('écriture des canaux : ' + JSON.stringify({ w1, noms, k3: !!k3, versLui, ordre0: radio.ordres[0], plein, libere: libere.statut, noms2, autre: autreCompte.statut }).slice(0, 700));
+  // Coupure par l'administrateur : la passerelle ne peut plus se relier (12 h)
+  await appelA('DELETE', '/api/ecoutes', { hote: info.hote, port: 1 });
+  await new Promise((r) => setTimeout(r, 500));
+  const apres = (await appelP('GET', '/api/passerelle/miennes')).j;
+  const ws2 = await new Promise((r) => { const w = new WebSocket(BASE.replace('http', 'ws') + '/ws/module?nom=Radio%20USB', { headers: { Cookie: cookieP } }); w.on('open', () => { w.close(); r('ouverte'); }); w.on('unexpected-response', () => r('refusée')); w.on('error', () => r('refusée')); });
+  if (ws.readyState !== 1 && ws2 === 'refusée' && /coupée par un administrateur/.test(apres.refus || '')) ok('gateway cut off by the administrator: refused afterwards, reason shown to the member'); else ko('coupure passerelle : ' + JSON.stringify({ etat: ws.readyState, ws2, refus: apres.refus }));
+  try { ws.close(); } catch { /* déjà */ }
+  await ctx.close();
+}
+
 async function essaiAgentDirect(cookie) {
   console.log('Agent zéro question (simulé)');
   const net = require('net');
@@ -600,9 +841,990 @@ async function essaiTelephone(navig) {
   await page.waitForTimeout(400);
   const g = await page.evaluate(() => { const b = (q) => { const e = document.querySelector(q); return e ? e.getBoundingClientRect() : null; }; const a = b('.barre'), s = b('.recherche-lieu'), l = b('.leaflet-top.leaflet-right'); return { barre: a && a.bottom, rech: s && [s.top, s.bottom], bouton: l && l.top }; });
   if (g.barre && g.rech && g.rech[0] >= g.barre && (!g.bouton || g.bouton >= g.rech[1])) ok('téléphone : recherche et bouton ◎ sous la barre du haut, sans chevauchement'); else ko('téléphone : chevauchement en haut ' + JSON.stringify(g));
+  // Tiroir plein avec texte agrandi (réglage Android) : jamais sous le titre ni la recherche, bouton ▾ pour réduire
+  await page.evaluate(() => { document.documentElement.style.fontSize = '130%'; document.querySelectorAll('.marque, .recherche-lieu').forEach((e) => { e.style.fontSize = '130%'; }); window.dispatchEvent(new Event('resize')); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { const p = document.querySelector('.poignee-tiroir'); for (let i = 0; i < 3 && !document.body.classList.contains('tiroir-plein'); i++) { p.dispatchEvent(new PointerEvent('pointerdown', { clientY: 500, pointerId: 1, bubbles: true })); p.dispatchEvent(new PointerEvent('pointerup', { clientY: 500, pointerId: 1, bubbles: true })); } });
+  await page.waitForTimeout(500);
+  const t = await page.evaluate(() => { const r = (q) => document.querySelector(q).getBoundingClientRect(); const b = document.querySelector('.reduire-tiroir'); return { plein: document.body.classList.contains('tiroir-plein'), haut: r('.panneau').top, rech: r('.recherche-lieu').bottom, barre: r('.barre').bottom, bouton: b && b.offsetParent !== null }; });
+  if (t.plein && t.haut >= Math.max(t.rech, t.barre) && t.bouton) ok('téléphone : tiroir plein sous le titre et la recherche, bouton ▾ visible'); else ko('téléphone : tiroir ' + JSON.stringify(t));
+  await page.tap('.reduire-tiroir');
+  await page.waitForTimeout(400);
+  if (await page.evaluate(() => document.body.classList.contains('tiroir-reduit'))) ok('téléphone : bouton ▾ réduit le tiroir'); else ko('téléphone : ▾ sans effet');
   await capture(page, 'telephone');
   bilanErreurs(erreurs.filter((e) => !/HTTP 401|401/.test(e)), 'téléphone');
   await contexte.close();
+}
+
+// Recherche dans les messages : droits (visiteur, démonstration, administrateur), champ, surlignage, clic = message
+// affiché à sa place dans son canal ; téléphone : résultats lisibles
+async function essaiRechercheMessages(navig, cookie) {
+  console.log('Recherche dans les messages');
+  // Messages écrits directement dans la base de la carte : les déclencheurs SQLite tiennent l'index à jour
+  const Database = require('better-sqlite3');
+  const db = new Database(path.join(donnees, 'carte-live.db'));
+  db.pragma('busy_timeout = 5000');
+  const h = Date.now() - 600000;
+  // Jamais INSERT OR REPLACE sur « noeuds » : l'index des noms (déclencheurs) ne verrait pas la suppression
+  db.prepare('INSERT INTO noeuds (num, id, nom_long, nom_court, premier_vu, dernier_vu) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(num) DO UPDATE SET nom_long = excluded.nom_long, nom_court = excluded.nom_court').run(0x5a1e0042, '!5a1e0042', 'Olivier F4GLD', 'GLD', h, h);
+  const ins = db.prepare("INSERT INTO paquets (id_paquet, de, vers, canal, port, heure, texte) VALUES (?, ?, ?, ?, 'texte', ?, ?)");
+  ins.run(900001, 0x5a1e0042, 0xffffffff, 'LongFast', h, 'Bonjour depuis le Mézenc');
+  ins.run(900002, 0x5a1e0043, 0xffffffff, 'LongFast', h + 1000, 'Qui a vu mon CHAPEAU ?');
+  ins.run(900003, 0x5a1e0043, 0xffffffff, 'Equipe', h + 2000, 'Chapeau rangé au local');
+  ins.run(900004, 0x5a1e0043, 0x5a1e0042, 'LongFast', h + 3000, 'Message direct pour Olivier');
+  db.close();
+  const appel = async (url, entetes = {}) => { const r = await fetch(BASE + url, { headers: entetes }); return { statut: r.status, j: await r.json().catch(() => ({})) }; };
+  const anonyme = await appel('/api/messages/recherche?q=chapeau');
+  const demo = await appel('/api/messages/recherche?q=chapeau', { 'X-Demo': '1' });
+  const demoNom = await appel('/api/messages/recherche?q=f4gld', { 'X-Demo': '1' });
+  const admin = await appel('/api/messages/recherche?q=chap%C3%A9au', { Cookie: `${cookie.name}=${cookie.value}` });
+  const adminNom = await appel('/api/messages/recherche?q=F4GLD', { Cookie: `${cookie.name}=${cookie.value}` });
+  const textes = (x) => (x.j.resultats || []).map((m) => m.texte);
+  if (anonyme.statut === 401) ok('recherche : refusée à un visiteur non connecté'); else ko('recherche visiteur : ' + anonyme.statut);
+  // Démonstration : la référence d'un résultat n'est pas masquée (champ « ref », pas « cle »), le clic ouvre le bon message
+  if (demo.statut === 200 && (demo.j.resultats || []).every((m) => /^mt\d+$/.test(m.ref) && !('cle' in m))) ok('recherche (démonstration) : référence « ref » lisible, pas de champ masqué'); else ko('recherche démonstration ref : ' + JSON.stringify((demo.j.resultats || []).map((m) => [m.ref, m.cle])));
+  // Débit : 10 recherches par minute en démonstration, puis 429
+  let refus = 0, message = '';
+  for (let k = 0; k < 12; k++) { const r = await appel('/api/messages/recherche?q=chapeau' + k, { 'X-Demo': '1' }); if (r.statut === 429) { refus++; message = r.j.erreur; } }
+  const membre = await appel('/api/messages/recherche?q=chapeau', { Cookie: `${cookie.name}=${cookie.value}` });
+  if (refus === 4 && /une minute/.test(message) && membre.statut === 200) ok('recherche : 10 par minute en démonstration (4 refus sur 12 après les 2 premières), membre connecté non bloqué'); else ko(`recherche : limite de débit, refus = ${refus}, membre ${membre.statut}`);
+  if (demo.statut === 200 && JSON.stringify(textes(demo)) === JSON.stringify(['Qui a vu mon CHAPEAU ?']) && JSON.stringify(textes(demoNom)) === JSON.stringify(['Bonjour depuis le Mézenc'])) ok('recherche (démonstration) : canaux publics seulement, jamais les messages directs');
+  else ko('recherche démonstration : ' + JSON.stringify([demo.statut, textes(demo), textes(demoNom)]));
+  if (JSON.stringify(textes(admin)) === JSON.stringify(['Chapeau rangé au local', 'Qui a vu mon CHAPEAU ?']) && JSON.stringify(textes(adminNom)) === JSON.stringify(['Message direct pour Olivier', 'Bonjour depuis le Mézenc'])) ok('recherche (administrateur) : accents ignorés, tous canaux, expéditeur et destinataire par leur nom');
+  else ko('recherche administrateur : ' + JSON.stringify([textes(admin), textes(adminNom)]));
+  // Dans la page : champ, résultats surlignés, clic = message repéré dans son canal
+  for (const [nom, vue] of [['ordinateur', { width: 1400, height: 900 }], ['téléphone', { width: 390, height: 844 }]]) {
+    const contexte = await navig.newContext({ viewport: vue, locale: 'fr-FR', hasTouch: nom === 'téléphone', isMobile: nom === 'téléphone' });
+    await contexte.addCookies([cookie]);
+    await contexte.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); localStorage.removeItem('filtreMessages'); } catch { /* */ } });
+    const { page, erreurs } = await ouvrir(contexte, '/');
+    await page.evaluate(() => allerGroupe('messages'));
+    await page.waitForTimeout(500);
+    await page.fill('#recherche-messages', 'chapeau');
+    await page.waitForSelector('#resultats-recherche .resultat-recherche', { timeout: 5000 }).catch(() => {});
+    const r = await page.evaluate(() => ({
+      n: document.querySelectorAll('#resultats-recherche .resultat-recherche').length,
+      marques: [...document.querySelectorAll('#resultats-recherche mark')].map((m) => m.textContent),
+      listeCachee: getComputedStyle(document.querySelector('#messages')).display === 'none',
+      large: document.documentElement.scrollWidth <= innerWidth + 1,
+    }));
+    if (r.n === 2 && r.marques.includes('CHAPEAU') && r.marques.includes('Chapeau') && r.listeCachee && r.large) ok(`recherche (${nom}) : 2 résultats, terme surligné, liste remplacée`); else ko(`recherche (${nom}) : ` + JSON.stringify(r));
+    await capture(page, 'recherche-messages-' + (nom === 'téléphone' ? 'telephone' : 'ordinateur'));
+    if (nom === 'ordinateur') {
+      await page.click('#resultats-recherche .resultat-recherche:nth-child(3) .texte'); // 2e résultat : LongFast
+      await page.waitForSelector('#messages .message.repere', { timeout: 5000 }).catch(() => {});
+      const c = await page.evaluate(() => ({ filtre: filtreMessages, repere: (document.querySelector('#messages .message.repere .texte') || {}).textContent, visible: getComputedStyle(document.querySelector('#messages')).display !== 'none' }));
+      if (c.filtre === 'c:LongFast' && c.repere === 'Qui a vu mon CHAPEAU ?' && c.visible) ok('recherche : clic = message repéré dans son canal'); else ko('recherche clic : ' + JSON.stringify(c));
+      // Le nom de l'expéditeur suffit ; Échap efface et rend la liste
+      await page.fill('#recherche-messages', 'gld');
+      await page.waitForFunction(() => [...document.querySelectorAll('#resultats-recherche mark')].some((m) => m.textContent === 'GLD'), null, { timeout: 5000 }).catch(() => {});
+      const parNom = await page.evaluate(() => [...document.querySelectorAll('#resultats-recherche .resultat-recherche .texte')].map((x) => x.textContent));
+      await page.press('#recherche-messages', 'Escape');
+      const apres = await page.evaluate(() => ({ champ: $('#recherche-messages').value, cache: $('#resultats-recherche').hidden }));
+      if (JSON.stringify(parNom) === JSON.stringify(['Message direct pour Olivier', 'Bonjour depuis le Mézenc']) && apres.champ === '' && apres.cache) ok('recherche : par nom court de l’expéditeur, Échap efface'); else ko('recherche par nom : ' + JSON.stringify({ parNom, apres }));
+    }
+    bilanErreurs(erreurs, 'recherche (' + nom + ')');
+    await contexte.close();
+  }
+}
+
+// Secteurs d'alerte et mode urgence : secteur dessiné à la souris, bascule urgence (bandeau, carte, tableau de crise), retour normal
+async function essaiUrgenceEtSecteurs(navig, cookie) {
+  console.log('Secteurs d’alerte et mode urgence');
+  const H = { 'Content-Type': 'application/json', Cookie: `${cookie.name}=${cookie.value}` };
+  const appel = async (m, url, b, h = H) => { const r = await fetch(BASE + url, { method: m, headers: h, body: b ? JSON.stringify(b) : undefined }); return { statut: r.status, j: await r.json().catch(() => ({})) }; };
+  const ctx = await navig.newContext({ viewport: { width: 1400, height: 900 }, locale: 'fr-FR' });
+  await ctx.addCookies([cookie]);
+  await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  const { page, erreurs } = await ouvrir(ctx, '/');
+  // Secteur : polygone dessiné sur la carte puis créé
+  await page.evaluate(() => ficheSecteurs()); await page.waitForTimeout(1200);
+  await page.locator('.nouveau-sa [data-poly]').click();
+  for (const [x, y] of [[520, 320], [820, 330], [780, 600], [500, 580]]) { await page.mouse.click(x, y); await page.waitForTimeout(120); }
+  await page.locator('#barre-dessin [data-finir]').click();
+  await page.locator('.nouveau-sa [data-c="nom"]').fill('Secteur essai');
+  await page.locator('.nouveau-sa [data-c="noeuds"]').fill('!5a1e0001');
+  await page.locator('.nouveau-sa [data-creer]').click(); await page.waitForTimeout(1200);
+  const l = await appel('GET', '/api/secteurs');
+  const sec = (l.j.secteurs || []).find((x) => x.nom === 'Secteur essai');
+  if (sec && sec.forme === 'polygone' && sec.points.length === 4 && sec.membres.length === 1) ok('secteur dessiné à la souris et créé'); else ko('secteur : ' + JSON.stringify(l.j).slice(0, 200));
+  if (await page.locator('.leaflet-secteurs-pane path').count()) ok('secteur tracé sur la carte'); else ko('secteur absent de la carte');
+  const pub = await appel('GET', '/api/secteurs', null, {});
+  if (pub.statut === 401) ok('secteurs refusés au public'); else ko('secteurs lisibles sans compte : ' + pub.statut);
+  // Fuites vers les visiteurs (I4) : équipe avec une position de membre et un secteur ; anonyme → 401 ; démonstration → vidé
+  const eq = await appel('POST', '/api/equipes', { nom: 'EssaiEq', positions: true });
+  if (eq.statut === 200) {
+    await appel('POST', '/api/equipes/' + eq.j.id + '/membres', { ajouter: [0x5a1e0042], insister: false }).catch(() => {});
+    const anonEq = await appel('GET', '/api/equipes', null, {});
+    const demoEq = await appel('GET', '/api/equipes', null, { 'X-Demo': '1' });
+    const adminEq = await appel('GET', '/api/equipes');
+    const e1 = (demoEq.j.equipes || []).find((x) => x.nom === 'EssaiEq') || {};
+    const vide = e1 && (e1.sos || []).length === 0 && (e1.secteurs || []).length === 0 && !e1.zone && (e1.membres || []).every((m) => m.position == null);
+    if (anonEq.statut === 401 && demoEq.statut === 200 && vide && adminEq.statut === 200) ok('équipes : 401 pour un anonyme ; en démonstration, ni demandes d’aide, ni positions, ni secteurs'); else ko('fuite équipes : ' + JSON.stringify({ anon: anonEq.statut, demo: demoEq.statut, e1 }).slice(0, 300));
+    await appel('DELETE', '/api/equipes/' + eq.j.id, { retirerDesNoeuds: false });
+  } else ko('création d’équipe pour l’essai : ' + JSON.stringify(eq.j));
+  const rapAnon = await fetch(BASE + '/rapport');
+  const rapDemo = await fetch(BASE + '/rapport', { headers: { 'X-Demo': '1' } });
+  const rapDemoTexte = await rapDemo.text();
+  if (rapAnon.status === 401 && rapDemo.status === 200 && !/Secteur essai/.test(rapDemoTexte)) ok('rapport : 401 pour un anonyme, sans alerte de secteur en démonstration'); else ko('rapport : ' + JSON.stringify({ anon: rapAnon.status, demo: rapDemo.status, secteur: /Secteur essai/.test(rapDemoTexte) }));
+  // Mode urgence : activé (bandeau, carte en crise, tableau), puis terminé
+  const a = await appel('POST', '/api/urgence', { actif: true, motif: 'Essai automatique' });
+  await page.waitForTimeout(1500);
+  const enCrise = await page.evaluate(() => ({ classe: document.body.classList.contains('mode-urgence'), bandeau: (document.querySelector('#bandeau-urgence') || {}).textContent || '' }));
+  if (a.statut === 200 && enCrise.classe && /URGENCE/.test(enCrise.bandeau) && /Essai automatique/.test(enCrise.bandeau)) ok('mode urgence : bandeau et carte en crise reçus en direct'); else ko('mode urgence activé : ' + JSON.stringify({ a, enCrise }));
+  await page.locator('#bandeau-urgence').click(); await page.waitForTimeout(1200);
+  const tableau = await page.locator('#fiche-contenu').innerText().catch(() => '');
+  if (/Tableau de crise/.test(tableau) && /Mode urgence activé par/.test(tableau)) ok('tableau de crise et journal'); else ko('tableau de crise : ' + tableau.slice(0, 160));
+  await capture(page, 'mode-urgence');
+  const deux = await appel('POST', '/api/urgence', { actif: true });
+  if (deux.statut === 400) ok('double activation refusée'); else ko('double activation : ' + deux.statut);
+  // Gestionnaire : lit le tableau de crise et note au journal, mais n'active ni ne termine le mode urgence
+  await appel('POST', '/api/comptes', { identifiant: 'Gilles gestion', motDePasse: 'Essai-gilles-2026!!', role: 'gestionnaire' });
+  const cx = await fetch(BASE + '/api/connexion', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifiant: 'Gilles gestion', motDePasse: 'Essai-gilles-2026!!' }) });
+  const HG = { 'Content-Type': 'application/json', Cookie: (cx.headers.get('set-cookie') || '').split(';')[0] };
+  const finG = await appel('POST', '/api/urgence', { actif: false }, HG);
+  const lectureG = await appel('GET', '/api/urgence', null, HG);
+  const noteG = await appel('POST', '/api/urgence/note', { texte: 'Note du gestionnaire' }, HG);
+  if (finG.statut === 403 && lectureG.statut === 200 && lectureG.j.actif && lectureG.j.tableau && noteG.statut === 200) ok('gestionnaire : 403 pour terminer, tableau lisible, note acceptée'); else ko('gestionnaire : ' + JSON.stringify({ fin: finG.statut, lecture: lectureG.statut, note: noteG.statut }));
+  const f = await appel('POST', '/api/urgence', { actif: false });
+  const actG = await appel('POST', '/api/urgence', { actif: true }, HG);
+  if (actG.statut === 403) ok('gestionnaire : 403 pour activer le mode urgence'); else ko('gestionnaire active le mode urgence : ' + actG.statut);
+  await page.waitForTimeout(1500);
+  const apres = await page.evaluate(() => ({ classe: document.body.classList.contains('mode-urgence'), bandeau: !!document.querySelector('#bandeau-urgence') }));
+  if (f.statut === 200 && !apres.classe && !apres.bandeau) ok('mode urgence terminé : affichage habituel'); else ko('fin du mode urgence : ' + JSON.stringify({ f: f.statut, apres }));
+  const csv = await fetch(BASE + '/api/urgence/journal.csv?crise=' + (f.j.derniere || {}).id, { headers: H });
+  if (csv.status === 200 && /heure_utc;heure_locale;type/.test(await csv.text())) ok('journal de crise exporté (CSV)'); else ko('export du journal de crise : ' + csv.status);
+  await appel('DELETE', '/api/secteurs/' + (sec ? sec.id : 'x'));
+  bilanErreurs(erreurs, 'secteurs et urgence');
+  await ctx.close();
+}
+// Mur des donateurs : un don saisi par l'administrateur → bandeau visible sur la carte et sur la page publique,
+// sans recouvrir la barre du haut, la recherche, le panneau, la légende ni les boutons ; croix = fermé ; caché en urgence
+async function essaiPartager(navig, cookie) {
+  console.log('Panneau « Carte publique et exports » (téléphone, administrateur)');
+  const contexte = await navig.newContext({ viewport: { width: 390, height: 844 }, locale: 'fr-FR', isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  await contexte.addCookies([cookie]);
+  await contexte.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  const { page, erreurs } = await ouvrir(contexte, '/');
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.evaluate(() => fichePartager());
+  await page.waitForFunction(() => !/Chargement…/.test(document.querySelector('#donateurs-reglages') ? document.querySelector('#donateurs-reglages').textContent : ''), null, { timeout: 8000 }).catch(() => {});
+  const m = await page.evaluate(() => {
+    const liens = [...document.querySelectorAll('#fiche-contenu .ligne.sans-pastille .titre a')].map((a) => ({ texte: a.textContent.trim(), largeur: Math.round(a.getBoundingClientRect().width), tronque: a.scrollWidth > a.clientWidth + 1 }));
+    const z = document.querySelector('#donateurs-reglages');
+    return { liens, donateurs: z ? z.textContent.slice(0, 60) : null };
+  });
+  const coupes = m.liens.filter((l) => l.tronque || l.largeur < 60);
+  if (m.liens.length >= 7 && !coupes.length) ok('liens d’export : libellés entiers (' + m.liens.length + ' lignes, pas de texte coupé)'); else ko('liens d’export coupés : ' + JSON.stringify(coupes.length ? coupes : m.liens));
+  if (m.donateurs && !/^\s*Chargement/.test(m.donateurs)) ok('mur des donateurs : réglages chargés'); else ko('mur des donateurs : toujours « Chargement… » : ' + m.donateurs);
+  await capture(page, 'partager-telephone');
+  if (erreurs.length) ko('panneau Partager : ' + erreurs.join(' | ')); else ok('panneau Partager : aucune erreur JavaScript');
+  await contexte.close();
+}
+
+async function essaiDonateurs(navig, cookie) {
+  console.log('Mur des donateurs');
+  const entetes = { 'Content-Type': 'application/json', Cookie: `${cookie.name}=${cookie.value}` };
+  const poster = (url, corps) => fetch(BASE + url, { method: 'POST', headers: entetes, body: JSON.stringify(corps) });
+  let r = await poster('/api/donateurs/manuel', { nom: '42BARBE', pays: 'FR', montant: 20, accord: true });
+  const ajout = await r.json().catch(() => ({}));
+  if (r.ok && ajout.id) ok('don manuel ajouté par l’API admin'); else ko('don manuel : ' + r.status + ' ' + JSON.stringify(ajout));
+  r = await poster('/api/donateurs/manuel', { nom: 'Sans accord', accord: false });
+  if (r.status === 400) ok('don sans accord refusé'); else ko('don sans accord : ' + r.status);
+  r = await poster('/api/donateurs/manuel', { nom: 'Pays faux', pays: 'France', accord: true });
+  if (r.status === 400) ok('pays autre qu’un code à 2 lettres refusé'); else ko('pays faux : ' + r.status);
+  // Liens « Faire un don » : seulement quand la source est activée, tirés des réglages
+  await poster('/api/donateurs/reglages', { helloasso: { actif: true, organisation: 'asso-essai', formulaire: 'form-1' }, githubSponsors: { actif: false } });
+  const pub = await (await fetch(BASE + '/api/donateurs')).json();
+  const nomsOk = (pub.liste || []).length === 1 && pub.liste[0].nom === '42BARBE' && pub.liste[0].montant == null && !('date' in pub.liste[0]);
+  if (nomsOk) ok('liste publique : nom HelloAsso tel que saisi (42BARBE), montant masqué, pas de date'); else ko('liste publique : ' + JSON.stringify(pub));
+  if (pub.liens && pub.liens.helloasso === 'https://www.helloasso.com/associations/asso-essai/formulaires/form-1' && pub.liens.github === null) ok('liens tirés des réglages, GitHub absent (source désactivée)'); else ko('liens : ' + JSON.stringify(pub.liens));
+  // Journal d'audit : le nom du donateur n'y figure pas
+  const audit = await (await fetch(BASE + '/api/audit', { headers: entetes })).json().catch(() => []);
+  const lignes = JSON.stringify(audit);
+  if (/donateurs\/manuel/.test(lignes) && !/42BARBE/.test(lignes)) ok('journal d’audit : action notée sans le nom du donateur'); else ko('journal d’audit : ' + lignes.slice(0, 300));
+  // Rectangle du bandeau et chevauchements avec les éléments à ne pas couvrir
+  const mesurer = (page, selecteurs) => page.evaluate((sel) => {
+    const e = document.getElementById('bandeau-donateurs');
+    if (!e) return { present: false };
+    const r = e.getBoundingClientRect();
+    const croise = (x, y) => x.left < y.right && y.left < x.right && x.top < y.bottom && y.top < x.bottom;
+    const chevauche = [];
+    for (const q of sel) document.querySelectorAll(q).forEach((o) => { const b = o.getBoundingClientRect(); if (b.width && b.height && getComputedStyle(o).visibility !== 'hidden' && getComputedStyle(o).display !== 'none' && croise(r, b)) chevauche.push(q); });
+    const liens = [...e.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel')]);
+    return { present: true, visible: getComputedStyle(e).display !== 'none' && r.width > 0, dedans: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+      texte: (e.querySelector('.don-texte') || {}).textContent, liens, croix: !!e.querySelector('.fermer-bandeau'), chevauche, largeur: Math.round(r.width), style: getComputedStyle(e).position };
+  }, selecteurs);
+  const attendre = (page) => page.waitForFunction(() => { const e = document.getElementById('bandeau-donateurs'); return e && (e.querySelector('.don-texte') || {}).textContent; }, null, { timeout: 8000 }).catch(() => {});
+  const CARTE = ['.barre', '.outils', '.recherche-lieu', '.panneau', '.legende', '.leaflet-control', '.deplier', '.bandeau-urgence', '.bandeau-crise'];
+  for (const [nom, vue, mobile] of [['ordinateur', { width: 1400, height: 900 }, false], ['téléphone', { width: 390, height: 844 }, true], ['tablette', { width: 1024, height: 700 }, false]]) {
+    const ctx = await navig.newContext({ viewport: vue, locale: 'fr-FR', isMobile: mobile, hasTouch: mobile, deviceScaleFactor: mobile ? 2 : 1 });
+    await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+    const { page, erreurs } = await ouvrir(ctx, '/');
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await attendre(page);
+    const m = await mesurer(page, CARTE);
+    if (m.visible && m.dedans && /42BARBE 🇫🇷 a donné pour soutenir le projet/.test(m.texte || '') && m.croix) ok(`${nom} : bandeau des donateurs visible (« ${m.texte} »)`); else ko(`${nom} : bandeau ` + JSON.stringify(m));
+    if (m.visible && !m.chevauche.length) ok(`${nom} : bandeau sans chevauchement de la barre du haut, de la recherche, du panneau, de la légende ni des boutons`); else ko(`${nom} : bandeau chevauche ` + JSON.stringify(m.chevauche));
+    if (nom === 'ordinateur') {
+      if (m.liens.length === 1 && m.liens[0][0] === 'Faire un don' && m.liens[0][1] === 'https://www.helloasso.com/associations/asso-essai/formulaires/form-1' && m.liens[0][2] === '_blank' && m.liens[0][3] === 'noopener') ok('ordinateur : lien « Faire un don » des réglages, nouvel onglet, pas de lien GitHub'); else ko('ordinateur : liens ' + JSON.stringify(m.liens));
+      // Mode urgence : le bandeau s'efface
+      await page.evaluate(() => document.body.classList.add('mode-urgence'));
+      const u = await mesurer(page, []);
+      if (!u.visible) ok('ordinateur : bandeau caché en mode urgence'); else ko('ordinateur : bandeau visible en mode urgence');
+      await page.evaluate(() => document.body.classList.remove('mode-urgence'));
+    }
+    await capture(page, 'donateurs-' + nom.normalize('NFD').replace(/[^a-z]/g, ''));
+    if (nom === 'téléphone') {
+      await page.click('#bandeau-donateurs .fermer-bandeau');
+      const ferme = await page.evaluate(() => ({ parti: !document.getElementById('bandeau-donateurs'), memo: localStorage.getItem('gaulix_donateurs_masque') }));
+      if (ferme.parti && ferme.memo === '1') ok('téléphone : croix = bandeau fermé et mémorisé'); else ko('téléphone : croix ' + JSON.stringify(ferme));
+    }
+    bilanErreurs(erreurs, 'donateurs (' + nom + ')');
+    await ctx.close();
+  }
+  // Page publique (sans style.css) : le bandeau a son style, en bas, sans toucher le bandeau du haut ni la légende
+  for (const [nom, vue] of [['ordinateur', { width: 1280, height: 800 }], ['téléphone', { width: 390, height: 844 }]]) {
+    const ctx = await navig.newContext({ viewport: vue, locale: 'fr-FR', isMobile: nom === 'téléphone', hasTouch: nom === 'téléphone' });
+    const { page, erreurs } = await ouvrir(ctx, '/publique.html');
+    await attendre(page);
+    const m = await mesurer(page, ['.bandeau', '.legende', '.leaflet-control', '#bandeau-monde']);
+    if (m.visible && m.dedans && m.style === 'fixed' && m.largeur > 150 && /42BARBE/.test(m.texte || '')) ok(`page publique (${nom}) : bandeau stylé et visible`); else ko(`page publique (${nom}) : bandeau ` + JSON.stringify(m));
+    if (m.visible && !m.chevauche.length) ok(`page publique (${nom}) : sans chevauchement`); else ko(`page publique (${nom}) : chevauche ` + JSON.stringify(m.chevauche));
+    await capture(page, 'donateurs-publique-' + (nom === 'téléphone' ? 'telephone' : 'ordinateur'));
+    if (nom === 'ordinateur') {
+      await page.click('#bandeau-donateurs .fermer-bandeau');
+      if (await page.evaluate(() => !document.getElementById('bandeau-donateurs') && localStorage.getItem('publique_donateurs_masque') === '1')) ok('page publique : croix = bandeau fermé'); else ko('page publique : croix');
+    }
+    bilanErreurs(erreurs, 'donateurs (page publique, ' + nom + ')');
+    await ctx.close();
+  }
+  // Nettoyage : le don retiré ne pollue pas les autres essais
+  await fetch(BASE + '/api/donateurs/manuel/' + ajout.id, { method: 'DELETE', headers: entetes });
+  await poster('/api/donateurs/reglages', { helloasso: { actif: false } });
+}
+
+// Page Topologie : dans l'onglet Analyse, un clic sur le nom d'un nœud ouvre sa fiche (vue « noeud »).
+// Avant, la ligne ne faisait que le sélectionner dans le graphe : rien ne semblait se passer.
+async function essaiTopologieFiche(navig) {
+  console.log('Topologie : le nom d’un nœud ouvre sa fiche');
+  const Database = require('better-sqlite3');
+  const db = new Database(path.join(donnees, 'carte-live.db'));
+  db.pragma('busy_timeout = 5000');
+  const h = Date.now() - 600000;
+  // Une passerelle avec position, un relais, et deux nœuds sans position dont une feuille (un seul voisin)
+  const noeud = db.prepare('INSERT INTO noeuds (num, id, nom_long, nom_court, role, est_passerelle, lat, lon, premier_vu, dernier_vu) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(num) DO UPDATE SET nom_long = excluded.nom_long, role = excluded.role, lat = excluded.lat, lon = excluded.lon, dernier_vu = excluded.dernier_vu');
+  noeud.run(0x7a000001, '!7a000001', 'Passerelle Mézenc', 'PMEZ', 'ROUTER', 1, 44.92, 4.18, h, h);
+  noeud.run(0x7a000002, '!7a000002', 'Relais Bouchet', 'BOUC', 'ROUTER', 0, 44.91, 4.19, h, h);
+  noeud.run(0x7a000003, '!7a000003', 'Client sans position', 'SPOS', 'CLIENT', 0, null, null, h, h);
+  noeud.run(0x7a000004, '!7a000004', 'Feuille isolée', 'FEUI', 'CLIENT', 0, null, null, h, h);
+  const lien = db.prepare('INSERT INTO liens (a, b, source, snr, nb, premier_vu, dernier_vu) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(a, b, source) DO UPDATE SET dernier_vu = excluded.dernier_vu');
+  lien.run(0x7a000001, 0x7a000002, 'rf', 8, 5, h, h);
+  lien.run(0x7a000002, 0x7a000001, 'rf', 7, 5, h, h);
+  lien.run(0x7a000002, 0x7a000003, 'rf', 5, 3, h, h);
+  lien.run(0x7a000003, 0x7a000002, 'rf', 4, 3, h, h);
+  lien.run(0x7a000002, 0x7a000004, 'rf', 2, 2, h, h);
+  db.close();
+  const contexte = await navig.newContext({ viewport: { width: 1280, height: 800 }, locale: 'fr-FR' });
+  await contexte.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); } catch { /* */ } });
+  const { page, erreurs } = await ouvrir(contexte, '/topologie.html');
+  await page.waitForFunction(() => document.querySelectorAll('#vue-analyse [data-fiche]').length > 0, null, { timeout: 15000 }).catch(() => {});
+  const nb = await page.locator('#vue-analyse [data-fiche]').count();
+  if (nb > 0) ok(`onglet Analyse : ${nb} nom(s) de nœud cliquables`); else ko('onglet Analyse : aucun nom de nœud cliquable (données d’essai absentes ?)');
+  if (nb > 0) {
+    const attendu = await page.evaluate(() => document.querySelector('#vue-analyse [data-fiche]').textContent.trim());
+    const vueAvant = await page.evaluate(() => (document.querySelector('.vue.actif') || {}).id || null);
+    await page.locator('#vue-analyse [data-fiche]').first().click();
+    await page.waitForTimeout(800);
+    const apres = await page.evaluate(() => ({ vue: (document.querySelector('.vue.actif') || {}).id || null, contenu: (document.querySelector('#vue-noeud') || {}).textContent || '' }));
+    if (apres.vue === 'vue-noeud') ok('clic sur le nom : la fiche du nœud s’ouvre'); else ko(`clic sur le nom : vue « ${apres.vue} » au lieu de « vue-noeud » (avant : ${vueAvant})`);
+    if (apres.contenu.includes(attendu)) ok(`la fiche ouverte est bien celle du nœud cliqué (${attendu})`); else ko(`fiche d’un autre nœud : « ${attendu} » absent de ${apres.contenu.slice(0, 120)}`);
+    if (/Ouvrir sur la carte|Simuler/.test(apres.contenu)) ok('fiche renseignée (actions du nœud présentes)'); else ko('fiche vide : ' + apres.contenu.slice(0, 120));
+    // La ligne elle-même garde son rôle : sélection sans quitter l'analyse
+    await page.evaluate(() => { const b = [...document.querySelectorAll('nav.onglets button')].find((x) => x.dataset.vue === 'analyse'); if (b) b.click(); });
+    await page.waitForTimeout(400);
+    await page.evaluate(() => { const l = document.querySelector('#vue-analyse .ligne[data-n]'); const e = new MouseEvent('click', { bubbles: true }); l.dispatchEvent(e); });
+    await page.waitForTimeout(600);
+    const vue2 = await page.evaluate(() => (document.querySelector('.vue.actif') || {}).id || null);
+    if (vue2 === 'vue-analyse') ok('clic ailleurs sur la ligne : on reste sur l’analyse'); else ko('clic sur la ligne : vue ' + vue2);
+  }
+  await capture(page, 'topologie-fiche');
+  bilanErreurs(erreurs, 'topologie (fiche du nœud)');
+  await contexte.close();
+}
+
+// Rapport hebdomadaire : les archives s'affichaient « S.. », le titre étant coincé dans la colonne de pastille
+async function essaiRapportArchives(navig, cookie) {
+  console.log('Rapport hebdomadaire (archives)');
+  const fs2 = require('fs');
+  const dossier = path.join(donnees, 'rapports');
+  try { fs2.mkdirSync(dossier, { recursive: true }); } catch { /* existe */ }
+  for (const nom of ['rapport-2026-11-09.html', 'rapport-2026-11-16.html']) fs2.writeFileSync(path.join(dossier, nom), '<!doctype html><title>Essai</title><p>Rapport d’essai</p>');
+  const contexte = await navig.newContext({ viewport: { width: 1280, height: 800 }, locale: 'fr-FR' });
+  await contexte.addCookies([cookie]);
+  await contexte.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  const { page, erreurs } = await ouvrir(contexte, '/');
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.evaluate(() => { const b = document.querySelector('#outil-rapport'); if (b) b.click(); });
+  await page.waitForTimeout(1500);
+  const n = await page.locator('#fiche-contenu .ligne > .titre:first-child').count();
+  if (n > 0) ok(`archives listées (${n})`); else ko('aucune archive listée (fichiers d’essai non vus ?)');
+  // Titres écrasés : une ligne qui commence par son titre ne doit pas le coincer dans la colonne de pastille
+  // (« Semaine du 16/11/2026 » s'affichait « S.. » dans les archives du rapport hebdomadaire)
+  const etroits = await page.evaluate(() => {
+    const l = [];
+    document.querySelectorAll('#fiche-contenu .ligne > .titre:first-child').forEach((t) => {
+      const r = t.getBoundingClientRect();
+      if (r.width > 0 && r.width < 60 && t.textContent.trim().length > 3) l.push({ texte: t.textContent.trim().slice(0, 40), largeur: Math.round(r.width) });
+    });
+    return l;
+  });
+  if (!etroits.length) ok('rapport hebdomadaire : titres des archives entiers'); else ko('titres écrasés : ' + JSON.stringify(etroits));
+  await capture(page, 'rapport-archives');
+  bilanErreurs(erreurs, 'rapport hebdomadaire');
+  await contexte.close();
+}
+
+// Registre des relais : date du jour proposée, retour au registre en fermant une fiche, recherche libre,
+// liste des nœuds d'un département (d'après la position reçue) et modification groupée de l'autorisation.
+async function essaiRegistreAvance(navig, cookie) {
+  console.log('Registre des relais : dates proposées, retour au registre, recherche, départements, autorisations groupées');
+  const H = { 'Content-Type': 'application/json', Cookie: `${cookie.name}=${cookie.value}` };
+  const appel = async (m, url, b, h = H) => { const r = await fetch(BASE + url, { method: m, headers: h, body: b ? JSON.stringify(b) : undefined }); return { statut: r.status, j: await r.json().catch(() => ({})) }; };
+  // Relais écrits directement dans la base : trois en Haute-Loire (43), un dans la Loire (42) mais dans le
+  // rectangle de la carte, un sans aucune position, un à Londres (position connue, hors de France).
+  const MEZ = 0x43000001, CHD = 0x43000002, MON = 0x43000003, PIL = 0x42000004, SPO = 0x43000005, LDN = 0x44000006;
+  const Database = require('better-sqlite3');
+  const db = new Database(path.join(donnees, 'carte-live.db'));
+  db.pragma('busy_timeout = 5000');
+  const vu = Date.now() - 300000;
+  const ins = db.prepare('INSERT INTO noeuds (num, id, nom_long, nom_court, role, materiel, firmware, lat, lon, alt, heure_position, premier_vu, dernier_vu) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(num) DO UPDATE SET nom_long = excluded.nom_long, nom_court = excluded.nom_court, role = excluded.role, lat = excluded.lat, lon = excluded.lon');
+  for (const [num, nom, court, lat, lon] of [
+    [MEZ, '43 Relais Mézenc', 'MEZ', 45.0433, 3.8853], [CHD, '43 Relais Chaise-Dieu', 'CHD', 45.32, 3.69],
+    [MON, '43 Relais Monistrol', 'MON', 45.29, 4.17], [PIL, '42 Relais du Pilat', 'PIL', 45.294, 4.4],
+    [SPO, '43 Relais sans position', 'SPO', null, null], [LDN, 'London test node', 'LDN', 51.5, -0.12],
+  ]) ins.run(num, '!' + num.toString(16).padStart(8, '0'), nom, court, 'ROUTER', 'HELTEC_V3', '2.7.11', lat, lon, lat == null ? null : 1100, lat == null ? null : vu, vu, vu);
+  // Nœuds MeshCore : un au Puy-en-Velay (43, position de son annonce), un qui annonce 0, 0 (donc sans position)
+  const MC43 = 'C43A' + '0'.repeat(56) + '0001', MC00 = 'C000' + '0'.repeat(56) + '0002';
+  const insMc = db.prepare('INSERT OR REPLACE INTO mc_noeuds (cle, nom, role, lat, lon, heure_position, premier_vu, dernier_vu, derniere_annonce, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  insMc.run(MC43, 'MC Companion du Puy', 'companion', 45.0434, 3.8855, vu, vu, vu, vu, 'essai');
+  insMc.run(MC00, 'MC Sans GPS', 'companion', 0, 0, vu, vu, vu, vu, 'essai');
+  db.close();
+  // La liste complète des nœuds est gardée 10 s par le serveur : on attend qu'elle contienne les nouveaux relais,
+  // sinon la page chargée juste après recevrait l'ancienne liste et ne les verrait pas de la visite entière.
+  for (let k = 0; k < 40; k++) {
+    const l = await (await fetch(BASE + '/api/noeuds', { headers: H })).json().catch(() => []);
+    if (Array.isArray(l) && l.some((n) => (n.num >>> 0) === MEZ)) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  // Fiche d'installation de départ : site accentué, propriétaire, notes, hauteur (ne doit jamais être perdue)
+  const pose = await appel('PUT', `/api/noeuds/${MEZ}/installation`, { site: 'Château d’eau de Saint-Vincent', proprietaire: 'Commune de Saint-Vincent', contact: 'mairie@exemple.fr', notes: 'Accès par le chemin du stade', hauteur: 8 });
+  if (pose.statut !== 200) ko('fiche d’installation de départ : ' + pose.statut);
+
+  // ---- Nœuds rangés par département, d'après la position retransmise
+  const idx = await appel('GET', '/api/noeuds-par-departement');
+  const anon = (await fetch(BASE + '/api/noeuds-par-departement')).status;
+  const pn = idx.j.parNoeud || {}, d43 = (idx.j.departements || []).find((x) => x.code === '43');
+  if (idx.statut === 200 && pn[String(MEZ)] === '43' && pn[String(MON)] === '43' && pn[String(PIL)] === '42'
+    && (idx.j.sansPosition || []).includes(SPO) && (idx.j.horsDepartements || []).includes(LDN)
+    && d43 && d43.nom === 'Haute-Loire' && d43.nb >= 3 && anon === 401) ok(`départements des nœuds : 43 (${d43.nb}), 42 pour le Pilat, sans position et hors de France à part, refusé sans compte`);
+  else ko('départements des nœuds : ' + JSON.stringify({ statut: idx.statut, anon, d43, mez: pn[String(MEZ)], pil: pn[String(PIL)], sans: (idx.j.sansPosition || []).includes(SPO), hors: (idx.j.horsDepartements || []).includes(LDN) }));
+  // Même index pour MeshCore : rangé à part, par clé publique ; 0, 0 = sans position ; les compteurs MT restent ceux de Meshtastic
+  const imc = idx.j.mc || {};
+  if (imc.parNoeud && imc.parNoeud[MC43] === '43' && (imc.sansPosition || []).includes(MC00) && !(imc.horsDepartements || []).includes(MC00)
+    && d43 && d43.nbMc >= 1 && !pn[MC43]) ok(`départements MeshCore : le companion du Puy rangé dans le 43 (${d43.nbMc} nœud(s) MC), l’annonce 0, 0 comptée sans position`);
+  else ko('départements MeshCore : ' + JSON.stringify({ mc: imc.parNoeud && imc.parNoeud[MC43], sans: imc.sansPosition, d43 }));
+
+  // ---- Route de l'autorisation seule : droits, validation, reste de la fiche gardé, rien de privé en retour
+  const mauvais = await appel('POST', `/api/noeuds/${CHD}/autorisation`, { autorisation: 'n’importe-quoi' });
+  const sansCompte = await fetch(BASE + `/api/noeuds/${CHD}/autorisation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"autorisation":"non-necessaire"}' });
+  const bon = await appel('POST', `/api/noeuds/${MEZ}/autorisation`, { autorisation: 'ecrite' });
+  const fiches = (await appel('GET', '/api/installations')).j;
+  const fm = fiches[String(MEZ)] || {};
+  if (mauvais.statut === 400 && sansCompte.status === 401 && bon.statut === 200 && !JSON.stringify(bon.j).includes('Commune')
+    && fm.autorisation === 'ecrite' && fm.site === 'Château d’eau de Saint-Vincent' && fm.hauteur === 8 && fm.proprietaire === 'Commune de Saint-Vincent') ok('autorisation seule : valeur inconnue refusée, refusée sans compte, reste de la fiche gardé, propriétaire jamais renvoyé');
+  else ko('autorisation seule : ' + JSON.stringify({ mauvais: mauvais.statut, sansCompte: sansCompte.status, bon: bon.statut, fm }));
+
+  // ---- Gestionnaire de secteur : un nœud hors de son secteur est refusé par le serveur
+  const gest = await appel('POST', '/api/comptes', { identifiant: 'Gestion 43', motDePasse: 'Essai-gest-2026!!', role: 'gestionnaire', noeuds: [String(MEZ), String(CHD)] });
+  const cx = await fetch(BASE + '/api/connexion', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifiant: 'Gestion 43', motDePasse: 'Essai-gest-2026!!' }) });
+  const brut = (cx.headers.get('set-cookie') || '').split(';')[0];
+  const HG = { 'Content-Type': 'application/json', Cookie: brut };
+  const dedans = await appel('POST', `/api/noeuds/${CHD}/autorisation`, { autorisation: 'convention' }, HG);
+  const dehors = await appel('POST', `/api/noeuds/${MON}/autorisation`, { autorisation: 'convention' }, HG);
+  const apresGest = (await appel('GET', '/api/installations')).j;
+  if (gest.statut === 200 && dedans.statut === 200 && dehors.statut === 403 && (apresGest[String(CHD)] || {}).autorisation === 'convention' && !apresGest[String(MON)]) ok('gestionnaire de secteur : son relais accepté, un relais hors secteur refusé (403) et non modifié');
+  else ko('gestionnaire de secteur : ' + JSON.stringify({ gest: gest.statut, dedans: dedans.statut, dehors: dehors.statut, chd: apresGest[String(CHD)], mon: apresGest[String(MON)] }));
+  // On remet CHD sans autorisation pour la suite (modification groupée)
+  await appel('POST', `/api/noeuds/${CHD}/autorisation`, { autorisation: '' });
+
+  // ---- Interface, administrateur, ordinateur
+  const ctx = await navig.newContext({ viewport: { width: 1400, height: 900 }, locale: 'fr-FR' });
+  await ctx.addCookies([cookie]);
+  await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  const { page, erreurs } = await ouvrir(ctx, '/');
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  const lignes = () => page.locator('#reg-corps tr[data-num]').count();
+  const chercher = async (t) => { await page.fill('#reg-recherche', t); await page.waitForTimeout(150); return lignes(); };
+  // La liste des nœuds arrive par /api/noeuds : on attend qu'elle soit là avant d'ouvrir le registre
+  await page.waitForFunction((num) => typeof etat !== 'undefined' && etat.noeuds && etat.noeuds.has(num), MEZ, { timeout: 20000 });
+  await page.evaluate(() => ficheRegistreRelais());
+  const pret = await page.waitForSelector('#reg-corps tr[data-num]', { timeout: 10000 }).then(() => true).catch(() => false);
+  if (!pret) { ko('registre : aucune ligne affichée — ' + (await page.locator('#fiche-contenu').innerText()).slice(0, 300).replace(/\s+/g, ' ')); await capture(page, 'registre-vide'); await ctx.close(); return; }
+  const total = await lignes();
+
+  // 3) Recherche libre : nom, site accentué, propriétaire, rien qui corresponde
+  const parNom = await chercher('mezenc');
+  const parSite = await chercher('chateau d eau');
+  const parProprio = await chercher('COMMUNE de saint vincent');
+  const rien = await chercher('zzzz-introuvable');
+  const vide = await page.locator('#reg-corps').innerText();
+  const compteRien = await page.locator('#reg-compte').innerText();
+  if (total >= 5 && parNom === 1 && parSite === 1 && parProprio === 1 && rien === 0 && /Aucun relais ne correspond/.test(vide) && new RegExp(`0 relais affich.s sur ${total}`).test(compteRien)) ok(`recherche du registre : ${total} relais, 1 par nom (accents ignorés), 1 par site, 1 par propriétaire, 0 pour un mot absent, compteur cohérent`);
+  else ko('recherche du registre : ' + JSON.stringify({ total, parNom, parSite, parProprio, rien, compteRien, vide: vide.slice(0, 80) }));
+  // Indicateurs recalculés sur ce qui est affiché
+  const indic = await (async () => { await chercher('monistrol'); return page.locator('#reg-compte').innerText(); })();
+  if (/1 relais affich.s sur/.test(indic) && /1 sans autorisation/.test(indic)) ok('indicateurs du registre : « sans autorisation » compté sur les relais affichés seulement');
+  else ko('indicateurs du registre : ' + indic);
+
+  // 4) Filtre par département dans le registre
+  const dep42 = await page.evaluate(async () => {
+    document.querySelector('#reg-recherche').value = ''; document.querySelector('#reg-recherche').dispatchEvent(new Event('input'));
+    const s = document.querySelector('#reg-dep');
+    if (!s) return null;
+    const codes = [...s.options].map((o) => o.value);
+    s.value = '42'; s.dispatchEvent(new Event('change'));
+    const noms = [...document.querySelectorAll('#reg-corps tr[data-num] b')].map((b) => b.textContent);
+    s.value = 'sans'; s.dispatchEvent(new Event('change'));
+    const sans = [...document.querySelectorAll('#reg-corps tr[data-num] b')].map((b) => b.textContent);
+    s.value = ''; s.dispatchEvent(new Event('change'));
+    return { codes, noms, sans };
+  });
+  if (dep42 && dep42.codes.includes('42') && dep42.codes.includes('43') && dep42.codes.includes('sans')
+    && JSON.stringify(dep42.noms) === JSON.stringify(['42 Relais du Pilat']) && dep42.sans.includes('43 Relais sans position')) ok('filtre par département du registre : 42 → le Pilat seul, « sans département » → le relais sans position');
+  else ko('filtre par département du registre : ' + JSON.stringify(dep42));
+  await capture(page, 'registre-recherche');
+
+  // 2) Fermer une fiche ouverte depuis le registre = revenir au registre, avec la recherche
+  const retour = await (async () => {
+    await chercher('mezenc');
+    await page.click('#reg-corps tr[data-num]');
+    await page.waitForSelector('#fiche-contenu h2', { timeout: 8000 });
+    const titre = await page.locator('#fiche-contenu h2').innerText();
+    await page.click('#fermer-fiche');
+    await page.waitForSelector('#reg-recherche', { timeout: 8000 });
+    const q = await page.inputValue('#reg-recherche');
+    const n = await lignes();
+    // Deuxième fermeture : on quitte le registre, sans y revenir sans fin
+    await page.click('#fermer-fiche');
+    const ferme = await page.evaluate(() => document.querySelector('#fiche').hidden);
+    // Fiche ouverte depuis la carte : la fermeture ne ramène pas au registre
+    await page.evaluate((num) => ouvrirFiche(num), MEZ);
+    await page.waitForSelector('#fiche-contenu h2', { timeout: 8000 });
+    await page.click('#fermer-fiche');
+    const fermeCarte = await page.evaluate(() => document.querySelector('#fiche').hidden && !document.querySelector('#reg-recherche'));
+    return { titre, q, n, ferme, fermeCarte };
+  })();
+  if (/Mézenc/.test(retour.titre) && retour.q === 'mezenc' && retour.n === 1 && retour.ferme && retour.fermeCarte) ok('retour au registre : la fiche fermée rend la liste et la recherche « mezenc » ; une fiche ouverte depuis la carte ne ramène pas au registre, et le registre se ferme normalement');
+  else ko('retour au registre : ' + JSON.stringify(retour));
+
+  // 1) Date du jour proposée dans la fiche d'installation
+  const dates = await page.evaluate(async (num) => {
+    const d = new Date();
+    const aujourdhui = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    await ouvrirFiche(num);
+    await new Promise((r) => setTimeout(r, 400));
+    document.querySelector('#fiche-contenu [data-of="install"]').click();
+    const visite = document.querySelector('#f-install input[name="derniereVisite"]');
+    const avant = visite.value;
+    visite.focus();
+    const propose = { valeur: visite.value, marque: visite.classList.contains('date-proposee'), texte: (visite.parentElement.querySelector('.date-proposee-marque') || {}).textContent || '' };
+    // On efface : le champ reste vide, la marque disparaît et rien ne se re-remplit tout seul
+    visite.value = ''; visite.dispatchEvent(new Event('input', { bubbles: true }));
+    visite.blur(); visite.focus();
+    const apresEffacement = { valeur: visite.value, marque: visite.classList.contains('date-proposee'), reste: !!visite.parentElement.querySelector('.date-proposee-marque') };
+    return { aujourdhui, avant, propose, apresEffacement };
+  }, MEZ);
+  const ficheAvant = (await appel('GET', '/api/installations')).j[String(MEZ)] || {};
+  if (dates.avant === '' && dates.propose.valeur === dates.aujourdhui && dates.propose.marque && /Date du jour propos/.test(dates.propose.texte)
+    && dates.apresEffacement.valeur === '' && !dates.apresEffacement.marque && !dates.apresEffacement.reste
+    && !ficheAvant.derniereVisite) ok(`date du jour : proposée au premier passage dans « Dernière visite » (${dates.aujourdhui}), signalée, effaçable sans revenir, et non enregistrée tant que la fiche n’est pas validée`);
+  else ko('date du jour proposée : ' + JSON.stringify({ dates, enregistre: ficheAvant.derniereVisite }));
+  await capture(page, 'registre-date-proposee');
+  // Fiche enregistrée : la date proposée et gardée est écrite, et nommée dans le retour
+  const enreg = await page.evaluate(async () => {
+    const autor = document.querySelector('#f-install input[name="dateAutorisation"]');
+    autor.focus();
+    const propose = autor.value;
+    document.querySelector('#f-install button[type="submit"]').click();
+    for (let k = 0; k < 40 && !/enregistr/i.test(document.querySelector('#install-retour').textContent); k++) await new Promise((r) => setTimeout(r, 100));
+    return { propose, retour: document.querySelector('#install-retour').textContent };
+  });
+  const apres = (await appel('GET', '/api/installations')).j[String(MEZ)] || {};
+  if (apres.dateAutorisation === dates.aujourdhui && !apres.derniereVisite && apres.site === 'Château d’eau de Saint-Vincent' && apres.hauteur === 8 && /Date du jour enregistr/.test(enreg.retour)) ok('date du jour : enregistrée seulement avec la fiche, nommée dans le message de retour, le champ effacé reste vide');
+  else ko('date du jour enregistrée : ' + JSON.stringify({ enreg, apres }));
+  // Une date déjà saisie n'est jamais remplacée
+  const dejaSaisie = await page.evaluate(async (num) => {
+    await ouvrirFiche(num);
+    await new Promise((r) => setTimeout(r, 400));
+    document.querySelector('#fiche-contenu [data-of="install"]').click();
+    const autor = document.querySelector('#f-install input[name="dateAutorisation"]');
+    const avant = autor.value;
+    autor.focus();
+    return { avant, apres: autor.value, marque: autor.classList.contains('date-proposee') };
+  }, MEZ);
+  if (dejaSaisie.avant === dates.aujourdhui && dejaSaisie.apres === dejaSaisie.avant && !dejaSaisie.marque) ok('date du jour : un champ déjà rempli n’est pas touché');
+  else ko('date déjà saisie : ' + JSON.stringify(dejaSaisie));
+  await page.click('#fermer-fiche');
+
+  // 4) Liste des nœuds d'un département, et entrée « Nœuds du département » dans la recherche de lieu
+  const dep = await page.evaluate(async () => {
+    await ficheNoeudsDepartement('43');
+    await new Promise((r) => setTimeout(r, 300));
+    const noms = () => [...document.querySelectorAll('#nd-corps tr[data-num] b')].map((b) => b.textContent);
+    const en43 = noms(), compte43 = document.querySelector('#nd-compte').textContent;
+    const choix = [...document.querySelectorAll('#nd-dep option')].map((o) => o.value);
+    const s = document.querySelector('#nd-dep');
+    s.value = 'sans'; s.dispatchEvent(new Event('change'));
+    const sans = noms();
+    s.value = 'hors'; s.dispatchEvent(new Event('change'));
+    const hors = noms();
+    return { en43, compte43, choix, sans, hors, note: document.querySelector('.noeuds-departement').textContent };
+  });
+  const attendus43 = ['43 Relais Mézenc', '43 Relais Chaise-Dieu', '43 Relais Monistrol'];
+  if (attendus43.every((n) => dep.en43.includes(n)) && !dep.en43.includes('42 Relais du Pilat') && !dep.en43.includes('London test node')
+    && /dans le d.partement 43 . Haute-Loire/.test(dep.compte43) && dep.choix.includes('42') && dep.choix.includes('sans') && dep.choix.includes('hors')
+    && dep.sans.includes('43 Relais sans position') && dep.hors.includes('London test node')
+    && /position flout.e ou impr.cise/.test(dep.note)) ok(`liste par position : ${dep.en43.length} nœuds dans le 43, le Pilat et Londres exclus, « sans position » et « hors de France » à part, incertitude signalée`);
+  else ko('liste par département : ' + JSON.stringify({ en43: dep.en43, compte43: dep.compte43, choix: dep.choix, sans: dep.sans.slice(0, 4), hors: dep.hors.slice(0, 4) }));
+  await capture(page, 'registre-departement');
+
+  // 4 bis) Liste du département selon le réseau affiché : Meshtastic seul, MeshCore seul, les deux, réseau inconnu
+  await page.waitForFunction((cle) => typeof mc !== 'undefined' && mc.noeuds && mc.noeuds.has(cle), MC43, { timeout: 20000 }).catch(() => null);
+  const parReseau = await page.evaluate(async ({ MC43, MC00, MEZ }) => {
+    const avant = etat.vueReseau;
+    const lire = () => ({
+      mt: [...document.querySelectorAll('#nd-corps tr[data-num]')].map((t) => Number(t.dataset.num)),
+      mc: [...document.querySelectorAll('#nd-corps tr[data-mc]')].map((t) => t.dataset.mc),
+      tags: [...document.querySelectorAll('#nd-corps .tag-reseau')].map((t) => t.textContent),
+      presse: (document.querySelector('[data-nd-reseau][aria-pressed="true"]') || {}).dataset?.ndReseau || null,
+    });
+    const ouvrir = async (r) => { etat.vueReseau = r; await ficheNoeudsDepartement('43'); await new Promise((x) => setTimeout(x, 200)); return lire(); };
+    const res = { mt: await ouvrir('meshtastic'), mc: await ouvrir('meshcore'), deux: await ouvrir('les-deux'), inconnu: await ouvrir(undefined) };
+    // Sélecteur dans l'écran : MeshCore seul, puis « sans position »
+    etat.vueReseau = 'les-deux';
+    await ficheNoeudsDepartement('43');
+    document.querySelector('[data-nd-reseau="meshcore"]').click();
+    res.bouton = lire();
+    res.global = etat.vueReseau; // le sélecteur de l'écran ne change pas le réseau de la carte
+    const s = document.querySelector('#nd-dep'); s.value = 'sans'; s.dispatchEvent(new Event('change'));
+    res.sans = lire();
+    // Clic sur un nœud MeshCore : sa fiche MeshCore, puis retour à la liste (réseau et département gardés)
+    s.value = '43'; s.dispatchEvent(new Event('change'));
+    document.querySelector(`#nd-corps tr[data-mc="${MC43}"]`).click();
+    for (let k = 0; k < 50 && !/MC Companion du Puy/.test((document.querySelector('#fiche-contenu h2') || {}).textContent || ''); k++) await new Promise((x) => setTimeout(x, 100));
+    res.fiche = (document.querySelector('#fiche-contenu h2') || {}).textContent || '';
+    res.ficheMc = /MeshCore/.test((document.querySelector('#fiche-contenu .ident') || {}).textContent || '');
+    document.querySelector('#fermer-fiche').click();
+    for (let k = 0; k < 50 && !document.querySelector('#nd-corps tr'); k++) await new Promise((x) => setTimeout(x, 100));
+    res.retour = { ...lire(), dep: (document.querySelector('#nd-dep') || {}).value };
+    document.querySelector('#fermer-fiche').click();
+    etat.vueReseau = avant;
+    return res;
+  }, { MC43, MC00, MEZ });
+  const P = parReseau;
+  const aMt = (x) => x.mt.includes(MEZ), aMc = (x) => x.mc.includes(MC43);
+  if (aMt(P.mt) && !P.mt.mc.length && P.mt.presse === 'meshtastic'
+    && aMc(P.mc) && !P.mc.mt.length && P.mc.presse === 'meshcore'
+    && aMt(P.deux) && aMc(P.deux) && P.deux.tags.includes('MT') && P.deux.tags.includes('MC') && P.deux.presse === 'les-deux'
+    && aMt(P.inconnu) && aMc(P.inconnu) && P.inconnu.presse === 'les-deux') ok('liste du département selon le réseau affiché : Meshtastic → MT seuls, MeshCore → MC seuls, les deux → MT et MC avec leur pastille, réseau inconnu → les deux');
+  else ko('liste du département selon le réseau : ' + JSON.stringify(P));
+  if (aMc(P.bouton) && !P.bouton.mt.length && P.global === 'les-deux' && P.sans.mc.includes(MC00) && !P.sans.mt.length) ok('sélecteur MT / MC de l’écran : MeshCore seul sans changer la carte, l’annonce 0, 0 rangée « sans position »');
+  else ko('sélecteur MT / MC de l’écran : ' + JSON.stringify({ bouton: P.bouton, global: P.global, sans: P.sans }));
+  if (/MC Companion du Puy/.test(P.fiche) && P.ficheMc && aMc(P.retour) && !P.retour.mt.length && P.retour.dep === '43' && P.retour.presse === 'meshcore') ok('clic sur un nœud MeshCore : sa fiche MeshCore, et retour à la liste du 43 en MeshCore à la fermeture');
+  else ko('fiche MeshCore depuis la liste : ' + JSON.stringify({ fiche: P.fiche, ficheMc: P.ficheMc, retour: P.retour }));
+  // Captures : liste des deux réseaux, sur ordinateur puis au format téléphone (le sélecteur doit tenir dans la largeur)
+  await page.evaluate(async () => { etat.vueReseau = 'les-deux'; await ficheNoeudsDepartement('43'); });
+  await page.waitForSelector('#nd-corps tr[data-mc]', { timeout: 5000 }).catch(() => null);
+  await capture(page, 'departement-deux-reseaux');
+  const tailleAvant = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(300);
+  const debord = await page.evaluate(() => { const g = document.querySelector('.nd-reseau'); return g ? [...g.querySelectorAll('button')].some((b) => b.getBoundingClientRect().right > window.innerWidth + 1) : null; });
+  await capture(page, 'departement-deux-reseaux-telephone');
+  if (debord === false) ok('sélecteur MT / MC : tient dans un écran de téléphone (390 px)'); else ko('sélecteur MT / MC au téléphone : ' + debord);
+  await page.setViewportSize(tailleAvant);
+  await page.evaluate(() => { document.querySelector('#fermer-fiche').click(); });
+  for (const terme of ['43', 'Haute-Loire']) {
+    await page.fill('#recherche-lieu', terme);
+    const trouve = await page.waitForFunction(() => [...document.querySelectorAll('#resultats-lieu li')].some((li) => /N.uds du d.partement 43/.test(li.textContent)), null, { timeout: 8000 }).then(() => true).catch(() => false);
+    if (trouve) ok(`recherche de lieu : « ${terme} » propose « Nœuds du département 43 »`); else ko(`recherche de lieu : « ${terme} » ne propose pas la liste du département`);
+  }
+  await page.evaluate(() => { const c = document.querySelector('#recherche-lieu'); c.value = ''; const l = document.querySelector('#resultats-lieu'); if (l) l.hidden = true; });
+
+  // 5) Modification groupée de l'autorisation (administrateur) : trois relais cochés d'un coup
+  const groupe = await page.evaluate(async (nums) => {
+    await ficheRegistreRelais();
+    await new Promise((r) => setTimeout(r, 400));
+    for (const num of nums) { const c = document.querySelector(`input[data-case="${num}"]`); c.checked = true; c.dispatchEvent(new Event('change')); }
+    const avant = { libelle: document.querySelector('#reg-coches').textContent, visible: !document.querySelector('#reg-groupe').hidden, valeur: document.querySelector('#reg-aut').value };
+    document.querySelector('#reg-appliquer').click();
+    await new Promise((r) => setTimeout(r, 200));
+    const demande = (document.querySelector('#dlg-confirmer p') || {}).textContent || '';
+    document.querySelector('#dlg-confirmer [data-r="1"]').click();
+    for (let k = 0; k < 60 && !/mis . jour|non modifi/.test(document.querySelector('#reg-retour').textContent); k++) await new Promise((r) => setTimeout(r, 100));
+    return { avant, demande, retour: document.querySelector('#reg-retour').textContent, coches: document.querySelectorAll('#reg-corps input[data-case]:checked').length, groupe: document.querySelector('#reg-groupe').hidden };
+  }, [MEZ, CHD, MON]);
+  const apresGroupe = (await appel('GET', '/api/installations')).j;
+  const toutes = [MEZ, CHD, MON].every((num) => (apresGroupe[String(num)] || {}).autorisation === 'non-necessaire');
+  const gardee = (apresGroupe[String(MEZ)] || {}).site === 'Château d’eau de Saint-Vincent' && (apresGroupe[String(MEZ)] || {}).hauteur === 8;
+  if (groupe.avant.visible && /3 relais coch/.test(groupe.avant.libelle) && groupe.avant.valeur === 'non-necessaire'
+    && /3 relais/.test(groupe.demande) && /Pas n.cessaire/.test(groupe.demande) && /3 relais mis . jour/.test(groupe.retour)
+    && toutes && gardee && groupe.coches === 0 && groupe.groupe) ok('modification groupée : 3 relais cochés, confirmation qui dit combien, « Pas nécessaire » enregistré pour les trois, reste des fiches gardé, cases remises à zéro');
+  else ko('modification groupée : ' + JSON.stringify({ groupe, toutes, gardee, mez: apresGroupe[String(MEZ)] }));
+  // Journal d'audit : une ligne par relais
+  const audit = await (await fetch(BASE + '/api/audit?limite=200', { headers: H })).json().catch(() => []);
+  const lignesAudit = (audit || []).filter((a) => /\/autorisation$/.test(a.action || '')).length;
+  if (lignesAudit >= 3) ok(`journal d’audit : ${lignesAudit} lignes « /autorisation », une par relais modifié`); else ko('journal d’audit : ' + lignesAudit + ' ligne(s) /autorisation');
+  await capture(page, 'registre-groupe');
+  // Téléphone : les filtres et la barre groupée tiennent dans l'écran
+  const ctxTel = await navig.newContext({ viewport: { width: 390, height: 844 }, locale: 'fr-FR', isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  await ctxTel.addCookies([cookie]);
+  await ctxTel.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  const tel = await ouvrir(ctxTel, '/');
+  await tel.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await tel.page.waitForFunction((num) => typeof etat !== 'undefined' && etat.noeuds && etat.noeuds.has(num), MEZ, { timeout: 20000 });
+  await tel.page.evaluate(async (num) => { await ficheRegistreRelais(); await new Promise((r) => setTimeout(r, 400)); const c = document.querySelector(`input[data-case="${num}"]`); if (c) { c.checked = true; c.dispatchEvent(new Event('change')); } }, MEZ);
+  await tel.page.waitForSelector('#reg-recherche', { timeout: 8000 });
+  const mesuresTel = await tel.page.evaluate(() => {
+    const r = document.querySelector('#reg-recherche').getBoundingClientRect(), g = document.querySelector('#reg-groupe');
+    const b = g && !g.hidden ? g.getBoundingClientRect() : null;
+    // Tous les réglages du registre doivent tenir dans la largeur de l'écran, listes déroulantes comprises
+    const dehors = [...document.querySelectorAll('.registre-filtres select, .registre-filtres input, .registre-groupe select, .registre-groupe button')]
+      .filter((e) => { const x = e.getBoundingClientRect(); return x.width && (x.left < -1 || x.right > innerWidth + 1); }).length;
+    return { champ: r.width > 120 && r.left >= 0 && r.right <= innerWidth + 1, barre: !!b && b.left >= 0 && b.right <= innerWidth + 1, dehors, deborde: document.documentElement.scrollWidth > innerWidth + 1 };
+  });
+  if (mesuresTel.champ && mesuresTel.barre && !mesuresTel.dehors && !mesuresTel.deborde) ok('téléphone : champ de recherche, listes déroulantes et barre « relais cochés » entiers dans l’écran, pas de débordement');
+  else ko('téléphone : ' + JSON.stringify(mesuresTel));
+  await capture(tel.page, 'registre-telephone');
+  bilanErreurs(tel.erreurs, 'registre (téléphone)');
+  await ctxTel.close();
+
+  // 5 bis) Échec partiel : un gestionnaire de secteur dont la page a été trafiquée pour cocher un relais
+  // hors de son secteur. Le serveur refuse ce relais seul : le compte rendu doit le dire.
+  const [cn, cv] = brut.split('=');
+  const ctxG = await navig.newContext({ viewport: { width: 1400, height: 900 }, locale: 'fr-FR' });
+  await ctxG.addCookies([{ name: cn, value: cv, domain: '127.0.0.1', path: '/' }]);
+  await ctxG.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  const g = await ouvrir(ctxG, '/');
+  await g.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await g.page.waitForFunction((num) => typeof etat !== 'undefined' && etat.noeuds && etat.noeuds.has(num), MEZ, { timeout: 20000 });
+  const partiel = await g.page.evaluate(async (nums) => {
+    const [mez, chd, mon] = nums;
+    await ficheRegistreRelais();
+    await new Promise((r) => setTimeout(r, 400));
+    const cases = () => [...document.querySelectorAll('#reg-corps input[data-case]')].map((c) => Number(c.dataset.case));
+    const secteur = cases();
+    // Page trafiquée : le gestionnaire se donne un relais qui n'est pas dans son secteur
+    etat.secteur = [...etat.secteur, String(mon)];
+    await ficheRegistreRelais();
+    await new Promise((r) => setTimeout(r, 400));
+    for (const num of [mez, chd, mon]) { const c = document.querySelector(`input[data-case="${num}"]`); c.checked = true; c.dispatchEvent(new Event('change')); }
+    document.querySelector('#reg-aut').value = 'orale';
+    document.querySelector('#reg-appliquer').click();
+    await new Promise((r) => setTimeout(r, 200));
+    document.querySelector('#dlg-confirmer [data-r="1"]').click();
+    for (let k = 0; k < 80 && !/non modifi/.test(document.querySelector('#reg-retour').textContent); k++) await new Promise((r) => setTimeout(r, 100));
+    return { secteur, retour: document.querySelector('#reg-retour').textContent, restees: [...document.querySelectorAll('#reg-corps input[data-case]:checked')].map((c) => Number(c.dataset.case)) };
+  }, [MEZ, CHD, MON]);
+  const apresPartiel = (await appel('GET', '/api/installations')).j;
+  const bons = [MEZ, CHD].every((num) => (apresPartiel[String(num)] || {}).autorisation === 'orale');
+  const refuse = (apresPartiel[String(MON)] || {}).autorisation === 'non-necessaire';
+  if (JSON.stringify(partiel.secteur.sort()) === JSON.stringify([MEZ, CHD].sort()) && /2 relais mis . jour/.test(partiel.retour)
+    && /1 relais non modifi/.test(partiel.retour) && /Monistrol/.test(partiel.retour) && /secteur/.test(partiel.retour)
+    && bons && refuse && JSON.stringify(partiel.restees) === JSON.stringify([MON])) ok('échec partiel : cases du gestionnaire limitées à son secteur, 2 relais modifiés et 1 refusé par le serveur, dit clairement, le relais refusé reste coché et inchangé');
+  else ko('échec partiel : ' + JSON.stringify({ partiel, bons, refuse, mon: apresPartiel[String(MON)] }));
+  await capture(g.page, 'registre-echec-partiel');
+  bilanErreurs(g.erreurs, 'registre (gestionnaire de secteur)');
+  await ctxG.close();
+  // Anglais : les écrans du registre et des départements sont traduits (pas de reste de français)
+  const ctxEn = await navig.newContext({ viewport: { width: 1400, height: 900 }, locale: 'en-GB' });
+  await ctxEn.addCookies([cookie]);
+  await ctxEn.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'en'); } catch { /* */ } });
+  const en = await ouvrir(ctxEn, '/');
+  await en.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await en.page.waitForFunction((num) => typeof etat !== 'undefined' && etat.noeuds && etat.noeuds.has(num), MEZ, { timeout: 20000 });
+  const texteEn = await en.page.evaluate(async (num) => {
+    await ficheRegistreRelais();
+    await new Promise((r) => setTimeout(r, 600));
+    const c = document.querySelector(`input[data-case="${num}"]`);
+    if (c) { c.checked = true; c.dispatchEvent(new Event('change')); }
+    await new Promise((r) => setTimeout(r, 400));
+    const registre = document.querySelector('#fiche-contenu').innerText;
+    await ficheNoeudsDepartement('43');
+    await new Promise((r) => setTimeout(r, 600));
+    return { registre, departement: document.querySelector('#fiche-contenu').innerText, placeholder: '' };
+  }, MEZ);
+  const resteFr = /relais et passerelles|Appliquer aux|Tout décocher|Nœuds du département|relais coché/.test(texteEn.registre + texteEn.departement);
+  if (/Relay register/.test(texteEn.registre) && /relays and gateways/.test(texteEn.registre) && /Apply to the ticked relays/.test(texteEn.registre)
+    && /Untick everything/.test(texteEn.registre) && /relay\(s\) ticked/.test(texteEn.registre)
+    && /Nodes of a department/.test(texteEn.departement) && /node\(s\) in department 43/.test(texteEn.departement) && !resteFr) ok('anglais : registre et liste par département entièrement traduits');
+  else ko('anglais : ' + JSON.stringify({ registre: texteEn.registre.replace(/\s+/g, ' ').slice(0, 260), departement: texteEn.departement.replace(/\s+/g, ' ').slice(0, 200) }));
+  await capture(en.page, 'registre-anglais');
+  bilanErreurs(en.erreurs, 'registre (anglais)');
+  await ctxEn.close();
+  bilanErreurs(erreurs, 'registre des relais');
+  await ctx.close();
+}
+
+// Boutons du menu Outils : chacun doit déclencher SON action. Le gestionnaire générique des couches était
+// posé sur tous les éléments .bascule (y compris ceux du menu Outils, qui n'ont pas de data-couche) et
+// écrasait leur vrai gestionnaire : le clic ne faisait plus rien. Essai dans le contexte d'Olivier, carte
+// ouverte en HTTP via une adresse Tailscale : Chrome n'expose alors ni navigator.serial ni navigator.bluetooth.
+async function essaiBoutonsOutils(navig, cookie) {
+  console.log('Menu Outils : chaque bouton garde son action (contexte non sécurisé)');
+  const contexte = await navig.newContext({ viewport: { width: 1400, height: 900 }, locale: 'fr-FR' });
+  await contexte.addCookies([cookie]);
+  await contexte.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+  // Carte en http:// hors de ce PC : ni Web Serial ni Web Bluetooth, et isSecureContext faux
+  await contexte.addInitScript(() => {
+    delete Navigator.prototype.serial;
+    delete Navigator.prototype.bluetooth;
+    Object.defineProperty(window, 'isSecureContext', { get: () => false });
+  });
+  const { page, erreurs } = await ouvrir(contexte, '/');
+
+  // 1. Aucun bouton sans data-couche ne doit porter le gestionnaire des couches
+  const etatBoutons = await page.evaluate(() => {
+    const l = [];
+    document.querySelectorAll('.bascule').forEach((b) => {
+      const src = b.onclick ? b.onclick.toString() : null;
+      l.push({
+        cle: b.id ? '#' + b.id : (b.getAttribute('href') || '').slice(0, 40) || (b.textContent || '').trim().slice(0, 36),
+        couche: b.dataset.couche || null, tag: b.tagName,
+        href: b.getAttribute('href'), action: !!src,
+        couchier: !!(src && /dataset\.couche/.test(src)),
+      });
+    });
+    return l;
+  });
+  const avecCouche = etatBoutons.filter((b) => b.couche);
+  const sansCouche = etatBoutons.filter((b) => !b.couche);
+  const voles = sansCouche.filter((b) => b.couchier);
+  if (!voles.length) ok(`boutons d’outils : aucun n’a hérité du gestionnaire des couches (${sansCouche.length} boutons vérifiés)`);
+  else ko(`${voles.length} bouton(s) d’outils déclenchent la bascule des couches au lieu de leur action : ` + voles.map((b) => b.cle).join(', '));
+  // Les vraies bascules de couche, elles, doivent toutes l'avoir gardé
+  const perdues = avecCouche.filter((b) => !b.couchier);
+  if (avecCouche.length >= 15 && !perdues.length) ok(`bascules de couche : les ${avecCouche.length} conservent leur gestionnaire`);
+  else ko('bascules de couche perdues : ' + JSON.stringify(perdues.map((b) => b.couche)) + ` (${avecCouche.length} trouvées)`);
+  // Aucun bouton muet : soit un gestionnaire, soit un lien
+  const muets = sansCouche.filter((b) => !b.action && !b.href);
+  if (!muets.length) ok('boutons d’outils : aucun sans action ni lien');
+  else ko('boutons sans aucune action : ' + muets.map((b) => b.cle).join(', '));
+
+  // 2. Les 13 boutons signalés par Olivier : chacun a bien son action propre ou un lien utilisable
+  const ATTENDUS = ['#outil-usb', '#outil-ble', '#lien-client', '#lien-flasher', '#outil-passerelle', '#outil-theme', '#outil-installer', '#outil-adrasec'];
+  const manque = await page.evaluate((ids) => ids.filter((id) => {
+    const b = document.querySelector(id);
+    if (!b) return false; // bouton absent de cette édition
+    const src = b.onclick ? b.onclick.toString() : null;
+    if (src && /dataset\.couche/.test(src)) return true;
+    return !src && !b.getAttribute('href');
+  }), ATTENDUS);
+  if (!manque.length) ok('boutons nommés par Olivier : tous rendus à leur action (' + ATTENDUS.length + ' vérifiés)');
+  else ko('boutons toujours inertes : ' + manque.join(', '));
+
+  // 3. Un clic sur « Module USB de ce PC » doit TOUJOURS répondre, même ici où l’USB est impossible
+  const messageApresClic = async (sel) => {
+    await page.evaluate(() => { const z = document.getElementById('annonces'); if (z) z.innerHTML = ''; const m = document.querySelector('.menu-outils'); if (m) m.open = true; });
+    await page.evaluate((s) => document.querySelector(s).click(), sel);
+    await page.waitForTimeout(500);
+    return page.evaluate(() => { const z = document.getElementById('annonces'); return z ? z.textContent.trim() : ''; });
+  };
+  const mUsb = await messageApresClic('#outil-usb');
+  if (/HTTPS|Chrome ou Edge/i.test(mUsb)) ok('clic « Module USB de ce PC » en HTTP : message visible (« ' + mUsb.slice(0, 48) + '… »)');
+  else ko('clic « Module USB de ce PC » : aucun message visible (« ' + mUsb.slice(0, 60) + ' »)');
+  const mBle = await messageApresClic('#outil-ble');
+  if (/HTTPS|Chrome ou Edge/i.test(mBle)) ok('clic « Module Bluetooth » en HTTP : message visible');
+  else ko('clic « Module Bluetooth » : aucun message visible (« ' + mBle.slice(0, 60) + ' »)');
+  // Les deux boutons sont signalés comme inutilisables ici, mais restent cliquables
+  const marques = await page.evaluate(() => ['#outil-usb', '#outil-ble'].map((s) => {
+    const b = document.querySelector(s);
+    return { indispo: b.classList.contains('indispo'), desactive: b.disabled, titre: (b.title || '').slice(0, 20) };
+  }));
+  if (marques.every((m) => m.indispo && !m.desactive)) ok('USB et Bluetooth : signalés inutilisables ici, mais toujours cliquables');
+  else ko('marquage des boutons inutilisables : ' + JSON.stringify(marques));
+
+  // 4. Aucune clé parasite dans les couches après ces clics
+  const parasites = await page.evaluate(() => Object.keys(etat.couches).filter((k) => k === 'undefined' || k === 'null'));
+  if (!parasites.length) ok('couches : aucune clé parasite après les clics d’outils');
+  else ko('clé parasite dans etat.couches : ' + JSON.stringify(parasites));
+
+  // 5. Le bouton « Thème clair » agit vraiment
+  await page.evaluate(() => { const m = document.querySelector('.menu-outils'); if (m) m.open = true; document.querySelector('#outil-theme').click(); });
+  await page.waitForTimeout(300);
+  const clair = await page.evaluate(() => document.body.classList.contains('theme-clair'));
+  if (clair) ok('clic « Thème clair » : le thème change'); else ko('clic « Thème clair » : aucun effet');
+  await page.evaluate(() => { const m = document.querySelector('.menu-outils'); if (m) m.open = true; document.querySelector('#outil-theme').click(); });
+
+  // 6. Une clé parasite déjà enregistrée par une ancienne version est purgée, les choix légitimes gardés
+  await page.evaluate(() => localStorage.setItem('gaulix_couches', JSON.stringify({ rf: false, aprs: true, undefined: true })));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(3000);
+  const apres = await page.evaluate(() => ({ ls: JSON.parse(localStorage.getItem('gaulix_couches') || '{}'), rf: etat.couches.rf, aprs: etat.couches.aprs }));
+  if (!('undefined' in apres.ls) && apres.rf === false && apres.aprs === true) ok('couches mémorisées : clé parasite purgée, choix légitimes gardés (rf, aprs)');
+  else ko('purge des couches mémorisées : ' + JSON.stringify(apres));
+
+  await capture(page, 'outils-non-securise');
+  bilanErreurs(erreurs, 'menu Outils');
+  await contexte.close();
+}
+
+// Fenêtres (<dialog>) : largeur sur grand écran, bouton ⤢, fermeture par un clic à côté, protection
+// d'une saisie en cours, Échap toujours actif.
+async function essaiFenetres(navig, cookie) {
+  console.log('Fenêtres : largeur, élargissement et fermeture par un clic à côté');
+  const prep = async (vue) => {
+    const ctx = await navig.newContext({ viewport: vue, locale: 'fr-FR', isMobile: vue.width < 500, hasTouch: vue.width < 500, deviceScaleFactor: vue.width < 500 ? 2 : 1 });
+    await ctx.addCookies([cookie]);
+    await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+    const r = await ouvrir(ctx, '/');
+    await r.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    return { ctx, ...r };
+  };
+  const ouvrirFonctions = async (page) => {
+    await page.evaluate(() => dlgFonctionsMasquees());
+    await page.waitForTimeout(500);
+  };
+  const mesurer = (page) => page.evaluate(() => {
+    const d = document.getElementById('dlg-fonctions');
+    const b = d.querySelector('.elargir');
+    return {
+      largeur: Math.round(d.getBoundingClientRect().width),
+      defile: d.scrollHeight > d.clientHeight + 1,
+      manquant: d.scrollHeight - d.clientHeight,
+      elargirVisible: !!b && getComputedStyle(b).display !== 'none',
+      debordement: document.documentElement.scrollWidth > window.innerWidth + 1,
+    };
+  });
+
+  // Grand écran : tout doit tenir sans barre de défilement, dans une fenêtre large
+  {
+    const { ctx, page, erreurs } = await prep({ width: 1920, height: 1080 });
+    await ouvrirFonctions(page);
+    const m = await mesurer(page);
+    if (!m.defile) ok(`« Fonctions affichées » en 1920 px : tout tient sans défilement (largeur ${m.largeur} px)`);
+    else ko(`« Fonctions affichées » en 1920 px : encore ${m.manquant} px à faire défiler (largeur ${m.largeur} px)`);
+    if (m.largeur >= 900 && m.largeur <= 1200) ok('largeur de départ dans la plage lisible (900–1200 px)');
+    else ko('largeur de départ hors de la plage lisible : ' + m.largeur + ' px');
+    // Bouton ⤢ : élargit, et le choix est gardé d'une fenêtre à l'autre
+    if (m.elargirVisible) ok('bouton ⤢ présent à côté de la croix'); else ko('bouton ⤢ absent sur grand écran');
+    await page.click('#dlg-fonctions .elargir');
+    await page.waitForTimeout(300);
+    const m2 = await mesurer(page);
+    const garde = await page.evaluate(() => localStorage.getItem('gaulix_fenetres_larges'));
+    if (m2.largeur > m.largeur && m2.largeur <= 1800) ok(`⤢ élargit la fenêtre (${m.largeur} → ${m2.largeur} px) sans dépasser 1800 px`);
+    else ko(`⤢ : largeur ${m.largeur} → ${m2.largeur} px`);
+    if (garde === 'true') ok('largeur élargie gardée pour la prochaine visite'); else ko('largeur élargie non mémorisée : ' + garde);
+    await page.click('#dlg-fonctions .elargir');
+    await page.waitForTimeout(200);
+    // Clic DANS la fenêtre (titre, puis zone vide près du bord) : ne ferme jamais
+    await page.click('#dlg-fonctions h3');
+    await page.waitForTimeout(200);
+    let ouverte = await page.evaluate(() => document.getElementById('dlg-fonctions').open);
+    if (ouverte) ok('clic sur le titre de la fenêtre : elle reste ouverte'); else ko('clic intérieur : la fenêtre s’est fermée');
+    await page.evaluate(() => {
+      const r = document.getElementById('dlg-fonctions').getBoundingClientRect();
+      document.elementFromPoint(Math.round(r.left + 3), Math.round(r.top + 3)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: r.left + 3, clientY: r.top + 3 }));
+      document.elementFromPoint(Math.round(r.left + 3), Math.round(r.top + 3)).dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + 3, clientY: r.top + 3 }));
+    });
+    await page.waitForTimeout(200);
+    ouverte = await page.evaluate(() => document.getElementById('dlg-fonctions').open);
+    if (ouverte) ok('clic sur le bord intérieur de la fenêtre : elle reste ouverte'); else ko('clic sur le bord intérieur : la fenêtre s’est fermée');
+    // Clic À CÔTÉ : ferme
+    await page.mouse.click(6, 540);
+    await page.waitForTimeout(300);
+    const fermee = await page.evaluate(() => !document.getElementById('dlg-fonctions').open);
+    if (fermee) ok('clic à côté de la fenêtre : elle se ferme'); else ko('clic à côté : la fenêtre reste ouverte');
+    await capture(page, 'fenetres-1920');
+    bilanErreurs(erreurs, 'fenêtres (1920 px)');
+    await ctx.close();
+  }
+
+  // Tablette et téléphone : rien ne doit déborder, le bouton ⤢ disparaît, le clic à côté marche toujours
+  for (const vue of [{ width: 1024, height: 768 }, { width: 390, height: 844 }]) {
+    const { ctx, page, erreurs } = await prep(vue);
+    await ouvrirFonctions(page);
+    const m = await mesurer(page);
+    if (!m.debordement && m.largeur <= vue.width - 8) ok(`${vue.width} px : la fenêtre tient dans l’écran (${m.largeur} px, pas de défilement horizontal)`);
+    else ko(`${vue.width} px : largeur ${m.largeur} px, débordement horizontal : ${m.debordement}`);
+    if (vue.width === 390) {
+      if (!m.elargirVisible) ok('téléphone : bouton ⤢ masqué'); else ko('téléphone : bouton ⤢ affiché à tort');
+      const croix = await page.locator('#dlg-fonctions .fermer').isVisible();
+      if (croix) ok('téléphone : la croix de fermeture reste présente'); else ko('téléphone : croix de fermeture absente');
+    }
+    await page.mouse.click(Math.round(vue.width / 2), vue.height - 6);
+    await page.waitForTimeout(300);
+    const fermee = await page.evaluate(() => !document.getElementById('dlg-fonctions').open);
+    if (fermee) ok(`${vue.width} px : clic à côté = fenêtre fermée`); else ko(`${vue.width} px : clic à côté sans effet`);
+    await capture(page, 'fenetres-' + vue.width);
+    bilanErreurs(erreurs, `fenêtres (${vue.width} px)`);
+    await ctx.close();
+  }
+
+  // Saisie en cours : un clic à côté ne doit rien perdre ; la croix et Échap restent disponibles
+  {
+    const { ctx, page, erreurs } = await prep({ width: 1400, height: 900 });
+    await page.evaluate(() => $('#dlg-profil').showModal());
+    await page.waitForTimeout(300);
+    await page.fill('#dlg-profil input[name="ha"]', '12');
+    await page.mouse.click(6, 450);
+    await page.waitForTimeout(400);
+    const etatSaisie = await page.evaluate(() => ({
+      ouverte: document.getElementById('dlg-profil').open,
+      valeur: document.querySelector('#dlg-profil input[name="ha"]').value,
+      message: (document.getElementById('annonces') || { textContent: '' }).textContent.trim(),
+    }));
+    if (etatSaisie.ouverte && etatSaisie.valeur === '12') ok('saisie en cours : le clic à côté ne ferme pas et ne perd rien');
+    else ko('saisie en cours : ' + JSON.stringify(etatSaisie));
+    if (/saisie/i.test(etatSaisie.message)) ok('saisie en cours : l’utilisateur est prévenu (« ' + etatSaisie.message.slice(0, 44) + '… »)');
+    else ko('saisie en cours : aucun message (« ' + etatSaisie.message.slice(0, 60) + ' »)');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    if (await page.evaluate(() => !document.getElementById('dlg-profil').open)) ok('Échap ferme toujours la fenêtre');
+    else ko('Échap ne ferme plus la fenêtre');
+    // Fenêtre sans saisie : le clic à côté ferme bien
+    await page.evaluate(() => $('#dlg-profil').showModal());
+    await page.waitForTimeout(250);
+    await page.mouse.click(6, 450);
+    await page.waitForTimeout(300);
+    if (await page.evaluate(() => !document.getElementById('dlg-profil').open)) ok('sans saisie commencée : le clic à côté ferme');
+    else ko('sans saisie commencée : le clic à côté ne ferme pas');
+    bilanErreurs(erreurs, 'fenêtres (saisie en cours)');
+    await ctx.close();
+  }
+}
+
+// Anti-force-brute : seuls les ECHECS remplissent le compteur des 15 minutes. Plusieurs personnes derriere
+// la meme connexion internet (caserne, local ADRASEC) doivent pouvoir se connecter a la suite.
+async function essaiConnexionsRepetees(navig, cookie) {
+  console.log('Connexions répétées depuis la même adresse');
+  const post = (corps) => fetch(BASE + '/api/connexion', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corps) });
+  const MDP = 'Essai-rep-2026!!';
+  const r = await fetch(BASE + '/api/comptes', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: `${cookie.name}=${cookie.value}` }, body: JSON.stringify({ identifiant: 'Repetition', motDePasse: MDP, role: 'membre' }) });
+  if (!r.ok) { ko('connexions répétées : compte d’essai non créé (' + r.status + ')'); return; }
+  let refus = 0, sansCookie = 0;
+  for (let k = 0; k < 12; k++) {
+    const x = await post({ identifiant: 'Repetition', motDePasse: MDP });
+    if (x.status === 429) refus++;
+    else if (!(x.headers.get('set-cookie') || '').includes('=')) sansCookie++;
+  }
+  if (!refus && !sansCookie) ok('12 connexions réussies de suite depuis la même adresse : aucune refusée');
+  else ko(`connexions réussies refusées à tort : ${refus} en 429, ${sansCookie} sans cookie`);
+  // La protection doit rester entière sur les mauvais mots de passe
+  let bloque = 0;
+  for (let k = 0; k < 12; k++) { const x = await post({ identifiant: 'Repetition', motDePasse: 'FauxMotDePasse!!' }); if (x.status === 429) bloque++; }
+  if (bloque > 0) ok(`mauvais mot de passe répété : toujours bloqué (${bloque} refus sur 12)`); else ko('mauvais mot de passe répété 12 fois sans jamais être bloqué');
 }
 
 async function essaiPagesPubliques(navig) {
@@ -616,6 +1838,372 @@ async function essaiPagesPubliques(navig) {
     await capture(page, nom.replace(/ /g, '-'));
     bilanErreurs(erreurs, nom);
     await contexte.close();
+  }
+}
+
+// Sélecteur de secteur (#sel-zone) : une carte réglée sur un carré du monde (hors de France) ne propose ni « France »
+// ni les régions françaises ; « Toute la carte » cadre sur les nœuds connus (vue du monde s'il n'y en a aucun).
+// Une carte réglée sur un département français garde régions et France. Un second serveur d'essai, réglé sur
+// MN40W075 (New Jersey), est lancé pour l'occasion puis arrêté.
+async function essaiZoneMonde(navig, cookie) {
+  console.log('Secteur affiché : carte française et carte hors de France');
+  // 1) Carte du département 43 : régions et France inchangées
+  const cfgFr = await (await fetch(BASE + '/api/config', { headers: { Cookie: `${cookie.name}=${cookie.value}` } })).json();
+  if (cfgFr.monde === false && (cfgFr.regions || []).length === 13 && cfgFr.zoneVoisins) ok('département français : 13 régions, voisins, monde = faux');
+  else ko('département français : ' + JSON.stringify({ monde: cfgFr.monde, regions: (cfgFr.regions || []).length, voisins: !!cfgFr.zoneVoisins }));
+  {
+    const ctx = await navig.newContext({ viewport: { width: 1280, height: 800 }, locale: 'fr-FR' });
+    await ctx.addCookies([cookie]);
+    await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); localStorage.setItem('gaulix_zone', 'r84'); } catch { /* */ } });
+    const { page, erreurs } = await ouvrir(ctx, '/');
+    const fr = await page.evaluate(() => { const b = document.querySelector('#sel-zone'); return { valeur: b.value, france: b.querySelector('option[value="france"]').textContent, regions: b.querySelectorAll('optgroup option').length }; });
+    if (fr.valeur === 'r84' && fr.france === 'France' && fr.regions === 13) ok('département français : région retenue, option « France » et 13 régions');
+    else ko('département français, sélecteur : ' + JSON.stringify(fr));
+    bilanErreurs(erreurs, 'secteur (département français)');
+    await ctx.close();
+  }
+  // 2) Carte réglée sur un carré du monde
+  const portM = PORT + 20, baseM = `http://127.0.0.1:${portM}`;
+  const donneesM = fs.mkdtempSync(path.join(os.tmpdir(), 'carte-essai-monde-'));
+  const envM = { ...process.env };
+  for (const k of ['ZONE_NOM', 'ZONE_BBOX', 'CARTE_CENTRE', 'CARTE_ZOOM']) delete envM[k]; // zone tirée du carré seul
+  const srv = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server.js')], {
+    env: { ...envM, PORT: String(portM), FICHIER_BASE: path.join(donneesM, 'carte-live.db'), MQTT_URL: 'mqtt://127.0.0.1:1', DEPARTEMENT: 'MN40W075', MESHCORE: 'oui', ADMIN_MOT_DE_PASSE: '', AGENTS_PORT: String(portM + 5), SMTP_HOTE: 'fichier', STATS_PAYS: 'non', RELIEF_MONDE_ERDDAP: 'http://127.0.0.1:1/erddap' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const log = fs.createWriteStream(path.join(sorties, 'serveur-monde.log'));
+  srv.stdout.pipe(log); srv.stderr.pipe(log);
+  try {
+    let pret = false;
+    for (let k = 0; k < 60 && !pret; k++) { try { pret = (await fetch(baseM + '/api/installation')).ok; } catch { /* pas encore prêt */ } if (!pret) await new Promise((r) => setTimeout(r, 500)); }
+    if (!pret) { ko('carte hors de France : le serveur d’essai ne répond pas (tests/resultats/serveur-monde.log)'); return; }
+    const r = await fetch(baseM + '/api/installation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ compte: ADMIN }) });
+    const [nomC, valC] = ((r.headers.get('set-cookie') || '').split(';')[0]).split('=');
+    if (!r.ok || !valC) { ko('carte hors de France : installation ' + r.status); return; }
+    const cookieM = { name: nomC, value: valC, domain: '127.0.0.1', path: '/' };
+    const cfg = await (await fetch(baseM + '/api/config', { headers: { Cookie: `${nomC}=${valC}` } })).json();
+    if (cfg.monde === true && Array.isArray(cfg.regions) && cfg.regions.length === 0 && !cfg.zoneVoisins) ok('carte hors de France : monde = vrai, aucune région française, pas de « + voisins »');
+    else ko('carte hors de France, config : ' + JSON.stringify({ monde: cfg.monde, regions: (cfg.regions || []).length, voisins: cfg.zoneVoisins }));
+    // Une région demandée par un lien ou un navigateur ne fait pas d'erreur
+    const st = (await fetch(baseM + '/api/topologie?zone=r84')).status;
+    if (st === 200) ok('carte hors de France : ?zone=r84 accepté (zone de la carte)'); else ko('carte hors de France : ?zone=r84 → HTTP ' + st);
+
+    for (const [langue, tout] of [['fr', 'Toute la carte'], ['en', 'Whole map']]) {
+      const ctx = await navig.newContext({ viewport: { width: 1280, height: 800 }, locale: langue === 'fr' ? 'fr-FR' : 'en-GB' });
+      await ctx.addCookies([cookieM]);
+      await ctx.addInitScript((l) => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', l); if (!sessionStorage.getItem('essai_zone')) { localStorage.setItem('gaulix_zone', 'r84'); localStorage.setItem('publique_zone', 'r84'); sessionStorage.setItem('essai_zone', '1'); } } catch { /* */ } }, langue);
+      const page = await ctx.newPage();
+      const erreurs = [];
+      page.on('pageerror', (e) => erreurs.push('JS : ' + e.message));
+      page.on('response', (x) => { if (x.status() >= 500 && x.url().startsWith(baseM)) erreurs.push(`HTTP ${x.status()} : ${x.url().slice(baseM.length)}`); });
+      await page.goto(baseM + '/', { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(2500);
+      const s = await page.evaluate(() => {
+        const b = document.querySelector('#sel-zone');
+        return { valeur: b.value, memo: localStorage.getItem('gaulix_zone'), groupes: b.querySelectorAll('optgroup').length, textes: [...b.options].filter((o) => !o.hidden).map((o) => o.textContent), voisinsCache: b.options[1].hidden, titre: b.title };
+      });
+      if (s.valeur === 'dep' && s.memo === 'dep') ok(`${langue} : région française retenue → zone de la carte`); else ko(`${langue} : choix « r84 » retenu : ` + JSON.stringify(s));
+      if (!s.groupes && s.voisinsCache && s.textes.length === 2 && s.textes[1] === tout && !s.textes.some((t) => /France|Auvergne|Bretagne/.test(t))) ok(`${langue} : sélecteur = zone de la carte et « ${tout} », ni France ni régions`);
+      else ko(`${langue} : sélecteur : ` + JSON.stringify(s));
+      if (!/France/.test(s.titre)) ok(`${langue} : infobulle sans « France »`); else ko(`${langue} : infobulle : ` + s.titre);
+      if (langue === 'fr') {
+        // Aucun nœud connu : vue du monde (et non la France)
+        await page.selectOption('#sel-zone', 'france');
+        await page.waitForTimeout(800);
+        const v0 = await page.evaluate(() => ({ z: carte.getZoom(), c: carte.getCenter() }));
+        if (v0.z <= 3 && Math.abs(v0.c.lat - 46.6) > 5) ok('toute la carte sans nœud : vue du monde'); else ko('toute la carte sans nœud : ' + JSON.stringify(v0));
+        // Deux nœuds connus (New Jersey et New York) : cadrage sur eux
+        await page.selectOption('#sel-zone', 'dep');
+        await page.evaluate(() => {
+          etat.noeuds.set(0x11111111, { num: 0x11111111, id: '!11111111', lat: 40.5, lon: -74.5, nomLong: 'Essai NJ', nomCourt: 'NJ', statut: 'actif', dernierVu: Date.now() });
+          etat.noeuds.set(0x22222222, { num: 0x22222222, id: '!22222222', lat: 40.75, lon: -73.95, nomLong: 'Essai NY', nomCourt: 'NY', statut: 'actif', dernierVu: Date.now() });
+          etat.noeuds.set(0x33333333, { num: 0x33333333, id: '!33333333', lat: 0, lon: 0, nomLong: 'Sans position', nomCourt: '0', statut: 'actif', dernierVu: Date.now() });
+        });
+        await page.selectOption('#sel-zone', 'france');
+        await page.waitForTimeout(800);
+        const v1 = await page.evaluate(() => { const b = carte.getBounds(); return { z: carte.getZoom(), nj: b.contains([40.5, -74.5]), ny: b.contains([40.75, -73.95]), afrique: b.contains([0, 0]), memo: localStorage.getItem('gaulix_zone') }; });
+        if (v1.nj && v1.ny && !v1.afrique && v1.z >= 7 && v1.memo === 'france') ok('toute la carte : cadrage sur les nœuds connus (0, 0 ignoré)'); else ko('toute la carte, cadrage : ' + JSON.stringify(v1));
+        await capture(page, 'secteur-monde');
+        // Téléphone : le sélecteur reste lisible
+        await page.setViewportSize({ width: 390, height: 800 });
+        await page.waitForTimeout(500);
+        await capture(page, 'secteur-monde-telephone');
+        // Carte publique
+        const pub = await ctx.newPage();
+        pub.on('pageerror', (e) => erreurs.push('JS (publique) : ' + e.message));
+        await pub.goto(baseM + '/publique.html', { waitUntil: 'domcontentloaded' });
+        await pub.waitForTimeout(2500);
+        const p = await pub.evaluate(() => { const b = document.querySelector('#choix-zone'); return { valeur: b.value, groupes: b.querySelectorAll('optgroup').length, textes: [...b.options].map((o) => o.textContent), titre: b.title }; });
+        if (p.valeur === 'dep' && !p.groupes && p.textes.length === 2 && p.textes[1] === 'Toute la carte' && !/France/.test(p.titre)) ok('carte publique : zone de la carte ou « Toute la carte », sans régions ni départements');
+        else ko('carte publique : ' + JSON.stringify(p));
+        await pub.selectOption('#choix-zone', 'france');
+        await pub.waitForTimeout(800);
+        const pv = await pub.evaluate(() => ({ z: carte.getZoom(), c: carte.getCenter(), titre: document.getElementById('titre').textContent }));
+        if (pv.z <= 3 && Math.abs(pv.c.lat - 46.6) > 5) ok('carte publique : toute la carte sans nœud → vue du monde'); else ko('carte publique, cadrage : ' + JSON.stringify(pv));
+        await capture(pub, 'secteur-monde-publique');
+        await pub.close();
+      }
+      if (erreurs.length) ko(`${langue} : ${erreurs.length} erreur(s)\n      ` + [...new Set(erreurs)].slice(0, 8).join('\n      ')); else ok(`secteur hors de France (${langue}) : aucune erreur JavaScript`);
+      await ctx.close();
+    }
+  } finally {
+    const fin = new Promise((r) => { srv.once('exit', r); setTimeout(r, 5000); });
+    srv.kill(); await fin;
+    try { fs.rmSync(donneesM, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }); } catch { /* */ }
+  }
+}
+
+// Opérations récentes : la carte d'une opération doit dire CE QUI A ÉTÉ ENVOYÉ au relais (valeurs et unités),
+// rester lisible sur téléphone, et ne jamais laisser voir une clé de canal.
+// Les opérations d'essai sont mises en forme par le vrai module du serveur : l'écran et le serveur ne peuvent pas divergir.
+async function essaiResumeOperations(navig, cookie) {
+  console.log('Opérations récentes : résumé de ce qui a été envoyé');
+  const ops = require('../src/resume-operations');
+  const PSK_ESSAI = 'c2VjcmV0ZGVjYW5hbDEyMzQ1Njc4OTBhYmNk';
+  const vue = (id, t) => ({
+    id, type: t.type, nom: t.nom || 'Modification des réglages', auteur: 'F4GLD', debut: Date.now() - 600000, fin: Date.now() - 60000, insister: true,
+    resume: ops.resumeOperation(t), details: ops.detailsOperation(t), principal: ops.toucheCanalPrincipal(t),
+    noeuds: [{ num: 0x43ab1234, statut: 'echec', detail: 'pas de réponse du nœud', finNoeud: Date.now() - 60000 }],
+  });
+  const operations = [
+    // Le cas d'Olivier : correction lancée depuis « Contrôle du trafic » (intervalles mesurés sur 24 h)
+    vue('e1', { type: 'modifier', params: { device: { nodeInfoBroadcastSecs: 10800 }, telemetrie: { deviceUpdateInterval: 1800 } }, mesures: { heures: 24, valeurs: { 'device.nodeInfoBroadcastSecs': 360, 'telemetrie.deviceUpdateInterval': 240 } } }),
+    // Résumé long : plusieurs sections et plusieurs canaux, dont une clé de canal qui ne doit jamais s'afficher
+    vue('e2', {
+      type: 'modifier',
+      params: {
+        nom: { nomLong: 'Le Bouchet', nomCourt: 'BCH' }, device: { role: 'ROUTER' }, lora: { hopLimit: 4, txPower: 20 },
+        position: { positionBroadcastSecs: 43200 }, voisinage: { enabled: true, updateInterval: 21600 }, trafic: { rateLimitWindowSecs: 60 },
+        canaux: [{ index: 0, nom: 'LongFast', psk: 'AQ==', precision: 16, montant: true, descendant: true }, { index: 2, nom: 'Secours', psk: PSK_ESSAI, precision: 32 }],
+      },
+      avant: { heure: Date.now() - 20 * 60000, valeurs: { 'lora.hopLimit': 3, 'position.positionBroadcastSecs': 900 } },
+    }),
+  ];
+  for (const [nom, vueFenetre, mobile] of [['ordinateur', { width: 1400, height: 900 }, false], ['téléphone', { width: 390, height: 844 }, true]]) {
+    const ctx = await navig.newContext({ viewport: vueFenetre, locale: 'fr-FR', isMobile: mobile, hasTouch: mobile, deviceScaleFactor: mobile ? 2 : 1 });
+    await ctx.addCookies([cookie]);
+    await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+    const { page, erreurs } = await ouvrir(ctx, '/');
+    const pose = await page.evaluate(async (l) => {
+      document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+      const o = document.querySelector('.onglets button[data-onglet="gestion"]');
+      if (o) o.click();
+      for (let k = 0; k < 40 && !document.querySelector('#taches-gestion'); k++) await new Promise((r) => setTimeout(r, 150));
+      await new Promise((r) => setTimeout(r, 800)); // l'écran Gérer se reconstruit : attendre qu'il soit posé
+      if (typeof gestion === 'object' && gestion.suivi) clearInterval(gestion.suivi); // plus de rafraîchissement automatique
+      let z = null;
+      for (let k = 0; k < 5; k++) {
+        z = document.querySelector('#taches-gestion');
+        if (!z) return null;
+        z.innerHTML = rendreTaches(l);
+        brancherArrets();
+        await new Promise((r) => setTimeout(r, 500)); // laisser la traduction de l'interface passer
+        z = document.querySelector('#taches-gestion');
+        if (z && z.querySelector('.tache')) break;
+      }
+      const t1 = z && z.querySelector('.tache');
+      if (!t1) return null;
+      const couleur = (s) => { const e = z.querySelector(s); return e ? getComputedStyle(e).color : null; };
+      const details = [...z.querySelectorAll('details.reste-resume')].map((d) => ({ resume: d.querySelector('summary').textContent.trim(), caches: d.querySelectorAll('.ligne-resume').length }));
+      const deborde = [...z.querySelectorAll('.tache')].filter((e) => e.scrollWidth > e.clientWidth + 1).length;
+      return {
+        texte: z.textContent, html: z.innerHTML,
+        lignes: [...t1.querySelectorAll('.ligne-resume')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()),
+        couleurValeur: couleur('.val-resume'), couleurLib: couleur('.lib-resume'),
+        couleurTexte: getComputedStyle(document.body).getPropertyValue('--texte').trim(),
+        details, deborde, pageDeborde: document.documentElement.scrollWidth > innerWidth + 1,
+        principal: [...z.querySelectorAll('[data-relancer-tache]')].map((b) => b.dataset.principal),
+      };
+    }, operations).catch((e) => ({ erreur: e.message }));
+    if (!pose || pose.erreur) { ko(`opérations récentes (${nom}) : écran non obtenu ${pose ? pose.erreur : ''}`); await ctx.close(); continue; }
+    // 1. Les valeurs envoyées, pas les noms de champs du firmware
+    if (/Fiche du nœud/.test(pose.texte) && /toutes les 3 h/.test(pose.texte) && !/nodeInfoBroadcastSecs/.test(pose.texte)) ok(`${nom} : le résumé donne le réglage en français et sa valeur`); else ko(`${nom} : résumé ` + JSON.stringify(pose.lignes));
+    // 2. Valeur d'avant : mesure sur 24 h, et valeur lue datée
+    if (/mesuré sur 24 h : toutes les 6 min/.test(pose.texte)) ok(`${nom} : intervalle mesuré avant la correction affiché comme une mesure`); else ko(`${nom} : mesure absente ` + JSON.stringify(pose.lignes));
+    if (/avant : 3 \(lu il y a 20 min\)/.test(pose.texte)) ok(`${nom} : valeur précédente lue sur le nœud, avec l’âge de la lecture`); else ko(`${nom} : « avant » absent`);
+    // 3. Aucune clé de canal à l'écran ni dans le HTML
+    if (!pose.html.includes(PSK_ESSAI) && !pose.html.includes('AQ==') && /clé envoyée \(non affichée\)/.test(pose.texte)) ok(`${nom} : aucune clé de canal affichée`); else ko(`${nom} : clé visible dans la carte d’opération`);
+    // 4. Contraste : la valeur est écrite dans la couleur de texte pleine, le libellé en couleur douce
+    if (pose.couleurValeur && pose.couleurValeur !== pose.couleurLib) ok(`${nom} : valeur bien contrastée (${pose.couleurValeur}), libellé plus doux`); else ko(`${nom} : valeur et libellé de même couleur (${pose.couleurValeur})`);
+    // 5. Résumé long : les lignes en trop sont repliées, pas perdues
+    if (pose.details.length === 1 && /autres réglages/.test(pose.details[0].resume) && pose.details[0].caches >= 3) ok(`${nom} : résumé long replié (« ${pose.details[0].resume} »), rien de supprimé`); else ko(`${nom} : repli du résumé long ` + JSON.stringify(pose.details));
+    // 6. Le bouton « Réessayer » sait qu'un canal principal est réécrit (sans deviner d'après le texte)
+    if (pose.principal.includes('1') && pose.principal.includes('0')) ok(`${nom} : relance d’une opération touchant le canal principal signalée`); else ko(`${nom} : drapeau canal principal ` + JSON.stringify(pose.principal));
+    // 7. Téléphone : rien ne dépasse
+    if (nom === 'téléphone') {
+      if (!pose.deborde && !pose.pageDeborde) ok('téléphone 390 px : les lignes du résumé tiennent dans la carte, sans défilement horizontal'); else ko(`téléphone 390 px : ${pose.deborde} carte(s) débordent, page ${pose.pageDeborde}`);
+    }
+    await page.evaluate(() => { const z = document.querySelector('#taches-gestion'); if (z) z.scrollIntoView({ block: 'start' }); document.querySelectorAll('details.reste-resume').forEach((d) => (d.open = true)); });
+    await page.waitForTimeout(300);
+    await capture(page, 'resume-operations-' + (nom === 'téléphone' ? 'telephone' : 'ordinateur'));
+    bilanErreurs(erreurs, 'opérations récentes (' + nom + ')');
+    await ctx.close();
+  }
+  // Autre langue : les libellés, les unités et la mention « mesuré » sont traduits (édition monde : 16 langues)
+  const ctxEn = await navig.newContext({ viewport: { width: 1400, height: 900 }, locale: 'en-GB' });
+  await ctxEn.addCookies([cookie]);
+  await ctxEn.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'en'); } catch { /* */ } });
+  const { page: pEn, erreurs: errEn } = await ouvrir(ctxEn, '/');
+  const texteEn = await pEn.evaluate(async (l) => {
+    document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+    const o = document.querySelector('.onglets button[data-onglet="gestion"]');
+    if (o) o.click();
+    for (let k = 0; k < 40 && !document.querySelector('#taches-gestion'); k++) await new Promise((r) => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 800));
+    if (typeof gestion === 'object' && gestion.suivi) clearInterval(gestion.suivi);
+    let z = null;
+    for (let k = 0; k < 5; k++) {
+      z = document.querySelector('#taches-gestion');
+      if (!z) return '';
+      z.innerHTML = rendreTaches(l);
+      await new Promise((r) => setTimeout(r, 600));
+      z = document.querySelector('#taches-gestion');
+      if (z && z.querySelector('.tache')) break;
+    }
+    return z ? z.textContent : '';
+  }, operations).catch(() => '');
+  if (/Node sheet/.test(texteEn) && /every 3 h/.test(texteEn) && /measured over 24 h: every 6 min/.test(texteEn)) ok('anglais : libellés, unités et mention « mesuré » traduits'); else ko('anglais : ' + String(texteEn).replace(/\s+/g, ' ').slice(0, 220));
+  if (/Secours/.test(texteEn)) ok('anglais : les noms de canaux restent tels quels (translate="no")'); else ko('anglais : nom de canal perdu');
+  await capture(pEn, 'resume-operations-anglais');
+  bilanErreurs(errEn, 'opérations récentes (anglais)');
+  await ctxEn.close();
+}
+
+// Fenêtre « Secteurs d'alerte » : de quelles équipes parle la liste déroulante, et où les créer.
+// Le cas « aucune équipe » est celui où l'utilisateur est perdu : le message doit lui dire quoi faire.
+async function essaiSecteursEquipes(navig, cookie) {
+  console.log('Secteurs d’alerte : lien vers les équipes de la carte');
+  const H = { 'Content-Type': 'application/json', Cookie: `${cookie.name}=${cookie.value}` };
+  const appel = async (m, url, b) => { const r = await fetch(BASE + url, { method: m, headers: H, body: b ? JSON.stringify(b) : undefined }); return { statut: r.status, j: await r.json().catch(() => ({})) }; };
+  const vider = async () => { const l = await appel('GET', '/api/equipes'); for (const e of l.j.equipes || []) await appel('DELETE', '/api/equipes/' + e.id, { retirerDesNoeuds: false }); };
+  const ouvrirSecteurs = async (vue, mobile) => {
+    const ctx = await navig.newContext({ viewport: vue, locale: 'fr-FR', ...(mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}) });
+    await ctx.addCookies([cookie]);
+    await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+    const o = await ouvrir(ctx, '/');
+    await o.page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    await o.page.evaluate(() => ficheSecteurs());
+    await o.page.waitForTimeout(1200);
+    return { ctx, ...o };
+  };
+  const mesurer = (page) => page.evaluate(() => {
+    const z = document.querySelector('.nouveau-sa');
+    const al = z && z.querySelector('.alerte.attention');
+    const note = z && z.querySelector('small.note');
+    const lien = z && z.querySelector('[data-vers-equipes]');
+    return { alerte: al ? al.textContent.replace(/\s+/g, ' ').trim() : null, note: note ? note.textContent.replace(/\s+/g, ' ').trim() : null,
+      lien: lien ? lien.textContent.trim() : null, couleurAlerte: al ? getComputedStyle(al).color : null,
+      options: [...(z ? z.querySelectorAll('[data-c="equipe"] option') : [])].map((o) => o.textContent),
+      debordeX: document.documentElement.scrollWidth > innerWidth + 1 };
+  });
+
+  // 1) Aucune équipe sur la carte (ordinateur et téléphone 390 px)
+  await vider();
+  for (const [nom, vue, mobile] of [['ordinateur', { width: 1400, height: 900 }, false], ['téléphone 390 px', { width: 390, height: 844 }, true]]) {
+    const { ctx, page, erreurs } = await ouvrirSecteurs(vue, mobile);
+    const m = await mesurer(page);
+    if (m.alerte && /Aucune équipe n’existe encore sur cette carte/.test(m.alerte) && /Programmer › 👥 Équipes/.test(m.alerte) && /Autres nœuds suivis/.test(m.alerte))
+      ok(`${nom} : sans équipe, la fenêtre dit de quelles équipes il s’agit, où en créer une et quoi faire en attendant`);
+    else ko(`${nom} : message « aucune équipe » : ` + JSON.stringify(m).slice(0, 300));
+    if (m.lien === 'Créer une équipe de la carte') ok(`${nom} : lien « Créer une équipe de la carte »`); else ko(`${nom} : lien absent (${m.lien})`);
+    if (m.couleurAlerte && !/rgba?\(0, 0, 0/.test(m.couleurAlerte)) ok(`${nom} : message lisible (${m.couleurAlerte})`); else ko(`${nom} : couleur du message : ${m.couleurAlerte}`);
+    if (!m.debordeX) ok(`${nom} : pas de débordement horizontal`); else ko(`${nom} : la page déborde en largeur`);
+    if (m.options.length === 1 && /aucune/.test(m.options[0])) ok(`${nom} : liste déroulante réduite à « — aucune — »`); else ko(`${nom} : options : ` + JSON.stringify(m.options));
+    await capture(page, 'secteurs-equipes-' + (mobile ? 'telephone' : 'ordinateur'));
+    // Le lien mène bien à l'écran où l'on crée les équipes
+    await page.evaluate(() => document.querySelector('.nouveau-sa [data-vers-equipes]').click());
+    await page.waitForTimeout(1500);
+    const arrive = await page.evaluate(() => ({ equipes: !!document.querySelector('#fiche-contenu .equipes'), titre: (document.querySelector('#fiche-contenu h2') || {}).textContent || '' }));
+    if (arrive.equipes) ok(`${nom} : le lien ouvre l’écran des équipes (${arrive.titre.trim().slice(0, 30)})`); else ko(`${nom} : le lien n’ouvre pas les équipes : ` + JSON.stringify(arrive));
+    await capture(page, 'secteurs-vers-equipes-' + (mobile ? 'telephone' : 'ordinateur'));
+    bilanErreurs(erreurs, `secteurs sans équipe (${nom})`);
+    await ctx.close();
+  }
+
+  // 2) Une équipe existe : la phrase change, le lien reste, l'équipe est proposée
+  const eq = await appel('POST', '/api/equipes', { nom: 'EqLien' });
+  if (eq.statut !== 200) { ko('création de l’équipe d’essai : ' + JSON.stringify(eq.j).slice(0, 120)); return; }
+  const { ctx, page, erreurs } = await ouvrirSecteurs({ width: 1400, height: 900 }, false);
+  const m2 = await mesurer(page);
+  if (m2.note && /Équipes de la carte/.test(m2.note) && /Programmer › 👥 Équipes/.test(m2.note) && !m2.alerte) ok('avec une équipe : la fenêtre rappelle d’où viennent les équipes');
+  else ko('avec une équipe : ' + JSON.stringify(m2).slice(0, 300));
+  if (m2.lien === 'Voir les équipes de la carte') ok('avec une équipe : lien « Voir les équipes de la carte »'); else ko('lien : ' + m2.lien);
+  if (m2.options.some((o) => /EqLien/.test(o))) ok('l’équipe créée est proposée dans la liste'); else ko('options : ' + JSON.stringify(m2.options));
+  bilanErreurs(erreurs, 'secteurs avec une équipe');
+  await ctx.close();
+  await appel('DELETE', '/api/equipes/' + eq.j.id, { retirerDesNoeuds: false });
+}
+
+// Boîte « Identifiant du nœud à écouter » : propositions au fil de la frappe, clavier, champ qui reste libre
+async function essaiSuggestionsNoeuds(navig, cookie) {
+  console.log('Boîte de saisie : propositions de nœuds au fil de la frappe');
+  for (const [nom, vue, mobile] of [['ordinateur', { width: 1400, height: 900 }, false], ['téléphone 390 px', { width: 390, height: 844 }, true]]) {
+    const ctx = await navig.newContext({ viewport: vue, locale: 'fr-FR', ...(mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}) });
+    await ctx.addCookies([cookie]);
+    await ctx.addInitScript(() => { try { localStorage.setItem('gaulix_visite', 'true'); localStorage.setItem('gaulix_langue', 'fr'); } catch { /* */ } });
+    const { page, erreurs } = await ouvrir(ctx, '/');
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+    // Beaucoup de nœuds : on vérifie que la liste reste courte et que la frappe reste réactive
+    await page.evaluate(() => {
+      etat.noeuds.set(0x5a1e0043, { num: 0x5a1e0043, id: '!5a1e0043', nomCourt: 'MZN4', nomLong: 'Mézenc 43 relais' });
+      etat.noeuds.set(0x5a1e0044, { num: 0x5a1e0044, id: '!5a1e0044', nomCourt: 'PUY1', nomLong: 'Le Puy-en-Velay 43' });
+      for (let i = 0; i < 3000; i++) { const n = 0x60000000 + i; etat.noeuds.set(n, { num: n, id: '!' + n.toString(16), nomCourt: 'R' + i, nomLong: 'Remplissage ' + i }); }
+      window.__portee = testPortee();
+    });
+    await page.waitForSelector('#dlg-saisir[open] #saisir-champ', { timeout: 5000 });
+    // Accents et casse ignorés : « mezenc » trouve « Mézenc 43 relais »
+    const t0 = Date.now();
+    await page.locator('#saisir-champ').fill('mezenc');
+    await page.waitForFunction(() => { const p = document.querySelector('#saisir-props'); return p && !p.hidden && p.children.length; }, null, { timeout: 4000 }).catch(() => {});
+    const delai = Date.now() - t0;
+    const l1 = await page.evaluate(() => ({
+      nb: document.querySelectorAll('#saisir-props button').length,
+      premier: (document.querySelector('#saisir-props button b') || {}).textContent || '',
+      detail: (document.querySelector('#saisir-props button small') || {}).textContent || '',
+      role: (document.querySelector('#saisir-props') || {}).getAttribute('role'),
+      combo: document.querySelector('#saisir-champ').getAttribute('role'),
+      deploye: document.querySelector('#saisir-champ').getAttribute('aria-expanded'),
+      debordeX: document.querySelector('#dlg-saisir').scrollWidth > innerWidth + 1,
+    }));
+    if (l1.nb >= 1 && /Mézenc 43 relais/.test(l1.premier)) ok(`${nom} : « mezenc » propose « ${l1.premier} » (accents et casse ignorés)`); else ko(`${nom} : propositions : ` + JSON.stringify(l1));
+    if (/!5a1e0043/.test(l1.detail)) ok(`${nom} : l’identifiant est montré sous le nom`); else ko(`${nom} : détail : ${l1.detail}`);
+    if (l1.role === 'listbox' && l1.combo === 'combobox' && l1.deploye === 'true') ok(`${nom} : liste annoncée aux lecteurs d’écran (combobox / listbox)`); else ko(`${nom} : accessibilité : ` + JSON.stringify(l1));
+    if (!l1.debordeX) ok(`${nom} : la boîte ne déborde pas en largeur`); else ko(`${nom} : la boîte déborde en largeur`);
+    // Plafond des propositions avec 3 000 nœuds, et réactivité
+    await page.locator('#saisir-champ').fill('r1');
+    await page.waitForTimeout(400);
+    const nb2 = await page.evaluate(() => document.querySelectorAll('#saisir-props button').length);
+    if (nb2 > 0 && nb2 <= 8) ok(`${nom} : au plus 8 propositions avec 3 000 nœuds (${nb2})`); else ko(`${nom} : ${nb2} propositions`);
+    if (delai < 3000) ok(`${nom} : propositions affichées en ${delai} ms`); else ko(`${nom} : propositions trop lentes (${delai} ms)`);
+    // Clavier : ↓ vise la première, Entrée la prend et remplit le champ
+    await page.locator('#saisir-champ').fill('puy');
+    await page.waitForTimeout(400);
+    await page.keyboard.press('ArrowDown');
+    const vise1 = await page.evaluate(() => { const b = document.querySelector('#saisir-props button'); return { classe: b && b.classList.contains('vise'), choisi: b && b.getAttribute('aria-selected'), actif: document.querySelector('#saisir-champ').getAttribute('aria-activedescendant') }; });
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    const apres = await page.evaluate(() => ({ valeur: document.querySelector('#saisir-champ').value, cachee: document.querySelector('#saisir-props').hidden, ouverte: !!document.querySelector('#dlg-saisir[open]') }));
+    if (vise1.classe && vise1.choisi === 'true' && vise1.actif === 'saisir-prop-0') ok(`${nom} : ↓ vise la première proposition (annoncée)`); else ko(`${nom} : ↓ : ` + JSON.stringify(vise1));
+    if (apres.valeur === '!5a1e0044' && apres.cachee && apres.ouverte) ok(`${nom} : Entrée prend la proposition et remplit le champ sans valider la boîte`); else ko(`${nom} : après Entrée : ` + JSON.stringify(apres));
+    // Échap referme d'abord la liste, puis la boîte
+    await page.locator('#saisir-champ').fill('mezenc');
+    await page.waitForTimeout(400);
+    await capture(page, 'suggestions-noeuds-' + (mobile ? 'telephone' : 'ordinateur'));
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    const ech1 = await page.evaluate(() => ({ cachee: document.querySelector('#saisir-props').hidden, ouverte: !!document.querySelector('#dlg-saisir[open]') }));
+    if (ech1.cachee && ech1.ouverte) ok(`${nom} : Échap referme la liste sans fermer la boîte`); else ko(`${nom} : premier Échap : ` + JSON.stringify(ech1));
+    // Champ libre : un identifiant inconnu de la carte est accepté tel quel
+    await page.locator('#saisir-champ').fill('!deadbeef');
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(1200);
+    const libre = await page.evaluate(() => ({ num: typeof portee !== 'undefined' ? portee.num : null, ouverte: !!document.querySelector('#dlg-saisir[open]') }));
+    if (libre.num === 0xdeadbeef && !libre.ouverte) ok(`${nom} : un identifiant inconnu de la carte reste acceptable (écoute lancée)`); else ko(`${nom} : champ libre : ` + JSON.stringify(libre));
+    await page.evaluate(() => { try { arreterPortee(); } catch { /* */ } });
+    bilanErreurs(erreurs, `propositions de nœuds (${nom})`);
+    await ctx.close();
   }
 }
 
@@ -640,11 +2228,29 @@ async function essaiPagesPubliques(navig) {
     await essaiVue3D(navigateur);
     await essaiProfil3D(navigateur);
     await essaiAdministrationALaDemande(navigateur, cookie);
+    await essaiMotDePasseOublie(navigateur, cookie);
+    await essaiFrequentation(navigateur, cookie);
+    await essaiPasserelleMembre(navigateur, cookie);
     await essaiAgentDirect(cookie);
     await essaiUsbAuto(navigateur, cookie);
     await essaiEcran150(navigateur);
     await essaiTelephone(navigateur);
+    await essaiRechercheMessages(navigateur, cookie);
+    await essaiUrgenceEtSecteurs(navigateur, cookie);
+    await essaiSecteursEquipes(navigateur, cookie);
+    await essaiSuggestionsNoeuds(navigateur, cookie);
+    await essaiDonateurs(navigateur, cookie);
+    await essaiPartager(navigateur, cookie);
+    await essaiRegistreAvance(navigateur, cookie);
+    await essaiResumeOperations(navigateur, cookie);
+
+    await essaiBoutonsOutils(navigateur, cookie);
+    await essaiFenetres(navigateur, cookie);
+    await essaiConnexionsRepetees(navigateur, cookie);
     await essaiPagesPubliques(navigateur);
+    await essaiZoneMonde(navigateur, cookie);
+    await essaiTopologieFiche(navigateur);
+    await essaiRapportArchives(navigateur, cookie);
     code = echecs ? 1 : 0;
     console.log(echecs ? `\n${echecs} problème(s) : captures et journal dans tests/resultats/` : '\nTout est bon ✓');
   } catch (e) {
@@ -652,8 +2258,9 @@ async function essaiPagesPubliques(navig) {
     code = 1;
   } finally {
     if (navigateur) await navigateur.close().catch(() => {});
-    if (serveur) serveur.kill();
-    fs.rmSync(donnees, { recursive: true, force: true });
+    // Attendre la fin réelle du serveur : il peut encore écrire (relief, donateurs…) pendant la suppression du dossier
+    if (serveur) { const fin = new Promise((r) => { serveur.once('exit', r); setTimeout(r, 5000); }); serveur.kill(); await fin; }
+    try { fs.rmSync(donnees, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }); } catch (e) { console.error('Dossier d’essai non supprimé :', e.message); }
     process.exit(code);
   }
 })();

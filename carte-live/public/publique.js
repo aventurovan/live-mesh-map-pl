@@ -24,7 +24,7 @@ function distanceKm(a, b) {
   return 12742 * Math.asin(Math.sqrt(s));
 }
 // Secteur affiché, au choix du visiteur : département de la carte, avec ses voisins, une région, un autre département
-// ou toute la France (?zone=dep|v|r84|d63|france, retenu dans ce navigateur)
+// ou toute la France (?zone=dep|v|r84|d63|france, retenu dans ce navigateur ; hors de France : dep ou france = toute la carte)
 let zoneSel = 'dep', departements = [];
 const regionSel = () => (/^r\d{2}$/.test(zoneSel) ? (config.regions || []).find((r) => 'r' + r.code === zoneSel) : null);
 const depSel = () => (/^d(\d{2}|2A|2B)$/.test(zoneSel) ? departements.find((d) => 'd' + d.code === zoneSel) : null);
@@ -35,8 +35,14 @@ function bboxZone() {
   const d = depSel(); if (d) return d.bbox;
   return config.zoneDep || config.zone;
 }
+// Carte réglée hors de France (config.monde) : ni régions ni départements français, « Toute la carte » au lieu de
+// « France entière » (même valeur « france », pour les liens ?zone=france et les choix déjà retenus)
+const nomTout = () => (config.monde ? 'Toute la carte' : 'France');
+// Choix connu de cette carte ? Sinon (région ou département français sur une carte hors de France, code périmé) :
+// la zone de la carte
+const zoneValide = () => zoneSel === 'dep' || zoneSel === 'france' || (zoneSel === 'v' && !!config.zoneVoisins) || !!regionSel() || !!depSel();
 function nomZone() {
-  if (zoneSel === 'france') return 'France';
+  if (zoneSel === 'france') return nomTout();
   if (zoneSel === 'v' && config.zoneVoisins) return `${config.zoneNom} et voisins`;
   const r = regionSel(); if (r) return r.nom;
   const d = depSel(); if (d) return d.nom;
@@ -63,10 +69,10 @@ function onde(p, couleur) {
 async function demarrer() {
   config = await (await fetch('/api/config')).json();
   config.zoneDep = config.zone;
-  try { departements = await (await fetch('/api/departements')).json(); } catch { departements = []; }
+  if (!config.monde) { try { departements = await (await fetch('/api/departements')).json(); } catch { departements = []; } }
   { let z = params.get('zone'); try { if (!z) z = localStorage.getItem('publique_zone'); } catch { /* indisponible */ } if (z) zoneSel = z; }
+  if (!zoneValide() || (!bboxZone() && zoneSel !== 'france')) zoneSel = 'dep';
   if (zoneSel === 'france' && config.horsFrance) zoneSel = 'dep';
-  if (!bboxZone() && zoneSel !== 'france') zoneSel = 'dep';
   installerZone();
   majTitre();
   // Lien vers la carte complète : seulement pour un administrateur connecté (la carte publique sert à consulter)
@@ -100,11 +106,63 @@ async function demarrer() {
   changerVue(vue, true);
 
   await Promise.all([rafraichirMt(), config.meshcore ? rafraichirMc() : null]);
+  // Toute la carte hors de France : recadrage une fois les nœuds connus (avant : vue du monde)
+  if (config.monde && zoneSel === 'france') recadrer();
   setInterval(rafraichirMt, 60000);
   rafraichirSignalements(); setInterval(rafraichirSignalements, 60000);
   if (config.meshcore) setInterval(rafraichirMc, 90000);
   connecterWs();
   installerCouverture();
+  setTimeout(chargerDonateursPub, 4000);
+  setInterval(chargerDonateursPub, 15 * 60000);
+}
+
+// ---- Mur des donateurs (HelloAsso + GitHub Sponsors) : même bandeau discret que la carte complète -----------
+// La page publique ne charge pas style.css : le style du bandeau est posé ici (même règle que sur la carte
+// complète : en bas au centre, au-dessus de la ligne d'attribution, sans toucher le bandeau du haut ni la légende).
+const STYLE_DONATEURS = `
+.bandeau-donateurs { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); z-index: 1001; /* bottom recalculé par placer() */ background: var(--surface, #111a24); color: var(--texte, #e8eef5);
+  border: 1px solid #a855f7; border-radius: 99px; padding: 5px 14px; font-size: 13px; max-width: min(560px, calc(100vw - 32px)); box-sizing: border-box; text-align: center; box-shadow: 0 4px 14px #0007; }
+.bandeau-donateurs a { color: #c084fc; margin: 0 2px; }
+.bandeau-donateurs .fermer-bandeau { background: none; border: 0; color: var(--doux, #9fb0c2); cursor: pointer; font-size: 14px; margin-left: 8px; padding: 0 2px; }
+@media (max-width: 700px) { .bandeau-donateurs { border-radius: 12px; left: 8px; right: 8px; transform: none; max-width: none; font-size: 12px; padding: 6px 10px; } .bandeau-donateurs .don-liens { display: none; } }`;
+const donPub = { liste: [], liens: {}, index: 0 };
+let donPubTimer = null;
+async function chargerDonateursPub() {
+  try { const r = await (await fetch('/api/donateurs')).json(); donPub.liste = Array.isArray(r.liste) ? r.liste : []; donPub.liens = r.liens || {}; } catch { return; }
+  rendreBandeauDonateursPub();
+}
+function paysDrapeauPub(code) { if (typeof code !== 'string' || !/^[A-Z]{2}$/i.test(code)) return ''; const base = 0x1f1e6; return [...code.toUpperCase()].map((c) => String.fromCodePoint(base + c.charCodeAt(0) - 65)).join(''); }
+function rendreBandeauDonateursPub() {
+  let b = document.getElementById('bandeau-donateurs');
+  try { if (localStorage.getItem('publique_donateurs_masque') === '1') { if (b) b.remove(); clearInterval(donPubTimer); return; } } catch { /* stockage indisponible : bandeau affiché quand même */ }
+  if (!donPub.liste.length) { if (b) b.remove(); clearInterval(donPubTimer); return; }
+  const afficher = () => {
+    const x = donPub.liste[donPub.index % donPub.liste.length];
+    const montant = Number.isFinite(Number(x.montant)) && x.montant != null ? ` ${esc(String(x.montant))} ${x.devise === 'USD' ? '$' : '€'}` : '';
+    const t = b.querySelector('.don-texte');
+    if (t) t.innerHTML = `${esc(x.nom)}${x.pays ? ' ' + paysDrapeauPub(x.pays) : ''} a ${x.source === 'github' ? 'parrainé' : 'donné'}${montant} pour soutenir le projet`;
+  };
+  const liens = [donPub.liens.helloasso ? `<a href="${esc(donPub.liens.helloasso)}" target="_blank" rel="noopener">Faire un don</a>` : '',
+    donPub.liens.github ? `<a href="${esc(donPub.liens.github)}" target="_blank" rel="noopener">GitHub Sponsors</a>` : ''].filter(Boolean).map((l) => ' · ' + l).join('');
+  const blocLiens = liens ? `<span class="don-liens">${liens}</span>` : '';
+  // Juste au-dessus de la légende (qui s'étale en bas sur un téléphone), sinon au-dessus de l'attribution
+  const placer = () => { const l = document.querySelector('.legende'); const r = l && getComputedStyle(l).display !== 'none' ? l.getBoundingClientRect() : null; b.style.bottom = (r && r.height ? Math.round(innerHeight - r.top) + 8 : 30) + 'px'; };
+  if (!b) {
+    if (!document.getElementById('style-donateurs')) { const st = document.createElement('style'); st.id = 'style-donateurs'; st.textContent = STYLE_DONATEURS; document.head.appendChild(st); }
+    b = document.createElement('div');
+    b.id = 'bandeau-donateurs'; b.className = 'bandeau-donateurs'; b.setAttribute('role', 'status');
+    document.body.appendChild(b);
+    donPubTimer = setInterval(() => { donPub.index = (donPub.index + 1) % donPub.liste.length; afficher(); }, 8000);
+    window.addEventListener('resize', placer);
+  }
+  placer();
+  if (b.dataset.liens !== liens) {
+    b.dataset.liens = liens;
+    b.innerHTML = `💜 <span class="don-texte"></span>${blocLiens}<button type="button" class="fermer-bandeau" title="Masquer le mur des donateurs" aria-label="Masquer le mur des donateurs">✕</button>`;
+    b.querySelector('.fermer-bandeau').onclick = () => { try { localStorage.setItem('publique_donateurs_masque', '1'); } catch { /* ignoré */ } b.remove(); clearInterval(donPubTimer); };
+  }
+  afficher();
 }
 
 // ---- Fonds de carte au choix (mêmes fonds que la carte complète) ----------------------------------
@@ -156,6 +214,8 @@ function infoPlan(info) {
     <br><small>Bleu : déjà couvert · turquoise : apporté par les nouveaux sites · rouge : non couvert. Points hauts ${NOM_ACCES[couv.acces]}, hors zones protégées. Cliquez sur un numéro pour voir la couverture de ce site.</small>`;
   document.getElementById('choix-acces').onchange = (ev) => { couv.acces = ev.target.value; couv.mode = null; basculerCouverture('sites'); };
 }
+// Calcul fait sur le relief grossier mondial : mention, puis nouveau calcul automatique 30 s plus tard
+const noteApprox = (r) => (r && r.approximatif && r.reliefApprox ? `<br><b class="note-approx">⏳ Relief approximatif (≈ ${Math.round(r.reliefApprox.resolutionKm)} km) : le relief précis se charge (${r.reliefApprox.progression || 0} %), le résultat sera recalculé tout seul.</b>` : '');
 async function couverturePoint(ll) {
   const info = document.getElementById('info-couv'), g = couv.couche;
   couv.dernierPoint = ll;
@@ -171,8 +231,9 @@ async function couverturePoint(ll) {
   if (r.erreur) { info.innerHTML = ligne('Couverture indisponible : ' + esc(r.erreur).replace(/https:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)); brancher(); return; }
   const e = r.emprise;
   L.imageOverlay(r.image, [[e.sud, e.ouest], [e.nord, e.est]], { opacity: 0.65, pane: 'couverture', className: 'pixelise' }).addTo(g);
-  info.innerHTML = ligne(`${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)}${r.sol != null ? ' · sol à ' + r.sol + ' m' : ''}<br>Zone couverte : <b>${Math.round(r.surfaceKm2).toLocaleString('fr-FR')} km²</b>${r.pctZone != null ? `, soit <b>${pc(r.pctZone)} %</b> ${libZone()}` : ''}<br><small>Turquoise : bonne liaison · jaune : liaison juste · orange pâle : à la limite. Cliquez ailleurs pour un autre point.</small>`);
+  info.innerHTML = ligne(`${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)}${r.sol != null ? ' · sol à ' + r.sol + ' m' : ''}<br>Zone couverte : <b>${Math.round(r.surfaceKm2).toLocaleString('fr-FR')} km²</b>${r.pctZone != null ? `, soit <b>${pc(r.pctZone)} %</b> ${libZone()}` : ''}${noteApprox(r)}<br><small>Turquoise : bonne liaison · jaune : liaison juste · orange pâle : à la limite. Cliquez ailleurs pour un autre point.</small>`);
   brancher();
+  if (r.approximatif) setTimeout(() => { if (couv.mode === 'point' && couv.dernierPoint === ll) couverturePoint(ll); }, 30000);
 }
 async function couvertureSite(x, g, info) {
   info.innerHTML = '<span class="sablier"></span> Calcul de la couverture de ce site…';
@@ -237,7 +298,8 @@ async function basculerCouverture(mode) {
       if (r.vide) { info.textContent = 'Aucun relais positionné entendu depuis 24 h.'; return; }
       const e = r.emprise;
       L.imageOverlay(r.image, [[e.sud, e.ouest], [e.nord, e.est]], { opacity: 0.6, pane: 'couverture', className: 'pixelise' }).addTo(g);
-      info.innerHTML = `<b>Couverture ${mcSeul ? 'MeshCore' : 'Meshtastic'} estimée</b>${r.pctZone != null ? ` : <b>${String(r.pctZone).replace('.', ',')} %</b> ${libZone()}` : ''} · ${r.noeuds.length} relais et passerelles<br><small>Calcul d’après le relief (IGN) et les antennes connues, corrigé par les mesures réelles du réseau.</small>`;
+      info.innerHTML = `<b>Couverture ${mcSeul ? 'MeshCore' : 'Meshtastic'} estimée</b>${r.pctZone != null ? ` : <b>${String(r.pctZone).replace('.', ',')} %</b> ${libZone()}` : ''} · ${r.noeuds.length} relais et passerelles${noteApprox(r)}<br><small>Calcul d’après le relief (IGN) et les antennes connues, corrigé par les mesures réelles du réseau.</small>`;
+      if (r.approximatif) setTimeout(() => { if (couv.mode === mode) { couv.mode = null; basculerCouverture(mode); } }, 30000);
     } else {
       await afficherPlan(g, info);
       if (couv.mode !== mode) return;
@@ -263,7 +325,18 @@ function majTitre() {
 const libZone = () => (depSel() && depSel().code !== depCarte() ? `du département (${depSel().nom})` : config.departement && config.zoneNom && config.departement.nom && config.zoneNom !== config.departement.nom ? `de la zone ${config.zoneNom}` : 'du département');
 function recadrer() {
   const z = bboxZone();
-  if (z) carte.fitBounds([[z[0], z[1]], [z[2], z[3]]], { padding: [10, 10] }); else carte.setView([46.6, 2.5], 6);
+  if (z) carte.fitBounds([[z[0], z[1]], [z[2], z[3]]], { padding: [10, 10] });
+  else if (config.monde) cadrerTout();
+  else carte.setView([46.6, 2.5], 6);
+}
+// « Toute la carte » hors de France : tous les nœuds connus (Meshtastic et MeshCore), vue du monde s'il n'y en a pas
+function cadrerTout() {
+  const pts = [];
+  const ok = (n) => n && Number.isFinite(n.lat) && Number.isFinite(n.lon) && Math.abs(n.lat) <= 90 && Math.abs(n.lon) <= 180 && !(n.lat === 0 && n.lon === 0);
+  for (const n of etat.noeuds.values()) if (ok(n)) pts.push([n.lat, n.lon]);
+  for (const n of mcp.noeuds.values()) if (ok(n)) pts.push([n.lat, n.lon]);
+  if (pts.length) carte.fitBounds(L.latLngBounds(pts), { padding: [10, 10], maxZoom: 11 });
+  else carte.setView([20, 0], 2);
 }
 function installerZone() {
   const sel = document.getElementById('choix-zone');
@@ -272,6 +345,7 @@ function installerZone() {
   sel.innerHTML = o('dep', config.zoneNom || 'Département de la carte') + (config.zoneVoisins ? o('v', `${config.zoneNom} + voisins`) : '') + (config.horsFrance ? '' : o('france', 'France entière'))
     + ((config.regions || []).length ? `<optgroup label="Régions">${config.regions.map((r) => o('r' + r.code, r.nom)).join('')}</optgroup>` : '')
     + (departements.length ? `<optgroup label="Départements">${departements.map((d) => o('d' + d.code, `${d.code} · ${d.nom}`)).join('')}</optgroup>` : '');
+  if (config.monde) sel.title = 'Secteur affiché : la zone de la carte ou toute la carte';
   sel.value = zoneSel;
   sel.onchange = () => {
     zoneSel = sel.value;
@@ -292,10 +366,10 @@ function majBoutonsCouv() {
     if (b.dataset.titre == null) b.dataset.titre = b.title;
     const possible = id === 'b-point' ? pointPossible() : ok;
     b.disabled = !possible;
-    b.title = possible ? b.dataset.titre : franceOuverte() ? 'Choisissez un département pour ce calcul' : `Calculs de couverture disponibles sur ${config.zoneNom || 'le département de la carte'}`;
+    b.title = possible ? b.dataset.titre : franceOuverte() && !config.monde ? 'Choisissez un département pour ce calcul' : `Calculs de couverture disponibles sur ${config.zoneNom || 'le département de la carte'}`;
   }
   const n = document.getElementById('note-couv');
-  if (n) { n.hidden = ok; n.textContent = franceOuverte() ? 'Couverture et emplacements de relais : choisissez un département (la couverture d’un point marche partout).' : `Couverture et emplacements de relais : sur ${config.zoneNom || 'le département de la carte'} seulement.`; }
+  if (n) { n.hidden = ok; n.textContent = config.monde ? (franceOuverte() ? `Couverture et emplacements de relais : sur ${config.zoneNom || 'la zone de la carte'} seulement (la couverture d’un point marche partout).` : `Couverture et emplacements de relais : sur ${config.zoneNom || 'la zone de la carte'} seulement.`) : franceOuverte() ? 'Couverture et emplacements de relais : choisissez un département (la couverture d’un point marche partout).' : `Couverture et emplacements de relais : sur ${config.zoneNom || 'le département de la carte'} seulement.`; }
 }
 
 function changerVue(v, sansCharger) {
@@ -381,6 +455,8 @@ function dessinerMc() {
   mcp.coucheNoeuds.clearLayers(); mcp.coucheLiens.clearLayers();
   mcp.marqueurs = new Map();
   const vis = [...mcp.noeuds.values()].filter((n) => n.statut !== 'inactif');
+  // Aucun nœud MeshCore reçu (pas de source branchée) : on cache ces compteurs plutôt que d'afficher des « – » sans sens
+  document.querySelectorAll('.chiffres .mc').forEach((e) => { e.style.display = mcp.noeuds.size ? '' : 'none'; });
   document.getElementById('n-mc-rep').textContent = vis.filter((n) => ROLES_MC_RELAIS.has(n.role)).length;
   document.getElementById('n-mc-actifs').textContent = vis.filter((n) => n.statut === 'actif').length;
   if (!voitMc()) return;

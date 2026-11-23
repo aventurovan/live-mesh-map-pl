@@ -74,6 +74,26 @@ Fiche d'un répéteur, salon ou capteur, onglet **Capteurs** :
 
 Les relevés faits à la main depuis l'administration alimentent aussi les courbes. L'historique est gardé 90 jours.
 
+### Si un relevé ne part plus
+Le relevé automatique doit se rétablir tout seul :
+- **nœud qui ne répond pas** : la carte réessaie deux fois, à un quart d'heure d'intervalle, puis attend l'intervalle suivant. Un nœud injoignable ne prive plus les autres de relevé ;
+- **opération qui traîne** : chaque nœud d'une tâche MeshCore a une durée maximale, et la tâche entière aussi. Au-delà, le nœud est déclaré sans réponse (la raison est écrite dans les étapes de la tâche) et la carte passe au suivant, pour que les tâches suivantes repartent. Les deux durées se règlent dans **MeshCore › Companion › Module MeshCore** :
+  - *Délai maximal d'un relevé, par nœud* : 1 à 30 min, **4 min par défaut** (télémétrie, état, chemin, trace, annonce, horloge, redémarrage) ;
+  - *Délai maximal d'une lecture complète, par nœud* : 5 à 240 min, **60 min par défaut** (lecture de tous les réglages, programmation, mise en service, console). Trop bas, un répéteur lent est déclaré sans réponse avant la fin : la lecture complète demande 25 commandes, chacune réessayée une fois.
+  - La durée maximale de la tâche entière et le délai au bout duquel le relevé des capteurs repart sans attendre une tâche en suivent le premier réglage : rien de plus à régler. Dans le `.env` : `MESHCORE_PLAFOND_RELEVE_MIN`, `MESHCORE_PLAFOND_LECTURE_MIN` ;
+- **alerte « relevés en retard »** : quand rien n'arrive pendant trois intervalles (2 h au moins), une alerte MeshCore le dit, avec la date du dernier relevé et les causes possibles (companion, mot de passe, portée). Un nœud disparu de la carte (purgé) est signalé à part et repris s'il réapparaît. Cette alerte et celle d'une mesure hors seuil s'affichent **même si le capteur est hors de la zone de la carte** : un capteur dont vous avez vous-même réglé le relevé est un nœud que vous suivez, où qu'il soit.
+
+Le nombre indiqué sous chaque mesure (« 36 relevés ») est celui de la **période affichée** (1, 7, 30 ou 90 jours), pas le total : changer de période change ce nombre, aucun relevé n'est perdu.
+
+## Observatoires publics (CoreScope)
+MeshCore n'a pas de serveur MQTT public mondial, mais plusieurs communautés publient en libre accès ce que captent leurs observateurs, avec le logiciel libre [CoreScope](https://github.com/Kpa-clawbot/corescope). La carte lit leur API en lecture seule, sans compte ni clé :
+- **France** : `https://meshstats.serveurperso.in` · **Texas** : `https://analyzer.meshtexas.org` · **Belgique, Pays-Bas** : `https://analyzer.on8ar.eu`.
+- Un clic dans le message « Aucune source MeshCore », ou **MeshCore › Companion › Observatoires publics** : la carte teste l'adresse (nœuds connus, débit réel) avant de l'ajouter.
+- **Ne garder qu'une zone** : ajoutez `=CODE,CODE` après l'adresse (codes de zone des observateurs, ex. `https://meshstats.serveurperso.in=LYS,CFE`).
+- **Volume maîtrisé** : la carte interroge l'API (toutes les 20 s par défaut) au lieu de subir un flux ; au-delà du plafond (60 paquets par minute et par observatoire par défaut), les paquets sont ignorés.
+- Les nœuds connus de l'observatoire (noms, positions, rôles) apparaissent tout de suite ; les paquets passent ensuite par le même traitement qu'un flux MQTT (liaisons, chemins, messages du canal Public).
+- Le nom de l'observatoire est crédité au pied de la carte. Variables : `MESHCORE_CORESCOPE`, `MESHCORE_CORESCOPE_INTERVALLE`, `MESHCORE_CORESCOPE_MAX_MINUTE`.
+
 ## Republication MQTT et canaux
 - **Republier les paquets du companion** : publiés sur votre broker sous `meshcore/IATA/CLÉ/packets` (format meshcoretomqtt), pour les autres cartes.
 - **Code de zone (IATA)** : 3 lettres, par exemple `LPY` pour le Puy.

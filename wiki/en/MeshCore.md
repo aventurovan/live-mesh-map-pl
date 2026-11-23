@@ -74,6 +74,26 @@ Sheet of a repeater, room or sensor, **Sensors** tab:
 
 Readings made by hand from the administration also feed the curves. History is kept 90 days.
 
+### If a reading stops going out
+Automatic reading must recover on its own:
+- **node that does not answer**: the map tries again twice, a quarter of an hour apart, then waits for the next interval. An unreachable node no longer deprives the others of their reading;
+- **operation that drags on**: each node of a MeshCore task has a maximum duration, and so does the whole task. Beyond that the node is declared unresponsive (the reason is written in the task's steps) and the map moves on to the next one, so the following tasks start again. Both durations are set in **MeshCore › Companion › MeshCore module**:
+  - *Maximum time for a reading, per node*: 1 to 30 min, **4 min by default** (telemetry, status, path, trace, advert, clock, reboot);
+  - *Maximum time for a full read, per node*: 5 to 240 min, **60 min by default** (read of all settings, programming, commissioning, console). Too low, a slow repeater is declared unresponsive before the end: a full read takes 25 commands, each tried twice.
+  - The maximum duration of the whole task, and the delay after which sensor readings restart without waiting for a task, follow the first setting: nothing more to set. In the `.env`: `MESHCORE_PLAFOND_RELEVE_MIN`, `MESHCORE_PLAFOND_LECTURE_MIN`;
+- **“late readings” alert**: when nothing arrives for three intervals (at least 2 h), a MeshCore alert says so, with the date of the last reading and the possible causes (companion, password or range). A node that has disappeared from the map (purged) is reported separately and resumed if it comes back. This alert and the one for a measurement outside its threshold are shown **even if the sensor is outside the map's area**: a sensor whose reading you set up yourself is a node you follow, wherever it is.
+
+The number shown under each measurement (“36 readings”) is the one of the **displayed period** (1, 7, 30 or 90 days), not the total: changing the period changes that number, no reading is lost.
+
+## Public observatories (CoreScope)
+MeshCore has no worldwide public MQTT server, but several communities openly publish what their observers hear, using the free [CoreScope](https://github.com/Kpa-clawbot/corescope) software. The map reads their read-only API, with no account or key:
+- **France**: `https://meshstats.serveurperso.in` · **Texas**: `https://analyzer.meshtexas.org` · **Belgium, Netherlands**: `https://analyzer.on8ar.eu`.
+- One click in the "No MeshCore source" message, or **MeshCore › Companion › Public observatories**: the map tests the address (known nodes, real rate) before adding it.
+- **Keep one area only**: add `=CODE,CODE` after the address (observer area codes, e.g. `https://meshstats.serveurperso.in=LYS,CFE`).
+- **Controlled volume**: the map polls the API (every 20 s by default) instead of receiving a pushed stream; above the cap (60 packets per minute per observatory by default), packets are ignored.
+- The observatory's known nodes (names, positions, roles) show up straight away; packets then go through the same processing as an MQTT stream (links, paths, Public channel messages).
+- The observatory is credited at the bottom of the map. Variables: `MESHCORE_CORESCOPE`, `MESHCORE_CORESCOPE_INTERVALLE`, `MESHCORE_CORESCOPE_MAX_MINUTE`.
+
 ## MQTT republishing and channels
 - **Republish the companion's packets**: published to your broker under `meshcore/IATA/KEY/packets` (meshcoretomqtt format), for other maps.
 - **Area code (IATA)**: 3 letters, for example `LPY` for Le Puy.

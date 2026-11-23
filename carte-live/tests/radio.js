@@ -11,6 +11,8 @@ const path = require('path');
 const mt = require('../src/decodeur');
 const mc = require('../src/meshcore/paquet');
 const DFCI = require('../public/dfci.js');
+// Des modules (passerelle…) gardent des minuteries actives : arrêt du processus une fois tous les tests passés
+test.after(() => setImmediate(() => process.exit(0)));
 
 // ---------- Meshtastic ----------
 const CANAUX = mt.preparerCanaux([{ nom: 'LongFast', cle: 'AQ==' }, { nom: 'Prive', cle: crypto.randomBytes(32).toString('base64') }]);
@@ -144,6 +146,62 @@ test('MeshCore : message de canal entendu par un observateur signalé comme nouv
   assert.ok(a && a.nouveauMessage, 'première réception : nouveau message');
   assert.equal(a.texte, 'Coucou le réseau');
   assert.ok(!b || !b.nouveauMessage, 'deuxième observateur : pas un nouveau message');
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+// Observatoire CoreScope simulé : paquets bruts lus sur l'API REST, nœuds importés, plafond par minute, zones, panne
+test('MeshCore : observatoire CoreScope (API REST) intégré comme un flux MQTT, plafonné et filtré par zone', async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-cs-'));
+  process.env.FICHIER_BASE = path.join(dossier, 'x.db');
+  const config = require('../src/config');
+  const { creerStockage } = require('../src/base');
+  const { creerReseauMc } = require('../src/meshcore/reseau');
+  const cs = require('../src/meshcore/corescope');
+  assert.deepEqual(cs.lireSources('analyzer.on8ar.eu=bru, lgg\nhttps://meshstats.serveurperso.in/ ; pas une adresse'),
+    [{ url: 'https://analyzer.on8ar.eu', regions: ['BRU', 'LGG'] }, { url: 'https://meshstats.serveurperso.in', regions: [] }]);
+  const st = creerStockage(path.join(dossier, 'x.db'));
+  const r = creerReseauMc(st.db, config, PUBLIC);
+  const OBS = 'AB'.repeat(32), REP = 'f0f3440c3ca9fc564a3339226d7b6f7add99f8ad434f7c8bc035cecebebc37da';
+  let id = 100, panne = false;
+  const paquets = [];
+  const ajouter = (texte, iata) => paquets.push({ id: ++id, raw_hex: messagePublic(texte).toString('hex'), observer_id: OBS, observer_iata: iata, snr: 6, rssi: -95, direction: 'rx', timestamp: new Date().toISOString() });
+  const faux = async (url) => {
+    if (panne) throw new Error('connect ECONNREFUSED');
+    const u = new URL(url), corps = { '/api/observers': { observers: [{ id: OBS, name: 'BE-BRU-Obs', iata: 'BRU', lat: 50.85, lon: 4.35, nodeRole: 'repeater', last_seen: new Date().toISOString() }] },
+      '/api/nodes': { nodes: [{ public_key: REP, name: 'BE-WKD-ON4EA', role: 'repeater', lat: 50.67, lon: 5.93, last_seen: new Date().toISOString(), region_placement: { regions: ['BRU'] } },
+        { public_key: 'CD'.repeat(32), name: 'Ailleurs', role: 'companion', lat: 1, lon: 1, region_placement: { regions: ['AUS'] } }] },
+      '/api/packets': { packets: paquets.slice().reverse() } }[u.pathname];
+    return { ok: !!corps, status: corps ? 200 : 404, json: async () => corps };
+  };
+  for (let k = 0; k < 5; k++) ajouter('ancien ' + k, 'BRU');
+  const recus = [];
+  const s = cs.creerCoreScope({ sources: [{ url: 'https://exemple.org', regions: ['BRU'] }], maxParMinute: 4, fetch: faux,
+    integrer: (o) => { recus.push(o); return r.integrer(o); }, noterObservateur: r.noterObservateur, importerNoeuds: r.importerContacts });
+  s._etats[0].dernierId = null;
+  const tourner = async () => { s._etats[0].obsHeure = s._etats[0].obsHeure || 0; await s._tour.call(null, s._etats[0]); clearTimeout(s._etats[0].minuteur); };
+  s.demarrer(); clearTimeout(s._etats[0].minuteur); // pas de minuterie pendant le test
+  await tourner();
+  assert.equal(r.q.noeud.get(REP.toUpperCase()).nom, 'BE-WKD-ON4EA', 'nœud importé depuis /api/nodes');
+  assert.equal(r.q.noeud.get('CD'.repeat(32)), undefined, 'nœud d\'une autre zone ignoré');
+  assert.equal(r.q.noeud.get(OBS).observateur, 1, 'observateur noté avec sa position');
+  assert.equal(recus.length, 4, 'premier tour : plafond de 4 paquets par minute');
+  assert.equal(recus[0].via, 'corescope');
+  assert.equal(recus[0].snr, 6);
+  ajouter('nouveau', 'BRU'); ajouter('hors zone', 'AUS');
+  await tourner();
+  let e = s.etat().sources[0];
+  assert.equal(e.horsZone, 1);
+  assert.equal(e.ecartes, 2, 'au-delà du plafond : écarté, pas mis en attente');
+  assert.equal(recus.length, 4, 'aucun paquet déjà vu retraité');
+  s._etats[0].fenetre.debut = 0; // minute suivante
+  ajouter('après la minute', 'BRU');
+  await tourner();
+  assert.equal(recus[recus.length - 1].brut.toString('hex'), paquets[paquets.length - 1].raw_hex);
+  panne = true;
+  await tourner();
+  e = s.etat().sources[0];
+  assert.ok(e.enPanne && /ECONNREFUSED/.test(e.derniereErreur.message), 'panne signalée');
+  s.arreter();
   fs.rmSync(dossier, { recursive: true, force: true });
 });
 
@@ -423,11 +481,15 @@ test('Passerelle : positions et signalements relayés une fois, sans écho', asy
   const { creerPasserelle } = require('../src/passerelle');
   const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'passerelle-'));
   const envois = [];
-  const p = creerPasserelle({
+  // Minuteries de la passerelle relevées pour être arrêtées à la fin (avant : process.exit, qui coupait les essais suivants)
+  const vraiSetInterval = global.setInterval, minuteries = [];
+  global.setInterval = (...x) => { const m = vraiSetInterval(...x); minuteries.push(m); return m; };
+  let p;
+  try { p = creerPasserelle({
     config: { fichierBase: path.join(dossier, 'x.db'), passerelle: { actif: true }, canaux: [], meshcore: {} }, journal: () => {}, audit: {}, nomMt: () => 'F4XYZ',
     envoyerMt: async (c, t) => envois.push(['MT', t]), envoyerMc: async (c, t) => envois.push(['MC', t]),
     etatMt: () => ({ connecte: true, noeudLocal: 1, canaux: [{ index: 1, nom: 'Crise' }] }), etatMc: () => ({ pret: true, nom: 'BASE', canaux: [{ index: 2, nom: '#crise' }] }),
-  });
+  }); } finally { global.setInterval = vraiSetInterval; }
   p.regler({ ecartEnvoiS: 2 });
   p.ajouterRegle({ mt: 1, mc: 2, sens: 'bi', positions: true, signalements: true }, 'essai');
   p.recevoirPosition({ reseau: 'mt', canal: 'Crise', de: 0x1234, nom: 'F4XYZ', lat: 45.0451, lon: 3.8852 });
@@ -442,12 +504,13 @@ test('Passerelle : positions et signalements relayés une fois, sans écho', asy
   assert.ok(textes.every((t) => /DFCI [A-HK-N]{2}/.test(t)), textes.join(' | '));
   assert.ok(!textes.some((t) => t.includes('BASE')));
   fs.rmSync(dossier, { recursive: true, force: true });
-  setImmediate(() => process.exit(0)); // la passerelle garde des minuteries actives
+  minuteries.forEach(clearInterval);
+  // la passerelle garde des minuteries actives : le processus est arrêté après le dernier test (test.after)
 });
 
 // Non-régression (17/11) : l'historique d'un canal calme ne doit ni disparaître après 7 jours (purge générale),
 // ni être caché par les 300 derniers messages des canaux bavards
-test('Messages : conservés plus longtemps que le trafic, historique d’un seul canal', () => {
+test('Messages : conservés plus longtemps que le trafic, historique d’un seul canal', async () => {
   const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'msg-'));
   const { creerStockage } = require('../src/base');
   const st = creerStockage(path.join(dossier, 'x.db'));
@@ -458,7 +521,7 @@ test('Messages : conservés plus longtemps que le trafic, historique d’un seul
   ins('ADRASEC43', 'texte', 120 * j, 'trop vieux');
   for (let i = 0; i < 400; i++) ins('Fr_BlaBla', 'texte', i * 60000, 'bavard ' + i);
   ins('Fr_BlaBla', 'texte', 60000, 'direct', 1234);
-  st.purger(7, 90);
+  await st.purger(7, 90);
   const restant = st.db.prepare("SELECT port, texte FROM paquets WHERE canal = 'ADRASEC43'").all();
   assert.deepEqual(restant.map((x) => x.texte), ['vieux message du canal calme']);
   assert.ok(!st.q.messages.all(300).some((m) => m.canal === 'ADRASEC43'), 'noyé dans les 300 derniers');
@@ -566,4 +629,1573 @@ test('MeshCore : sauvegarde du configurateur importée sans secrets, comparée a
   assert.ok(n.aFaire.some((t) => /nom sans numéro de département/.test(t)));
   assert.ok(n.aFaire.some((t) => /path\.hash\.mode 1/.test(t)));
   assert.ok(n.aFaire.some((t) => /9 annonces en inondation/.test(t)));
+});
+
+test('Jeux de canaux : placement sur la radio (ajout, déjà présent, place à libérer, canaux gardés groupés)', () => {
+  const { planifier } = require('../src/jeux-canaux');
+  const K = (n) => Buffer.alloc(32, n).toString('base64');
+  const vide = { nom: '', cle: '', role: 'DISABLED' };
+  const actuels = [{ nom: '', cle: 'AQ==', role: 'PRIMARY' }, { nom: 'Fr_Balise', cle: 'AQ==', role: 'SECONDARY' }, { nom: 'ADRASEC43', cle: K(1), role: 'SECONDARY', precision: 32 }, { nom: 'Perso', cle: K(2), role: 'SECONDARY', precision: 13 }, vide, vide, vide, vide];
+  const ajouts = [{ nom: 'ADRASEC43', psk: Buffer.alloc(32, 1) }, { nom: 'Alerte', psk: Buffer.from([1]) }];
+  let r = planifier(actuels, ajouts);
+  assert.deepEqual(r.deja, ['ADRASEC43']);
+  assert.deepEqual(r.ops.map((o) => [o.index, o.nom]), [[4, 'Alerte']]);
+  // Fr_Balise libéré : les suivants remontent d'un cran, avec leurs réglages, et rien d'autre ne bouge
+  r = planifier(actuels, ajouts, [1]);
+  assert.deepEqual(r.ops.map((o) => [o.index, o.supprimer ? '-' : o.nom]), [[1, 'ADRASEC43'], [2, 'Perso'], [3, 'Alerte']]);
+  assert.equal(r.ops[1].precision, 13);
+  assert.ok(Buffer.from(r.ops[1].psk).equals(Buffer.alloc(32, 2)));
+  // Même nom, autre clé : le canal du jeu le remplace à sa place
+  r = planifier(actuels, [{ nom: 'Perso', psk: Buffer.alloc(32, 9) }]);
+  assert.deepEqual(r.ops.map((o) => [o.index, o.nom]), [[3, 'Perso']]);
+  // Radio pleine : il manque des places tant que rien n'est libéré ; le canal 0 n'apparaît jamais
+  const plein = [actuels[0], ...[1, 2, 3, 4, 5, 6, 7].map((i) => ({ nom: 'C' + i, cle: 'AQ==', role: 'SECONDARY' }))];
+  assert.equal(planifier(plein, ajouts).manque, 2);
+  r = planifier(plein, ajouts, [2, 5]);
+  assert.equal(r.manque, 0);
+  assert.ok(r.ops.every((o) => o.index >= 1 && o.index <= 7));
+  assert.deepEqual(r.final.map((c) => c.nom), ['C1', 'C3', 'C4', 'C6', 'C7', 'ADRASEC43', 'Alerte']);
+});
+
+test('Relief monde : le carré de la carte et ses 8 voisins (3 × 3), y compris autour du méridien 180', () => {
+  const { voisinsMonde } = require('../src/monde');
+  const v = voisinsMonde('MN40W075');
+  assert.equal(v.length, 9);
+  assert.ok(v.includes('MN40W075') && v.includes('MN39W076') && v.includes('MN41W074'));
+  const w = voisinsMonde('MN40W180');
+  assert.ok(w.includes('MN40E179') && w.includes('MN40W179'));
+  assert.deepEqual(voisinsMonde('MN2A43'), []);
+});
+
+test('Profil de relief hors de France : l’IGN sans altitude → repli mondial, fréquence de la zone', async () => {
+  const { creerAnalyse } = require('../src/analyse');
+  const fetchAvant = global.fetch, freqAvant = process.env.RADIO_FREQ_MHZ;
+  const appels = [];
+  global.fetch = async (url) => {
+    appels.push(String(url));
+    if (/geopf/.test(url)) return { ok: true, json: async () => ({ elevations: Array.from({ length: 60 }, () => ({ lat: 40.6, lon: -74.5, z: -99999 })) }) };
+    const n = String(url).match(/latitude=([^&]+)/)[1].split(',').length;
+    return { ok: true, json: async () => ({ elevation: Array.from({ length: n }, (_, i) => 20 + i) }) };
+  };
+  process.env.RADIO_FREQ_MHZ = '906.875';
+  try {
+    const a = creerAnalyse({ db: { prepare: () => ({ all: () => [], get: () => null, run: () => ({}) }) }, noeud: new Map(), liens: { all: () => [] } }, { retentionJours: 7 }, { vueNoeud: (n) => n }, () => 'LONG_FAST');
+    const r = await a.profil({ a: NaN, b: NaN, aLat: 40.6275, aLon: -74.464, bLat: 40.6181, bLon: -74.5271, ha: 3, hb: 3, preset: 'LONG_FAST', membre: true });
+    assert.match(r.sourceAltitude, /Open-Meteo/);
+    assert.equal(r.serie[0].sol, 20);
+    assert.equal(r.parametres.frequenceMHz, 906.875);
+    assert.ok(appels.some((u) => /geopf/.test(u)) && appels.some((u) => /open-meteo/.test(u)));
+  } finally { global.fetch = fetchAvant; if (freqAvant === undefined) delete process.env.RADIO_FREQ_MHZ; else process.env.RADIO_FREQ_MHZ = freqAvant; }
+});
+
+test('Sujet racine MQTT saisi avec « /# » : corrigé (sinon abonnement …/#/# refusé, plus aucun paquet)', () => {
+  const { execFileSync } = require('child_process');
+  const lire = (racine) => execFileSync(process.execPath, ['-e', "const c=require('./src/config.js');console.log((c.config||c).mqtt.racine)"], { cwd: path.join(__dirname, '..'), env: { ...process.env, MQTT_RACINE: racine } }).toString().trim();
+  assert.equal(lire('msh/US/#'), 'msh/US');
+  assert.equal(lire('msh/+/2/e/LongFast/#'), 'msh/+/2/e/LongFast');
+  assert.equal(lire('msh/EU_868/'), 'msh/EU_868');
+  assert.equal(lire('msh/US'), 'msh/US');
+});
+
+test('Meshtastic 2.8 : signature XEdDSA d’un paquet vérifiée par la carte (clé Curve25519 du nœud)', () => {
+  const sig = require('../src/signature');
+  const P = 2n ** 255n - 19n;
+  const mp = (b, e) => { let r = 1n; b %= P; while (e > 0n) { if (e & 1n) r = (r * b) % P; b = (b * b) % P; e >>= 1n; } return r; };
+  const big = (b) => { let x = 0n; for (let i = b.length - 1; i >= 0; i--) x = (x << 8n) | BigInt(b[i]); return x; };
+  const oct = (x) => { const b = Buffer.alloc(32); for (let i = 0; i < 32; i++) { b[i] = Number(x & 255n); x >>= 8n; } return b; };
+  // Paire Ed25519 au bit de signe nul (forme XEdDSA) et clé Curve25519 correspondante (u = (1+y)/(1-y))
+  let kp, ed;
+  do { kp = crypto.generateKeyPairSync('ed25519'); ed = Buffer.from(kp.publicKey.export({ format: 'jwk' }).x, 'base64url'); } while (ed[31] & 0x80);
+  const y = big(ed);
+  const curve = oct(((1n + y) * mp((1n - y + P) % P, P - 2n)) % P).toString('base64');
+  const de = sig.numDeCle(curve); // numéro 2.8 = CRC32 de la clé
+  const idPaquet = 0x1234abcd, cle = cleDe('LongFast');
+  const data = { portnum: PORT.TEXTE, payload: Buffer.from('signé par F4GLD'), bitfield: 1 };
+  data.xeddsaSignature = crypto.sign(null, sig.messageSigne(de, idPaquet, 0xffffffff, data), kp.privateKey);
+  const chiffre = mt.dechiffrer(cle, idPaquet, de, Buffer.from(mt.types.Data.encode(data).finish()));
+  const paquet = { from: de, to: 0xffffffff, id: idPaquet, channel: mt.hachageCanal('LongFast', cle), encrypted: chiffre, hopStart: 3, hopLimit: 2 };
+  const env = Buffer.from(mt.types.ServiceEnvelope.encode({ packet: paquet, channelId: 'LongFast', gatewayId: '!5a1e0001' }).finish());
+  const evt = mt.decoderMessage('msh/EU_868/2/e/LongFast/!5a1e0001', env, CANAUX);
+  assert.ok(evt.aVerifier && evt.aVerifier.sig.length === 64, 'signature extraite');
+  assert.ok(!Object.keys(evt).includes('aVerifier'), 'jamais sérialisée');
+  assert.equal(sig.verifier(curve, evt.aVerifier.msg, evt.aVerifier.sig), true);
+  // Autre clé, ou charge modifiée : refusée
+  const autre = crypto.randomBytes(32).toString('base64');
+  assert.equal(sig.verifier(autre, evt.aVerifier.msg, evt.aVerifier.sig), false);
+  const m2 = Buffer.from(evt.aVerifier.msg); m2[m2.length - 1] ^= 1;
+  assert.equal(sig.verifier(curve, m2, evt.aVerifier.sig), false);
+});
+
+test('Firmware 2.8 : fusion d’un nœud renuméroté puis annulation (historique rendu à l’ancien numéro)', () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'renum-'));
+  const { creerStockage } = require('../src/base');
+  const { creerRenumerotation } = require('../src/renumerotation');
+  const sig = require('../src/signature');
+  const st = creerStockage(path.join(dossier, 'x.db'));
+  const db = st.db;
+  const cle = crypto.randomBytes(32).toString('base64');
+  const ancien = 0x0a0b0c0d, nouveau = sig.numDeCle(cle), voisin = 0x11111111;
+  const t0 = Date.now() - 86400000;
+  db.prepare('INSERT INTO noeuds (num, nom_long, nom_court, materiel, cle_publique, premier_vu, dernier_vu, lat, lon) VALUES (?,?,?,?,?,?,?,?,?)').run(ancien, 'Relais Mézenc', 'MZC', 'HELTEC_V3', cle, t0, t0 + 3600000, 44.91, 4.19);
+  db.prepare('INSERT INTO noeuds (num, cle_publique, premier_vu, dernier_vu) VALUES (?,?,?,?)').run(nouveau, cle, t0 + 4000000, Date.now());
+  db.prepare('INSERT INTO noeuds (num, premier_vu, dernier_vu) VALUES (?,?,?)').run(voisin, t0, Date.now());
+  for (let i = 0; i < 5; i++) db.prepare('INSERT INTO positions (num, heure, lat, lon) VALUES (?,?,?,?)').run(ancien, t0 + i, 44.91, 4.19);
+  db.prepare('INSERT INTO telemetrie (num, heure, batterie) VALUES (?,?,?)').run(ancien, t0, 87);
+  db.prepare("INSERT INTO paquets (id_paquet, de, vers, heure, port) VALUES (1, ?, 4294967295, ?, 'texte')").run(ancien, t0);
+  db.prepare("INSERT INTO paquets (id_paquet, de, vers, heure, port) VALUES (2, ?, ?, ?, 'texte')").run(voisin, ancien, t0);
+  db.prepare("INSERT INTO liens (a, b, source, snr, premier_vu, dernier_vu) VALUES (?, ?, 'rf', 5, ?, ?)").run(ancien, voisin, t0, t0);
+  db.prepare("INSERT INTO liens (a, b, source, snr, premier_vu, dernier_vu) VALUES (?, ?, 'rf', 2, ?, ?)").run(nouveau, voisin, t0, t0); // conflit : supprimé puis rendu
+  const appels = [];
+  const espion = (nom) => (a, b) => { appels.push(`${nom} ${a}>${b}`); return 1; };
+  const r = creerRenumerotation({
+    stockage: st, config: { fichierBase: path.join(dossier, 'x.db') }, journal: () => {},
+    installations: { deplacer: espion('fiche') }, comptes: { remplacerNoeud: espion('secteurs') }, administration: { renumeroter: espion('admin') },
+    autres: () => ({ equipes: { renumeroter: espion('equipes') }, suivis: { renumeroter: espion('suivis') }, responsables: { remplacerNoeud: espion('resp') } }),
+  });
+  const d = r.detecter();
+  assert.equal(d.renumerotations.length, 1);
+  assert.equal(d.renumerotations[0].certain, true, 'numéro dérivé de la clé : certain');
+  const h = r.fusionner(ancien, nouveau, 'essai');
+  assert.equal(h.lignes.positions, 5);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM noeuds WHERE num = ?').get(ancien).n, 0);
+  assert.equal(db.prepare('SELECT nom_long FROM noeuds WHERE num = ?').get(nouveau).nom_long, 'Relais Mézenc');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM paquets WHERE vers = ?').get(nouveau).n, 1);
+  assert.ok(appels.includes(`equipes ${ancien}>${nouveau}`) && appels.includes(`suivis ${ancien}>${nouveau}`) && appels.includes(`resp ${ancien}>${nouveau}`));
+  assert.equal(r.detecter().historique[0].annulable, true);
+  // Après la fusion, le nouveau numéro reçoit encore des positions : elles lui restent après l'annulation
+  db.prepare('INSERT INTO positions (num, heure, lat, lon) VALUES (?,?,?,?)').run(nouveau, Date.now(), 44.9, 4.2);
+  const a = r.annuler(h.heure, ancien, nouveau, 'essai');
+  assert.ok(a.annule);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM positions WHERE num = ?').get(ancien).n, 5);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM positions WHERE num = ?').get(nouveau).n, 1);
+  assert.equal(db.prepare('SELECT nom_long FROM noeuds WHERE num = ?').get(ancien).nom_long, 'Relais Mézenc');
+  assert.equal(db.prepare('SELECT nom_long FROM noeuds WHERE num = ?').get(nouveau).nom_long, null, 'le nom recopié par la fusion est retiré');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM liens WHERE a = ?').get(ancien).n, 1, 'liaison en conflit rendue');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM paquets WHERE vers = ?').get(ancien).n, 1);
+  assert.ok(appels.includes(`fiche ${nouveau}>${ancien}`) && appels.includes(`equipes ${nouveau}>${ancien}`));
+  assert.throws(() => r.annuler(h.heure, ancien, nouveau, 'essai'), /déjà annulée/);
+  // Clés différentes : refus, sauf fusion forcée avec même nom et même matériel
+  const vieux = 0x0e0e0e0e, cle2 = crypto.randomBytes(32).toString('base64'), n2 = sig.numDeCle(cle2);
+  db.prepare('INSERT INTO noeuds (num, nom_long, materiel, cle_publique, premier_vu, dernier_vu) VALUES (?,?,?,?,?,?)').run(vieux, 'Relais du Pic', 'RAK4631', crypto.randomBytes(32).toString('base64'), t0, t0 + 1000);
+  db.prepare('INSERT INTO noeuds (num, nom_long, materiel, cle_publique, premier_vu, dernier_vu) VALUES (?,?,?,?,?,?)').run(n2, 'Relais du Pic', 'RAK4631', cle2, Date.now(), Date.now());
+  assert.ok(r.detecter().probables.some((p) => p.ancien.num === vieux && p.nouveau.num === n2), 'réinitialisé : proposé');
+  assert.throws(() => r.fusionner(vieux, n2, 'essai'), /même clé/);
+  assert.equal(r.fusionner(vieux, n2, 'essai', { force: true }).force, true);
+  db.close();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+// ---------- Réactivité du serveur (gels de plusieurs secondes relevés en production le 21/11/2026) ----------
+test('Santé : un gel isolé ne donne pas d’alerte, des gels répétés ou très longs oui, avec la tâche suspecte', () => {
+  const { alertesReactivite } = require('../src/sante-carte');
+  const e = (max, tache, p99 = 40) => ({ heure: Date.now(), latenceP99: p99, latenceMax: max, tache });
+  assert.deepEqual(alertesReactivite([e(30), e(2000), e(40)]), [], 'gel ancien unique : rien');
+  assert.deepEqual(alertesReactivite([e(30), e(2400)]), [], 'un seul gel de 2,4 s : rien');
+  const rep = alertesReactivite([e(1600, { nom: 'GET /api/noeuds', ms: 900, n: 3 }), e(20), e(3900, { nom: 'message MQTT Meshtastic', ms: 150, n: 40 })]);
+  assert.equal(rep.length, 1); assert.equal(rep[0].niveau, 'attention');
+  assert.match(rep[0].message, /2 razy.*3\.9 s.*message MQTT Meshtastic \(150 ms\)/);
+  const crit = alertesReactivite([e(20), e(8100, { nom: 'purge Meshtastic (un lot)', ms: 7900, n: 1 })]);
+  assert.equal(crit[0].niveau, 'critique'); assert.match(crit[0].message, /8\.1 s.*purge Meshtastic/);
+  // Le p99 garde la priorité (retard permanent)
+  assert.match(alertesReactivite([e(9000, null, 2500)])[0].message, /Mapa się zawiesza/); // PL: komunikaty po polsku
+});
+
+test('Santé : registre des tâches (maximum, cumul, tâche la plus longue de la minute, dernière heure)', () => {
+  const s = require('../src/sante-carte');
+  s.cloreMinute(); // minute vierge
+  s.noter('message MQTT Meshtastic', 3); s.noter('message MQTT Meshtastic', 140); s.noter('alertes Meshtastic', 90);
+  assert.equal(s.chrono('calcul', () => 42), 42);
+  assert.throws(() => s.chrono('échec', () => { throw new Error('x'); }));
+  const lentes = s.tachesLentes();
+  assert.equal(lentes[0].nom, 'message MQTT Meshtastic'); assert.equal(lentes[0].maxMs, 140); assert.equal(lentes[0].n, 2);
+  assert.ok(lentes.some((t) => t.nom === 'échec'), 'une tâche en erreur est quand même comptée');
+  const m = s.cloreMinute();
+  assert.deepEqual(m.tache, { nom: 'message MQTT Meshtastic', ms: 140, n: 2 });
+  assert.equal(m.tacheCumul.nom, 'message MQTT Meshtastic');
+  assert.ok(s.tachesLentes().some((t) => t.nom === 'alertes Meshtastic'), 'gardée une heure après la fin de la minute');
+});
+
+test('Purge par lots : la boucle d’événements reprend la main entre deux lots, purges non cumulées', async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'purge-'));
+  const { creerStockage } = require('../src/base');
+  const st = creerStockage(path.join(dossier, 'x.db'));
+  const vieux = Date.now() - 30 * 86400000;
+  st.db.transaction(() => {
+    const p = st.db.prepare("INSERT INTO paquets (id_paquet, de, port, heure) VALUES (?, 7, 'position', ?)"), r = st.db.prepare('INSERT INTO receptions (paquet, passerelle, heure) VALUES (?, 1, ?)');
+    for (let i = 0; i < 5000; i++) { const x = p.run(i, vieux); r.run(x.lastInsertRowid, vieux); }
+    st.db.prepare("INSERT INTO paquets (id_paquet, de, port, heure) VALUES (9999999, 7, 'position', ?)").run(Date.now());
+  })();
+  let tours = 0, fini = false;
+  const compter = () => { tours++; if (!fini) setImmediate(compter); };
+  setImmediate(compter);
+  const p1 = st.purger(7, 90, { lot: 1000 });
+  assert.equal(st.purger(7, 90), p1, 'une purge en cours n’est pas relancée');
+  const n = await p1; fini = true;
+  assert.equal(n, 10000);
+  assert.ok(tours >= 8, `la carte doit pouvoir répondre entre les lots (${tours} tours)`);
+  assert.equal(st.db.prepare('SELECT COUNT(*) n FROM paquets').get().n, 1, 'le paquet récent reste');
+  assert.notEqual(st.purger(7, 90), p1, 'nouvelle purge possible une fois la précédente finie');
+  st.db.close();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Réseau : relais retrouvé par son dernier octet sans relire toute la table, statistiques et nœuds modifiés', () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'relais-'));
+  const { creerStockage } = require('../src/base');
+  const { creerReseau } = require('../src/reseau');
+  const st = creerStockage(path.join(dossier, 'x.db'));
+  const config = { seuils: { actifMinutes: 30, inactifHeures: 24, muetMinutes: 60, tensionVolts: 3.5, batteriePourcent: 20, chargeSolaireVolts: 4, canalPourcent: 25, canalCritiquePourcent: 40, emissionPourcent: 10 }, lienDistanceMaxKm: 120, noeudsSurveilles: [], canauxTexte: [], precisionPublique: 2 };
+  const reseau = creerReseau(st, config);
+  const t = Date.now();
+  const noeud = (num, lat, lon, extra = '') => st.db.prepare(`INSERT INTO noeuds (num, id, lat, lon, premier_vu, dernier_vu, role${extra ? ', est_passerelle' : ''}) VALUES (?, ?, ?, ?, ?, ?, 'ROUTER'${extra ? ', 1' : ''})`).run(num, '!' + num.toString(16), lat, lon, t - 7200000, t - 7200000);
+  noeud(0x5a1e00aa, 45.05, 3.9, 'gw'); // passerelle au Puy
+  noeud(0x11223344, 45.10, 3.95); // relais proche, octet 0x44
+  noeud(0x99887744, 48.85, 2.35); // même octet, à Paris : hors de portée
+  st.db.prepare('UPDATE noeuds SET canal = 12, heure_telemetrie = ? WHERE num = ?').run(t, 0x11223344);
+  const s0 = reseau.statistiques();
+  assert.equal(s0.noeuds, 3); assert.equal(s0.passerelles, 1); assert.equal(s0.actifs, 0); assert.equal(s0.canalMax, 12);
+  // Horloge de modification tenue par déclencheur : les fiches viennent d'être écrites, on les vieillit pour le test
+  st.db.prepare('UPDATE noeuds SET modifie = ?').run(t - 7200000);
+  assert.deepEqual(st.db.prepare('SELECT DISTINCT modifie FROM noeuds').pluck().all(), [t - 7200000], 'une écriture qui fixe modifie elle-même n’est pas réécrite');
+  const avant = Date.now();
+  reseau.integrer({ genre: 'paquet', idPaquet: 77, de: 0x0badcafe, vers: 0xffffffff, port: 'texte', canal: 'LongFast', sauts: 1, relais: 0x44, numPasserelle: 0x5a1e00aa, snr: 4.5, rssi: -101 });
+  const lien = st.db.prepare('SELECT a, b, source FROM liens').all();
+  assert.deepEqual(lien, [{ a: 0x11223344, b: 0x5a1e00aa, source: 'rf' }], 'relais proche retenu, homonyme lointain écarté');
+  const d1 = reseau.noeudsDepuis(avant - 1000, true);
+  assert.deepEqual(d1.noeuds.map((n) => n.num).sort(), [0x0badcafe, 0x5a1e00aa].sort(), 'nœuds écrits par le paquet (émetteur, passerelle)');
+  assert.deepEqual(d1.supprimes, []);
+  // Synchronisation d'un module : position écrite avec une heure ancienne (horloge du module) → quand même renvoyée
+  st.q.position.run({ num: 0x99887744, lat: 48.86, lon: 2.36, alt: null, precision: null, heure: t - 86400000 });
+  assert.ok(reseau.noeudsDepuis(avant - 1000, true).noeuds.some((n) => n.num === 0x99887744), 'modification à heure ancienne vue par la liste incrémentale');
+  // Suppression (purge, administrateur) : signalée pour que le nœud quitte la carte
+  noeud(0x77777777, 44.9, 3.8);
+  st.db.prepare('DELETE FROM noeuds WHERE num = ?').run(0x77777777);
+  assert.deepEqual(reseau.noeudsDepuis(avant - 1000, true).supprimes, [0x77777777]);
+  const modifies = d1.noeuds.map((n) => n.num);
+  assert.ok(modifies.includes(0x5a1e00aa));
+  assert.equal(reseau.statistiques().actifs, 2, 'émetteur et passerelle entendus à l’instant');
+  // Liste complète : objets ordinaires (lecture rapide), mêmes champs qu'avant
+  const tous = st.q.noeuds.all();
+  assert.equal(tous.length, 4); assert.equal(typeof tous[0].num, 'number'); assert.ok('stats_locales' in tous[0]);
+  // Nettoyage : un lien de 400 km est supprimé
+  st.db.prepare("INSERT INTO liens (a, b, source, nb, premier_vu, dernier_vu) VALUES (?, ?, 'rf', 1, ?, ?)").run(0x99887744, 0x5a1e00aa, t, t);
+  assert.equal(reseau.nettoyer().liens, 1);
+  st.db.close();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+// ---------- Relief grossier mondial et cache du relief ----------
+// Faux service ERDDAP (format ESRI ASCII, lignes du nord vers le sud) : altitude synthétique connue en chaque point
+const http = require('http');
+const altSynth = (lat, lon) => Math.round(lat * 20 + lon * 3); // négatif = mer → 0 dans la grille
+function fauxErddap({ echecs = new Set(), delai = 0 } = {}) {
+  const appels = [];
+  const srv = http.createServer((req, res) => {
+    const q = decodeURIComponent(req.url.split('?')[1] || '');
+    const m = /altitude\[\(([-\d.]+)\):(\d+):\(([-\d.]+)\)\]\[\(([-\d.]+)\):(\d+):\(([-\d.]+)\)\]/.exec(q);
+    if (!m) { res.statusCode = 400; return res.end('requête invalide'); }
+    const [lat0, pas, lat1, lon0, , lon1] = [Number(m[1]), Number(m[2]) / 60, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])];
+    appels.push(lat0);
+    if (echecs.has(lat0)) { echecs.delete(lat0); res.statusCode = 503; return res.end('saturé'); }
+    const nr = Math.round((lat1 - lat0) / pas) + 1, nc = Math.round((lon1 - lon0) / pas) + 1;
+    let t = `ncols ${nc}\nnrows ${nr}\nxllcenter ${lon0}\nyllcenter ${lat0}\ncellsize ${pas}\nnodata_value -9999999\n`;
+    for (let r = nr - 1; r >= 0; r--) { const l = []; for (let c = 0; c < nc; c++) l.push(altSynth(lat0 + r * pas, lon0 + c * pas)); t += l.join(' ') + '\n'; }
+    setTimeout(() => { res.setHeader('Content-Type', 'text/plain'); res.end(t); }, delai);
+  });
+  return new Promise((ok) => srv.listen(0, '127.0.0.1', () => ok({ srv, url: `http://127.0.0.1:${srv.address().port}/erddap`, appels })));
+}
+
+test('Relief grossier : téléchargement par bandes, reprise après une panne, lecture interpolée, océans à 0', async () => {
+  const { creerReliefGrossier } = require('../src/relief-grossier');
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'grossier-'));
+  // Grille de 1° (181 × 360), bandes de 30° ; la bande partant de 30° N échoue sur les deux « miroirs » → erreur
+  const f = await fauxErddap({ echecs: new Set([30]) });
+  const panne = await fauxErddap({ echecs: new Set([30]) });
+  try {
+    let g = creerReliefGrossier({ dossier, minutes: 60, degreParBande: 30, serveurs: [f.url, panne.url] });
+    assert.equal(g.etat().statut, 'absent');
+    assert.equal(g.grille({ sud: 0, ouest: 0, pasLat: 1, pasLon: 1, nLat: 1, nLon: 1 }), null);
+    // 1er essai : f échoue sur 30, panne aussi → 2e tour : f répond ; reprise donc dans le même téléchargement
+    await g.telecharger();
+    assert.equal(g.etat().statut, 'pret', g.etat().erreur);
+    assert.equal(fs.statSync(path.join(dossier, 'relief-monde-60m.bin')).size, 181 * 360 * 2);
+    assert.ok(!fs.existsSync(path.join(dossier, 'relief-monde-60m.bin.part')));
+    // Reprise d'un téléchargement coupé : les bandes déjà écrites ne sont pas redemandées
+    fs.renameSync(path.join(dossier, 'relief-monde-60m.bin'), path.join(dossier, 'relief-monde-60m.bin.part'));
+    fs.unlinkSync(path.join(dossier, 'relief-monde-60m.json'));
+    fs.writeFileSync(path.join(dossier, 'relief-monde-60m.reprise.json'), JSON.stringify({ minutes: 60, bandes: [0, 1, 2, 3, 4] }));
+    const avant = f.appels.length;
+    g = creerReliefGrossier({ dossier, minutes: 60, degreParBande: 30, serveurs: [f.url] });
+    await g.telecharger();
+    assert.equal(g.etat().statut, 'pret');
+    assert.deepEqual(f.appels.slice(avant), [60, 90].map((x) => x)); // bandes 5 (60° N) et 6 (90° N) seulement
+    // Valeurs : points de la grille exacts, interpolation bilinéaire entre eux, mer à 0, passage du méridien 180
+    const z = (lat, lon) => g.grille({ sud: lat, ouest: lon, pasLat: 0.1, pasLon: 0.1, nLat: 1, nLon: 1 })[0];
+    assert.equal(z(45, 3), altSynth(45, 3));
+    assert.ok(Math.abs(z(45.5, 3.5) - (altSynth(45, 3) + altSynth(46, 3) + altSynth(45, 4) + altSynth(46, 4)) / 4) < 1e-3);
+    assert.equal(z(-40, 10), 0); // altitude synthétique négative = océan
+    assert.ok(Math.abs(z(60, 179.5) - (altSynth(60, 179) + altSynth(60, -180)) / 2) < 1e-3); // 180° E = 180° O
+    const grande = g.grille({ sud: 44.6, ouest: 2.6, pasLat: 0.01, pasLon: 0.01, nLat: 180, nLon: 180 });
+    assert.equal(grande.length, 180 * 180);
+    assert.ok(grande.every(Number.isFinite));
+    // Suppression : fichiers effacés, état « absent »
+    await g.supprimer();
+    assert.equal(g.etat().statut, 'absent');
+    assert.deepEqual(g.fichiers(), []);
+  } finally { f.srv.close(); panne.srv.close(); }
+});
+
+test('Relief grossier : arrêt puis réactivation rapide → nouveau téléchargement enchaîné, sans attendre l’essai horaire', async () => {
+  const { creerReliefGrossier } = require('../src/relief-grossier');
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'grossier-'));
+  const f = await fauxErddap({ delai: 80 });
+  try {
+    const g = creerReliefGrossier({ dossier, minutes: 60, degreParBande: 30, serveurs: [f.url] });
+    const p1 = g.telecharger();
+    await new Promise((r) => setTimeout(r, 120)); // première bande en cours
+    g.arreter(); // case décochée…
+    const p2 = g.telecharger(); // … puis recochée aussitôt
+    assert.ok(g.etat().enCours, 'un téléchargement reste en cours après la réactivation');
+    await p1;
+    assert.ok(g.etat().enCours, 'la fin du téléchargement arrêté n’efface pas celui qui est enchaîné');
+    await p2;
+    assert.equal(g.etat().statut, 'pret', g.etat().erreur);
+    assert.ok(!g.etat().enCours);
+    assert.ok(fs.existsSync(path.join(dossier, 'relief-monde-60m.json')));
+    assert.ok(!fs.existsSync(path.join(dossier, 'relief-monde-60m.reprise.json')) && !fs.existsSync(path.join(dossier, 'relief-monde-60m.reprise.json.bak')), 'fichiers de reprise effacés');
+  } finally { f.srv.close(); }
+});
+
+test('Relief grossier : réponse inattendue (mauvaise grille) refusée, aucun fichier « prêt » laissé', async () => {
+  const { creerReliefGrossier } = require('../src/relief-grossier');
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'grossier-'));
+  const srv = http.createServer((req, res) => res.end('ncols 3\nnrows 2\nxllcenter -180\nyllcenter -90\ncellsize 1\nnodata_value -9\n1 2 3\n4 5 6\n'));
+  await new Promise((ok) => srv.listen(0, '127.0.0.1', ok));
+  try {
+    const g = creerReliefGrossier({ dossier, minutes: 60, degreParBande: 30, serveurs: [`http://127.0.0.1:${srv.address().port}/erddap`] });
+    const t = Date.now();
+    await g.telecharger();
+    assert.equal(g.etat().statut, 'erreur');
+    assert.match(g.etat().erreur, /inattendue/);
+    assert.ok(!fs.existsSync(path.join(dossier, 'relief-monde-60m.bin')));
+    assert.ok(Date.now() - t < 40000);
+  } finally { srv.close(); }
+});
+
+test('Relief : relief grossier pendant le téléchargement du précis, calculs marqués approximatifs, puis bascule', async () => {
+  const { creerRelief } = require('../src/relief');
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'relief-'));
+  // Points hauts déjà en cache : aucun appel à OpenStreetMap pendant l'essai
+  fs.writeFileSync(path.join(dossier, 'sommets-osm-MN45E003.json'), JSON.stringify({ date: Date.now(), liste: [] }));
+  // Faux Copernicus : les tuiles n'existent pas (mer) ; la réponse est retenue tant que l'essai ne la libère pas
+  let liberer;
+  const retenue = new Promise((ok) => { liberer = ok; });
+  const fetchAvant = global.fetch;
+  global.fetch = async (url, o = {}) => {
+    if (/copernicus/i.test(String(url)) && o.method === 'HEAD') { await retenue; return { status: 404, ok: false }; }
+    throw new Error('hors ligne (essai)');
+  };
+  // Relief grossier factice : un dôme de 1500 m centré sur 45,5° N 3,5° E
+  const grossier = {
+    pret: () => true, quandPret: () => () => {}, etat: () => ({ resolutionKm: 9.3, source: 'essai' }),
+    grille: ({ sud, ouest, pasLat, pasLon, nLat, nLon }) => {
+      const z = new Float32Array(nLat * nLon);
+      for (let i = 0; i < nLat; i++) for (let j = 0; j < nLon; j++) { const d = Math.hypot(sud + i * pasLat - 45.5, ouest + j * pasLon - 3.5); z[i * nLon + j] = Math.max(0, 1500 - d * 1500); }
+      return z;
+    },
+  };
+  let R;
+  const fournisseurs = { presetCourant: () => 'LONG_FAST', noeudsReseau: () => [], liensMesures: () => [], envDefaut: () => 10, reliefGrossier: () => grossier, apresTelechargement: () => R.arreter() };
+  try {
+    R = creerRelief({ fichierBase: path.join(dossier, 'carte-live.db'), departement: { code: 'MN45E003' }, zone: [45, 3, 46, 4] }, () => {}, fournisseurs, { code: 'MN45E003' });
+    for (let k = 0; k < 100 && !R.utilisable(); k++) await new Promise((r) => setTimeout(r, 50));
+    assert.equal(R.pret(), false);
+    assert.equal(R.utilisable(), true);
+    assert.equal(R.approximatif(), true);
+    assert.equal(R.etat().mnt, 'chargement');
+    assert.equal(R.etat().approx.resolutionKm, 9.3);
+    const a = await R.couverturePng({ lat: 45.5, lon: 3.5 }, { hs: 10 });
+    assert.equal(a.approximatif, true);
+    assert.equal(a.reliefApprox.resolutionKm, 9.3);
+    assert.ok(a.sol > 1450, 'altitude du dôme grossier');
+    assert.ok(a.image.subarray(1, 4).toString() === 'PNG');
+    // Calculs qui demandent les points hauts : toujours refusés tant que le relief précis manque
+    assert.throws(() => R.couvrirPoint({ lat: 45.5, lon: 3.5 }), /en cours de chargement/);
+    // Relief précis arrivé (mer partout : 0 m) : il remplace le grossier, plus de mention approximative
+    liberer();
+    for (let k = 0; k < 200 && !R.pret(); k++) await new Promise((r) => setTimeout(r, 50));
+    assert.equal(R.pret(), true);
+    assert.equal(R.approximatif(), false);
+    assert.equal(R.etat().approx, null);
+    const b = await R.couverturePng({ lat: 45.5, lon: 3.5 }, { hs: 10 });
+    assert.equal(b.approximatif, undefined);
+    assert.equal(b.sol, 0);
+    assert.ok(fs.existsSync(path.join(dossier, 'mnt-MN45E003.bin')));
+  } finally { liberer(); global.fetch = fetchAvant; if (R) R.arreter(); }
+});
+
+test('Cache du relief : espace occupé, purge par ancienneté, zone verrouillée ou récente gardée, plafond LRU', async () => {
+  const { creerCacheRelief } = require('../src/relief-cache');
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-relief-'));
+  const ecrire = (f, n) => fs.writeFileSync(path.join(dossier, f), Buffer.alloc(n));
+  const jour = 86400000, maintenant = Date.now();
+  ecrire('mnt.bin', 5000); ecrire('mnt.json', 100); // zone de la carte : jamais purgée
+  ecrire('villes-43.json', 700); ecrire('communes-43.json', 300); // fichiers suffixés de la zone de la carte : pas une zone purgeable
+  ecrire('mnt-07.bin', 3000); ecrire('mnt-07.json', 100); ecrire('sommets-osm-07.json', 50); ecrire('mnt-07.json.bak', 100);
+  ecrire('mnt-MN45E003.bin', 2000); ecrire('mnt-MN45E003.json', 100);
+  ecrire('mnt-MN46E003.bin', 4000); ecrire('mnt-MN46E003.json', 100);
+  ecrire('mnt-15.bin', 1000); ecrire('mnt-15.json', 100);
+  ecrire('autre.bin', 999); ecrire('mnt-..-x.bin', 10); // fichiers étrangers : ignorés
+  fs.writeFileSync(path.join(dossier, 'relief-utilisation.json'), JSON.stringify({ '07': maintenant - 40 * jour, MN45E003: maintenant - 2 * jour, MN46E003: maintenant - 60 * jour, 15: maintenant - 1000 }));
+  const verrous = new Set(['MN46E003']); // en cours de préparation
+  const ouvertes = new Map([['15', { etat: () => ({ mnt: 'pret' }) }]]); // ouverte et utilisée à l'instant
+  const liberees = [], journalLignes = [];
+  let grossierSupprime = false;
+  const grossier = { etat: () => ({ statut: 'pret', octetsDisque: grossierSupprime ? 0 : 18e6, resolutionKm: 9.3 }), supprimer: async () => { grossierSupprime = true; } };
+  const c = creerCacheRelief({ dossier, journal: (...l) => journalLignes.push(l.join(' ')), verrous: () => verrous, enMemoire: () => ouvertes, liberer: (x) => { liberees.push(x); ouvertes.delete(x); }, grossier, codePrincipal: '43' });
+  try {
+    let inv = c.inventaire(0);
+    assert.deepEqual(inv.zones.map((z) => z.code).sort(), ['07', '15', 'MN45E003', 'MN46E003']);
+    assert.equal(inv.zones.find((z) => z.code === '07').octets, 3250);
+    assert.equal(inv.zonesOctets, 3250 + 2100 + 4100 + 1100);
+    assert.equal(inv.principale.octets, 6100);
+    assert.equal(inv.totalOctets, 3250 + 2100 + 4100 + 1100 + 6100 + 18e6);
+    assert.equal(inv.zones.find((z) => z.code === 'MN46E003').verrou, true);
+    assert.equal(inv.zones.find((z) => z.code === '15').recente, true);
+    // Inutilisées depuis 30 jours : 07 supprimée, MN46E003 gardée (en préparation)
+    let r = await c.purger({ joursInactifs: 30 }, 'essai');
+    assert.deepEqual(r.supprimees, ['07']);
+    assert.deepEqual(r.refusees.map((x) => x.code), ['MN46E003']);
+    assert.equal(r.octetsLiberes, 3250);
+    assert.ok(!fs.existsSync(path.join(dossier, 'mnt-07.bin')) && !fs.existsSync(path.join(dossier, 'mnt-07.json.bak')));
+    assert.ok(fs.existsSync(path.join(dossier, 'mnt.bin')) && fs.existsSync(path.join(dossier, 'autre.bin')));
+    assert.ok(journalLignes.some((l) => /purge du relief par essai/.test(l)));
+    // Tout purger : la zone ouverte à l'instant et la zone en préparation restent, le relief mondial aussi
+    r = await c.purger({ tout: true }, 'essai');
+    assert.deepEqual(r.supprimees, ['MN45E003']);
+    assert.deepEqual(r.refusees.map((x) => x.code).sort(), ['15', 'MN46E003']);
+    assert.equal(grossierSupprime, false);
+    // Plafond : fin de la préparation, zone 15 plus récente ; LRU supprime d'abord la plus ancienne (MN46E003)
+    verrous.clear();
+    ecrire('mnt-MN45E003.bin', 2000);
+    c.noterUtilisation('MN45E003');
+    r = c.appliquerPlafond(3500 / 1e9); // 3,5 ko
+    assert.deepEqual(r.supprimees, ['MN46E003']);
+    assert.ok(fs.existsSync(path.join(dossier, 'mnt-MN45E003.bin')));
+    // Zone ouverte mais plus utilisée depuis longtemps : fermée puis supprimée sur demande
+    const u = JSON.parse(fs.readFileSync(path.join(dossier, 'relief-utilisation.json'), 'utf8'));
+    assert.ok(u.MN45E003 > maintenant - 5000, 'date de dernière utilisation enregistrée');
+    ouvertes.set('MN45E003', { etat: () => ({ mnt: 'pret' }) });
+    c.noterUtilisation('MN45E003');
+    r = await c.purger({ codes: ['mn45e003'] }, 'essai');
+    assert.deepEqual(r.refusees.map((x) => x.code), ['MN45E003']); // utilisée il y a moins de 10 min
+    // Relief mondial : seulement sur demande explicite
+    r = await c.purger({ grossier: true }, 'essai');
+    assert.equal(grossierSupprime, true);
+    assert.ok(r.supprimees.includes('monde'));
+    assert.equal(liberees.length, 0);
+  } finally { c.arreter(); }
+});
+
+// Recherche dans les messages : index plein texte rempli depuis l'historique, accents et majuscules ignorés,
+// nom ACTUEL de l'expéditeur, identifiant, MeshCore, droits de la démonstration, purge
+test('Recherche dans les messages : texte, accents, nom actuel de l’expéditeur, identifiant, démonstration, purge', async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'recherche-'));
+  process.env.FICHIER_BASE = path.join(dossier, 'x.db');
+  const config = require('../src/config');
+  const { creerStockage } = require('../src/base');
+  const { creerReseauMc } = require('../src/meshcore/reseau');
+  const { creerRechercheMessages } = require('../src/recherche-messages');
+  const st = creerStockage(path.join(dossier, 'x.db'));
+  const r = creerReseauMc(st.db, config, PUBLIC);
+  const B = 0xffffffff, t0 = Date.now() - 3600000;
+  let idp = 1;
+  const message = (de, texte, { vers = B, canal = 'LongFast', heure = t0 + idp * 1000, port = 'texte' } = {}) => st.q.insererPaquet.get({
+    idPaquet: idp++, de, vers, canal, port, nomPort: 'TEXT_MESSAGE_APP', portnum: 1, heure, hopDepart: 3, hopRestant: 2, sauts: 1, dechiffre: 1,
+    resume: null, texte, taille: 20, viaMqtt: 0, contenu: null, pki: 0, signe: 0, signature: null }).rowid;
+  const nommer = (num, nomLong, nomCourt) => { st.assurerNoeud(num, Date.now()); st.q.infos.run({ num, nomLong, nomCourt, materiel: null, role: null, firmware: null, preset: null }); };
+  // Historique déjà là avant la création de l'index : il doit être retrouvé (migration)
+  const ancien = message(0x5a1e0001, 'Qui a perdu son CHAPEAU au Mézenc ?');
+  message(0x5a1e0001, 'position', { port: 'position' });
+  const rech = creerRechercheMessages(st.db);
+  assert.equal(rech.fts(), true, 'FTS5 disponible');
+  const cles = (o) => rech.chercher(o).resultats.map((x) => x.ref);
+  assert.deepEqual(cles({ q: 'chapeau' }), ['mt' + ancien], 'historique indexé à la migration');
+  // Nouveaux messages : indexés au fil de l'eau (déclencheurs), du plus récent au plus ancien
+  nommer(0x5a1e0002, 'Olivier F4GLD', 'GLD');
+  const deGld = message(0x5a1e0002, 'Bonjour à tous');
+  const versGld = message(0x5a1e0003, 'reçu 5/9', { vers: 0x5a1e0002 });
+  const prive = message(0x5a1e0003, 'Été au chapeau', { canal: 'Equipe' });
+  const cite = message(0x5a1e0004, 'Merci f4gld pour le relais');
+  assert.deepEqual(cles({ q: 'Chapéau' }), ['mt' + prive, 'mt' + ancien], 'majuscules et accents ignorés, plus récent d’abord');
+  assert.deepEqual(cles({ q: 'ETE' }), ['mt' + prive]);
+  assert.deepEqual(cles({ q: 'chap' }), ['mt' + prive, 'mt' + ancien], 'début de mot');
+  const gld = rech.chercher({ q: 'F4GLD' }).resultats;
+  assert.deepEqual(gld.map((x) => x.ref), ['mt' + cite, 'mt' + versGld, 'mt' + deGld], 'texte + expéditeur + destinataire d’un direct');
+  assert.deepEqual(gld.map((x) => x.trouve), [['texte'], ['destinataire'], ['expediteur']]);
+  assert.equal(gld[2].nomDe, 'Olivier F4GLD');
+  assert.deepEqual(cles({ q: 'gld' }), ['mt' + versGld, 'mt' + deGld], 'nom court');
+  assert.deepEqual(cles({ q: '!5a1e0002' }), ['mt' + versGld, 'mt' + deGld], 'identifiant');
+  assert.deepEqual(cles({ q: String(0x5a1e0002) }), ['mt' + versGld, 'mt' + deGld], 'numéro');
+  // Nœud renommé : retrouvé sous son nom actuel, plus sous l'ancien (hors texte)
+  nommer(0x5a1e0002, 'Relais Mégal', 'MGL');
+  assert.deepEqual(cles({ q: 'megal' }), ['mt' + versGld, 'mt' + deGld], 'nom actuel');
+  assert.equal(rech.noms(), true, 'index trigram des noms disponible');
+  assert.deepEqual(cles({ q: 'égal' }), ['mt' + versGld, 'mt' + deGld], 'partie de nom, accents ignorés (index trigram)');
+  nommer(0x5a1e0003, 'Troisième', 'T3');
+  assert.deepEqual(cles({ q: 't3' }), ['mt' + prive, 'mt' + versGld], 'deux caractères : nom court exact seulement');
+  assert.deepEqual(cles({ q: 'ga' }), [], 'deux caractères : pas de partie de nom');
+  assert.deepEqual(cles({ q: 'f4gld' }), ['mt' + cite], 'ancien nom : seulement le texte');
+  // MeshCore : texte, nom porté par le message, nom actuel du nœud par sa clé
+  const cleMc = 'AB'.repeat(32);
+  st.db.prepare('INSERT INTO mc_noeuds (cle, nom, premier_vu, dernier_vu) VALUES (?, ?, ?, ?)').run(cleMc, 'Pic du Lizieux', Date.now(), Date.now());
+  const mcCanal = r.noterMessage({ sens: 'recu', genre: 'canal', canal: 'Public', texte: 'Un chapeau trouvé', nomDe: 'Bob' });
+  const mcDirect = r.noterMessage({ sens: 'recu', genre: 'direct', de: cleMc, nomDe: 'Ancien nom', texte: 'Coucou en direct' });
+  const mcPrive = r.noterMessage({ sens: 'recu', genre: 'canal', canal: 'Club', texte: 'Chapeau du club', nomDe: 'Alice' });
+  assert.deepEqual(cles({ q: 'chapeau' }), ['mc' + mcPrive, 'mc' + mcCanal, 'mt' + prive, 'mt' + ancien], 'Meshtastic et MeshCore mêlés');
+  assert.deepEqual(cles({ q: 'lizieux' }), ['mc' + mcDirect], 'MeshCore : nom actuel par la clé');
+  assert.deepEqual(cles({ q: 'bob' }), ['mc' + mcCanal], 'MeshCore : nom porté par le message');
+  assert.deepEqual(cles({ q: 'abab' }), ['mc' + mcDirect], 'MeshCore : début de clé');
+  // Démonstration : canaux publics seulement (LongFast, Public, « # »), jamais de message direct
+  const demo = (q) => rech.chercher({ q, demo: true, publics: ['LongFast'] }).resultats.map((x) => x.ref);
+  assert.deepEqual(demo('chapeau'), ['mc' + mcCanal, 'mt' + ancien], 'canaux privés exclus');
+  assert.deepEqual(demo('megal'), ['mt' + deGld], 'message direct exclu');
+  assert.deepEqual(demo('lizieux'), [], 'message direct MeshCore exclu');
+  // Japonais / chinois / coréen / thaï : pas d'espace entre les mots, le terme est trouvé au milieu d'une suite
+  const jp = message(0x5a1e0005, '今日は天気がいいですね');
+  const ko = r.noterMessage({ sens: 'recu', genre: 'canal', canal: 'Public', texte: '안녕하세요반갑습니다', nomDe: '山田太郎' });
+  assert.deepEqual(cles({ q: '天気' }), ['mt' + jp], 'japonais : au milieu de la phrase');
+  assert.deepEqual(cles({ q: '반갑' }), ['mc' + ko], 'coréen : au milieu de la phrase');
+  assert.deepEqual(cles({ q: '田太郎' }), ['mc' + ko], 'nom japonais porté par le message (index trigram, 3 caractères au moins)');
+  assert.deepEqual(cles({ q: '天気 いい' }), ['mt' + jp], 'deux termes, tous obligatoires');
+  assert.deepEqual(cles({ q: '天気 bonjour' }), [], 'terme absent : rien');
+  // Recherches vides ou trop courtes, caractères spéciaux de FTS5 et de LIKE sans erreur
+  assert.equal(rech.chercher({ q: 'a' }).resultats.length, 0);
+  for (const q of ['"', 'chapeau" OR "x', '%', '_*', 'NEAR(a b)', 'é-è', '😀😀']) assert.doesNotThrow(() => rech.chercher({ q }), q);
+  // Pagination : la suite reprend juste avant le dernier résultat
+  const p1 = rech.chercher({ q: 'chapeau', limite: 2 });
+  assert.equal(p1.resultats.length, 2); assert.ok(p1.suite);
+  assert.deepEqual(rech.chercher({ q: 'chapeau', limite: 2, avant: p1.suite }).resultats.map((x) => x.ref), ['mt' + prive, 'mt' + ancien]);
+  // Purge (rétention) : les messages supprimés disparaissent aussi de l'index
+  st.db.prepare('UPDATE paquets SET heure = 1 WHERE rowid = ?').run(ancien);
+  st.db.prepare('UPDATE mc_messages SET heure = 1 WHERE id = ?').run(mcPrive);
+  await st.purger(1, 1); r.purger(1);
+  assert.deepEqual(cles({ q: 'chapeau' }), ['mc' + mcCanal, 'mt' + prive], 'purgés : plus trouvés');
+  // Index partiel : pas de vérification du contenu sur recherche_mt (voir l'en-tête de src/recherche-messages.js)
+  st.db.exec("INSERT INTO recherche_mt(recherche_mt, rank) VALUES ('integrity-check', 0)");
+  st.db.exec("INSERT INTO recherche_mc(recherche_mc) VALUES ('integrity-check')");
+  st.db.exec("INSERT INTO recherche_noms_mt(recherche_noms_mt) VALUES ('integrity-check')");
+  st.db.exec("INSERT INTO recherche_mc_noms(recherche_mc_noms) VALUES ('integrity-check')");
+  // Redémarrage : l'index existant est repris tel quel (pas de doublon)
+  const rech2 = creerRechercheMessages(st.db);
+  assert.deepEqual(rech2.chercher({ q: 'chapeau' }).resultats.map((x) => x.ref), ['mc' + mcCanal, 'mt' + prive]);
+  st.db.close();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+// ---------- Secteurs d'alerte (géorepérage) et mode urgence ----------
+const geo = require('../src/secteurs');
+// Point à d mètres au nord (ou au sud si d < 0) d'un point donné
+const auNord = (p, d) => ({ lat: p.lat + d / 111195, lon: p.lon });
+function secteursEssai(extra = {}) {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'secteurs-'));
+  const horloge = { t: Date.UTC(2026, 10, 21, 8, 0, 0) };
+  const diffuses = [], evenements = [], lora = [];
+  const s = geo.creerSecteurs({
+    config: { fichierBase: path.join(dossier, 'base.db') }, intervalleMs: 0, maintenant: () => horloge.t,
+    membresEquipe: (id) => (id === 'eq1' ? [0x5a1e0001, 0x5a1e0002] : []), nomEquipe: (id) => (id === 'eq1' ? 'Equipe1' : null),
+    nomDe: (k) => ({ 'mt:1511915521': 'Alpha' })[k] || null,
+    diffuser: (m) => diffuses.push(m), surEvenement: (e) => evenements.push(e), envoyerLora: (t, c) => lora.push([t, c]), ...extra,
+  });
+  return { s, horloge, diffuses, evenements, lora, dossier };
+}
+const CENTRE = { lat: 45.0434, lon: 3.8851 };
+
+test('Secteurs : géométrie (point dans polygone, distance signée, précision des positions floutées)', () => {
+  const carre = [[45.00, 3.80], [45.00, 3.90], [45.05, 3.90], [45.05, 3.80]];
+  assert.equal(geo.pointDansPolygone({ lat: 45.02, lon: 3.85 }, carre), true);
+  assert.equal(geo.pointDansPolygone({ lat: 45.06, lon: 3.85 }, carre), false);
+  // Polygone concave (en U) : le creux est dehors
+  const u = [[45.0, 3.8], [45.0, 3.9], [45.05, 3.9], [45.05, 3.87], [45.01, 3.87], [45.01, 3.83], [45.05, 3.83], [45.05, 3.8]];
+  assert.equal(geo.pointDansPolygone({ lat: 45.03, lon: 3.85 }, u), false, 'creux du U');
+  assert.equal(geo.pointDansPolygone({ lat: 45.03, lon: 3.81 }, u), true, 'branche du U');
+  const d = geo.distanceLimite({ forme: 'polygone', points: carre }, { lat: 45.06, lon: 3.85 });
+  assert.ok(Math.abs(d - 1112) < 5, `≈ 1,1 km au nord du bord : ${d}`);
+  assert.ok(geo.distanceLimite({ forme: 'polygone', points: carre }, { lat: 45.045, lon: 3.85 }) < 0, 'dedans : distance négative');
+  const c = { forme: 'cercle', centre: CENTRE, rayon: 1000 };
+  assert.ok(Math.abs(geo.distanceLimite(c, auNord(CENTRE, 1500)) - 500) < 1);
+  assert.ok(Math.abs(geo.distanceLimite(c, CENTRE) + 1000) < 1e-6);
+  assert.ok(Math.abs(geo.tailleSecteur({ forme: 'polygone', points: carre }) - Math.sqrt(5560 * 7870 / Math.PI)) < 60);
+  assert.equal(geo.incertitude(32), 0); assert.equal(geo.incertitude(null), 0); assert.equal(geo.incertitude(0), 0);
+  // Demi-diagonale de la maille : à l'équateur × √2, à 45° × 1,22 (I7)
+  assert.ok(Math.abs(geo.incertitude(13, 0) - 2918 * Math.SQRT2) < 3, 'précision 13 bits à l’équateur ≈ 4,1 km');
+  assert.ok(Math.abs(geo.incertitude(13, 45) - 2918 * Math.hypot(1, Math.cos(Math.PI / 4))) < 3, 'précision 13 bits à 45° ≈ 3,6 km');
+  assert.ok(Math.abs(geo.incertitude(16, 45) - 365 * Math.hypot(1, Math.cos(Math.PI / 4))) < 3, 'précision 16 bits à 45° ≈ 446 m');
+  assert.ok(geo.incertitude(16, 60) < geo.incertitude(16, 10), 'maille moins large vers les pôles');
+  // Antiméridien (M2) : un polygone à cheval sur 180° est d'un seul tenant
+  const anti = [[10, 179.99], [10, -179.99], [10.02, -179.99], [10.02, 179.99]];
+  assert.ok(geo.surfacePolygone(anti) < 1e7 && geo.surfacePolygone(anti) > 4e6, `antiméridien : ≈ 4,9 km², pas 360° de large : ${geo.surfacePolygone(anti)}`);
+  assert.equal(geo.pointDansPolygone({ lat: 10.01, lon: 180 }, anti), true);
+  assert.equal(geo.pointDansPolygone({ lat: 10.01, lon: 0 }, anti), false);
+  assert.doesNotThrow(() => geo.valider({ nom: 'a', forme: 'polygone', points: anti, noeuds: [1] }));
+  // Polygone auto-intersecté (M3)
+  const papillon = [[45, 4], [45.01, 4.01], [45.01, 4], [45, 4.01]];
+  assert.equal(geo.polygoneCroise(papillon), true); assert.equal(geo.polygoneCroise(carre), false); assert.equal(geo.polygoneCroise(u), false);
+  assert.throws(() => geo.valider({ nom: 'a', forme: 'polygone', points: papillon, noeuds: [1] }), /se croise/);
+  // Marge trop grande pour une alerte à l'entrée (M4)
+  assert.throws(() => geo.valider({ nom: 'a', forme: 'cercle', centre: CENTRE, rayon: 100, noeuds: [1], sens: 'entree', marge: 500 }), /Marge trop grande/);
+  assert.throws(() => geo.valider({ nom: 'a', forme: 'cercle', centre: CENTRE, rayon: 100, noeuds: [1], sens: 'deux', marge: 50 }), /Marge trop grande/);
+  assert.doesNotThrow(() => geo.valider({ nom: 'a', forme: 'cercle', centre: CENTRE, rayon: 100, noeuds: [1], sens: 'sortie', marge: 500 }));
+  assert.equal(geo.valider({ nom: 'a', forme: 'cercle', centre: CENTRE, rayon: 100, noeuds: [1] }).silenceMin, 30, 'perte de contact : 30 min par défaut (I1)');
+  // Coupe en octets UTF-8 (M12) et cellule CSV (I5)
+  assert.equal(Buffer.byteLength(geo.couperOctets('⛔'.repeat(100), 200)), 198, '⛔ = 3 octets : 66 caractères, 198 octets');
+  assert.equal(geo.couperOctets('abc', 200), 'abc');
+  assert.equal(geo.celluleCsv('=HYPERLINK("http://x","clic")'), `"'=HYPERLINK(""http://x"",""clic"")"`);
+  assert.equal(geo.celluleCsv('+33 6'), "'+33 6"); assert.equal(geo.celluleCsv('@SUM'), "'@SUM"); assert.equal(geo.celluleCsv('-1 x'), "'-1 x");
+  assert.equal(geo.celluleCsv(-50), '-50', 'un nombre reste un nombre'); assert.equal(geo.celluleCsv('a\rb'), '"a\rb"'); assert.equal(geo.celluleCsv(null), '');
+  assert.throws(() => geo.valider({ nom: 'x', forme: 'polygone', points: [[45, 3], [45.0001, 3]], noeuds: [1] }), /3 à 200 sommets/);
+  assert.throws(() => geo.valider({ nom: 'x', forme: 'polygone', points: [[45, 3], [45.00001, 3], [45, 3.00001]], noeuds: [1] }), /trop petit/);
+  assert.throws(() => geo.valider({ nom: 'x', forme: 'cercle', centre: CENTRE, rayon: 500 }), /équipe ou à des nœuds/);
+  assert.throws(() => geo.valider({ nom: 'x', forme: 'cercle', centre: CENTRE, rayon: 10 }), /Rayon/);
+  assert.throws(() => geo.valider({ nom: 'x', forme: 'cercle', centre: CENTRE, rayon: 500, noeudsMc: ['AB'] }), /64 caractères/);
+});
+
+test('Secteurs : sortie confirmée par 2 positions, bordure et aller-retour sans alerte, anti-rebond, LoRa', () => {
+  const { s, horloge, evenements, lora, diffuses, dossier } = secteursEssai();
+  const sec = s.creer({ nom: 'Mézenc nord', forme: 'cercle', centre: CENTRE, rayon: 1000, equipe: 'eq1', marge: 50, confirmations: 2, delaiMin: 10, canalLora: 1 }, 'essai');
+  assert.equal(sec.membres.length, 2, 'membres de l’équipe suivis');
+  const A = 'mt:' + 0x5a1e0001;
+  let id = 0;
+  const pos = (d, extra = {}) => { horloge.t += 60000; return s.position(A, { ...auNord(CENTRE, 1000 + d), id: ++id, ...extra }); };
+  pos(-500); pos(-400);
+  assert.equal(s.secteur(sec.id).membres.find((m) => m.cle === A).etat, 'dedans', 'deux positions dedans : état connu');
+  assert.equal(evenements.filter((e) => e.notifier).length, 0, 'aucune alerte en entrant au départ');
+  pos(30); pos(40); // dans la marge de 50 m : bordure
+  assert.equal(s.secteur(sec.id).membres.find((m) => m.cle === A).etat, 'dedans', 'bordure : rien ne change');
+  pos(200); pos(-100); pos(200); // aller-retour : jamais deux positions dehors de suite
+  assert.equal(evenements.filter((e) => e.type === 'sortie').length, 0, 'aller-retour sans alerte');
+  pos(300);
+  const sortie = evenements.filter((e) => e.type === 'sortie');
+  assert.equal(sortie.length, 1); assert.equal(sortie[0].notifier, true); assert.equal(sortie[0].nom, 'Alpha');
+  assert.match(sortie[0].message, /Alpha est sorti du secteur \(300 m au-delà de la limite\)/);
+  assert.equal(lora.length, 1); assert.equal(lora[0][1], 1); assert.match(lora[0][0], /Alpha hors secteur Mézenc nord/);
+  assert.equal(sortie[0].lora, 'envoyé');
+  assert.ok(diffuses.some((m) => m.genre === 'secteur-alerte' && m.type === 'sortie' && m.niveau === 'critique'));
+  const al = s.alertes();
+  assert.equal(al.length, 1); assert.equal(al[0].niveau, 'critique'); assert.equal(al[0].noeud, 0x5a1e0001);
+  assert.equal(al[0].cle, `secteur:${sec.id}:${A}:dehors:${sortie[0].heure}`, 'clé d’alerte = heure de l’événement');
+  // Même paquet reçu par une autre passerelle : compté une fois
+  const avant = evenements.length;
+  s.position(A, { ...auNord(CENTRE, 500), id }); s.position(A, { ...auNord(CENTRE, 500), id });
+  assert.equal(evenements.length, avant, 'doublon ignoré');
+  // Retour puis nouvelle sortie dans les 10 min : notée, pas notifiée
+  pos(-300); pos(-300); pos(400); pos(400);
+  const deux = evenements.filter((e) => e.type === 'sortie');
+  assert.equal(deux.length, 2); assert.equal(deux[1].notifier, false); assert.match(deux[1].detail, /délai minimal/);
+  assert.equal(lora.length, 1, 'pas de second message LoRa');
+  // Après le délai : notifiée de nouveau
+  pos(-300); pos(-300); horloge.t += 11 * 60000; pos(400); pos(400);
+  assert.equal(evenements.filter((e) => e.type === 'sortie' && e.notifier).length, 2);
+  // Journal et CSV
+  const j = s.journal({ secteur: sec.id });
+  assert.equal(j[0].type, 'sortie'); assert.ok(j.some((e) => e.type === 'creation'));
+  assert.match(s.csv(), /^heure_utc;heure_locale;secteur;type;noeud;nom;lat;lon/);
+  assert.match(s.csv(), /!5a1e0001;Alpha/);
+  s.arreter();
+  // Rechargé depuis le fichier : secteurs, état et journal conservés
+  const r = geo.creerSecteurs({ config: { fichierBase: path.join(dossier, 'base.db') }, intervalleMs: 0, membresEquipe: () => [0x5a1e0001], nomEquipe: () => 'Equipe1' });
+  assert.equal(r.liste()[0].membres[0].etat, 'dehors');
+  assert.ok(r.journal().length >= 5);
+  r.arreter();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Secteurs : position floutée surveillée quand même (I2), secteur « entrée », perte de contact, MeshCore', () => {
+  const { s, horloge, evenements, dossier } = secteursEssai();
+  const sec = s.creer({ nom: 'Petit', forme: 'cercle', centre: CENTRE, rayon: 1000, noeuds: [0x5a1e0009], confirmations: 1 }, 'essai');
+  const K = 'mt:' + 0x5a1e0009;
+  // ± 3,6 km (13 bits à 45°) sur un secteur de 1 km : à 1,5 km du centre, impossible de trancher → signalé, pas ignoré
+  s.position(K, { ...auNord(CENTRE, 1500), precision: 13, id: 1 });
+  s.position(K, { ...auNord(CENTRE, 1600), precision: 13, id: 2 });
+  assert.equal(evenements.filter((e) => e.type === 'imprecise').length, 1, 'noté une seule fois');
+  assert.equal(evenements.find((e) => e.type === 'imprecise').niveau, 'attention');
+  assert.match(evenements.find((e) => e.type === 'imprecise').message, /non surveillable précisément : position floutée \(± 3,6 km\)/);
+  assert.ok(s.alertes().some((a) => a.cle.endsWith(':imprecise') && a.niveau === 'attention'), 'alerte active « non surveillable »');
+  assert.equal(evenements.filter((e) => e.type === 'sortie').length, 0, 'pas de sortie : la maille chevauche la limite');
+  // La même position floutée, mais à 50 km : toute la maille est dehors → sortie, même floutée
+  s.position(K, { ...auNord(CENTRE, 50000), precision: 13, id: 3 });
+  assert.equal(evenements.filter((e) => e.type === 'sortie').length, 1, 'floutée mais franchement dehors : sortie');
+  assert.ok(!s.alertes().some((a) => a.cle.endsWith(':imprecise')), 'plus « non surveillable » dès qu’on peut trancher');
+  s.position(K, { ...auNord(CENTRE, 0), id: 4 }); s.position(K, { ...auNord(CENTRE, 0), id: 5 });
+  // 16 bits (± 446 m à 45°) : utilisable, mais la marge s'élargit d'autant
+  s.position(K, { ...auNord(CENTRE, 1000 + 300), precision: 16, id: 6 });
+  assert.equal(evenements.filter((e) => e.type === 'sortie').length, 1, '300 m dehors à ± 446 m : bordure');
+  s.position(K, { ...auNord(CENTRE, 1000 + 600), precision: 16, id: 7 });
+  assert.equal(evenements.filter((e) => e.type === 'sortie').length, 2, '600 m dehors à ± 446 m : sortie');
+  // Secteur « entrée » (zone à éviter), nœud MeshCore
+  const CLE = 'AB'.repeat(32);
+  const z = s.creer({ nom: 'Zone dangereuse', forme: 'polygone', points: [[45.00, 3.80], [45.00, 3.82], [45.02, 3.82], [45.02, 3.80]], noeudsMc: [CLE], sens: 'entree', confirmations: 1, marge: 0, silenceMin: 15, delaiMin: 5 }, 'essai');
+  s.position('mc:' + CLE, { lat: 45.05, lon: 3.81, id: 'x1' });
+  assert.equal(evenements.filter((e) => e.secteur === z.id && e.notifier).length, 0, 'dehors au départ : rien');
+  horloge.t += 60000;
+  s.position('mc:' + CLE, { lat: 45.01, lon: 3.81, id: 'x2' });
+  const ent = evenements.find((e) => e.secteur === z.id && e.type === 'entree');
+  assert.ok(ent && ent.notifier && /est entré dans le secteur/.test(ent.message));
+  assert.ok(s.alertes().some((a) => a.secteur === z.id && a.noeudMc === CLE && a.niveau === 'critique'));
+  // Perte de contact : 16 min sans position
+  horloge.t += 16 * 60000;
+  s.verifierSilences();
+  const sil = evenements.find((e) => e.type === 'silence');
+  assert.ok(sil && sil.notifier && sil.minutes === 16);
+  assert.ok(s.alertes().some((a) => a.cle.includes(':silence:') && a.niveau === 'attention'));
+  s.verifierSilences();
+  assert.equal(evenements.filter((e) => e.type === 'silence').length, 1, 'une seule fois par épisode');
+  s.position('mc:' + CLE, { lat: 45.01, lon: 3.81, id: 'x3' });
+  assert.ok(evenements.some((e) => e.type === 'contact'));
+  assert.ok(!s.alertes().some((a) => a.cle.includes(':silence:')));
+  // Renumérotation 2.8 : le nœud garde son secteur
+  s.renumeroter(0x5a1e0009, 0x5a1e000a);
+  assert.deepEqual(s.secteur(sec.id).noeuds, [0x5a1e000a]);
+  assert.equal(s.secteur(sec.id).membres[0].etat, 'dehors');
+  s.supprimer(z.id, 'essai');
+  assert.equal(s.liste().length, 1);
+  s.arreter();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Mode urgence : activation, journal sans doublon, note, fin, archive et export CSV', () => {
+  const { creerUrgence } = require('../src/urgence');
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'urgence-'));
+  const config = { fichierBase: path.join(dossier, 'base.db') };
+  const diffuses = [];
+  let t = Date.UTC(2026, 10, 21, 9, 0, 0);
+  const u = creerUrgence({ config, diffuser: (m) => diffuses.push(m), maintenant: () => t });
+  assert.equal(u.actif(), false);
+  assert.equal(u.noter({ texte: 'rien' }), null, 'hors crise : rien n’est noté');
+  assert.throws(() => u.desactiver('essai'), /pas actif/);
+  u.activer({ motif: 'Recherche de personne, Mézenc' }, 'f4gld');
+  assert.equal(u.actif(), true);
+  assert.throws(() => u.activer({}, 'x'), /déjà actif/);
+  assert.ok(diffuses.some((m) => m.genre === 'urgence' && m.actif && m.motif === 'Recherche de personne, Mézenc'));
+  t += 60000;
+  assert.ok(u.noter({ cle: 'equipe-sos:a:b', type: 'sos', niveau: 'critique', texte: 'Demande d’aide de Alpha', noeud: 0x5a1e0001, lat: 45.1, lon: 4.1 }));
+  assert.equal(u.noter({ cle: 'equipe-sos:a:b', type: 'sos', texte: 'Demande d’aide de Alpha' }), null, 'même clé : une seule fois');
+  u.note('Équipe 2 partie vers le col', 'f4gld');
+  assert.throws(() => u.note('  ', 'f4gld'), /vide/);
+  assert.equal(u.evenements()[0].type, 'note');
+  // Redémarrage pendant la crise : elle continue
+  u.arreter();
+  const u2 = creerUrgence({ config, maintenant: () => t });
+  assert.equal(u2.actif(), true);
+  assert.equal(u2.noter({ cle: 'equipe-sos:a:b', texte: 'x' }), null, 'clés déjà vues reprises au redémarrage');
+  t += 3600000;
+  const fin = u2.desactiver('f4gld');
+  assert.equal(fin.actif, false); assert.equal(fin.derniere.nb, 4);
+  assert.equal(u2.actif(), false);
+  assert.equal(u2.archives().length, 1);
+  const x = u2.csv(fin.derniere.id);
+  assert.match(x.nom, /^crise-2026-11-21-09-00\.csv$/);
+  const lignes = x.texte.split('\n');
+  assert.equal(lignes.length, 5);
+  assert.match(lignes[1], /;debut;critique;/); assert.match(x.texte, /!5a1e0001;45\.1;4\.1/); assert.match(lignes[4], /;fin;/);
+  u2.arreter();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+// ---------- Mur des donateurs (HelloAsso + GitHub Sponsors) ----------
+const { creerDonateurs, anonymiser } = require('../src/donateurs');
+
+test('Secteurs : sortie probable après une position dehors puis silence (I1), expiration (M5), demande de position', () => {
+  const demandes = [];
+  const { s, horloge, evenements, dossier } = secteursEssai({ demanderPosition: (n, m) => demandes.push([n, m]) });
+  const sec = s.creer({ nom: 'Crête', forme: 'cercle', centre: CENTRE, rayon: 1000, noeuds: [0x5a1e0021], confirmations: 2, delaiMin: 10 }, 'essai');
+  const K = 'mt:' + 0x5a1e0021;
+  s.position(K, { ...CENTRE, id: 1 }); s.position(K, { ...CENTRE, id: 2 });
+  horloge.t += 60000;
+  s.position(K, { ...auNord(CENTRE, 5000), id: 3 }); // une seule position dehors, puis plus rien
+  assert.deepEqual(demandes, [[0x5a1e0021, 'secteur']], 'position demandée tout de suite au premier signe de sortie');
+  assert.equal(s.secteur(sec.id).membres[0].etat, 'dedans');
+  horloge.t += 5 * 60000; s.verifierSilences();
+  assert.equal(evenements.filter((e) => e.type === 'sortie').length, 0, '5 min : trop tôt');
+  horloge.t += 5 * 60000; s.verifierSilences();
+  const e = evenements.find((e) => e.type === 'sortie');
+  assert.ok(e && e.probable && e.notifier && e.alerte, 'sortie probable après 10 min de silence');
+  assert.match(e.message, /sortie probable de !5a1e0021 \(une position hors secteur, plus de nouvelles depuis 10 min\)/);
+  assert.equal(e.niveau, 'critique');
+  const m = s.secteur(sec.id).membres[0];
+  assert.equal(m.etat, 'dehors'); assert.ok(m.probable);
+  assert.ok(s.alertes().some((a) => a.niveau === 'critique' && /sortie probable/.test(a.message)));
+  s.verifierSilences();
+  assert.equal(evenements.filter((e) => e.type === 'sortie').length, 1, 'pas répétée');
+  // Le nœud redonne des nouvelles : dedans → retour sans alerte (sens « sortie »)
+  s.position(K, { ...CENTRE, id: 4 }); s.position(K, { ...CENTRE, id: 5 });
+  assert.equal(s.secteur(sec.id).membres[0].etat, 'dedans');
+  // Intervalle de suivi de l'équipe (60 min) : le seuil de sortie probable le suit
+  const demandes2 = [];
+  const r = geo.creerSecteurs({ config: { fichierBase: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'secteurs-')), 'base.db') }, intervalleMs: 0, maintenant: () => horloge.t,
+    membresEquipe: () => [0x5a1e0022], nomEquipe: () => 'Eq', suiviMinDe: () => 60, surEvenement: (e) => demandes2.push(e) });
+  r.creer({ nom: 'Lent', forme: 'cercle', centre: CENTRE, rayon: 1000, equipe: 'eq', confirmations: 2 }, 'essai');
+  const K2 = 'mt:' + 0x5a1e0022;
+  r.position(K2, { ...CENTRE, id: 1 }); r.position(K2, { ...CENTRE, id: 2 }); r.position(K2, { ...auNord(CENTRE, 5000), id: 3 });
+  horloge.t += 30 * 60000; r.verifierSilences();
+  assert.equal(demandes2.filter((e) => e.type === 'sortie').length, 0, 'suivi toutes les 60 min : 30 min de silence ne suffisent pas');
+  horloge.t += 31 * 60000; r.verifierSilences();
+  assert.equal(demandes2.filter((e) => e.type === 'sortie' && e.probable).length, 1, 'après un intervalle de suivi : sortie probable');
+  r.arreter();
+  // M5 : un comptage « dehors » non confirmé expire (le nœud continue d'émettre en bordure)
+  horloge.t += 60000;
+  s.position(K, { ...auNord(CENTRE, 5000), id: 10 }); // candidat dehors
+  for (let i = 0; i < 8; i++) { horloge.t += 20 * 60000; s.position(K, { ...auNord(CENTRE, 1010), id: 20 + i }); s.verifierSilences(); } // bordure pendant 2 h 40
+  s.position(K, { ...auNord(CENTRE, 5000), id: 30 });
+  assert.equal(s.secteur(sec.id).membres[0].etat, 'dedans', 'un « dehors » vieux de 2 h 40 ne compte plus comme première confirmation');
+  assert.equal(s.secteur(sec.id).membres[0].candidat, 'dehors');
+  s.arreter();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Secteurs : pas de rafale de pertes de contact au redémarrage ni quand le flux est coupé (I3)', () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'secteurs-'));
+  const horloge = { t: Date.UTC(2026, 10, 21, 8, 0, 0) };
+  let reception = horloge.t;
+  const evenements = [];
+  const fabriquer = () => geo.creerSecteurs({ config: { fichierBase: path.join(dossier, 'base.db') }, intervalleMs: 0, maintenant: () => horloge.t, derniereReception: () => reception, surEvenement: (e) => evenements.push(e) });
+  let s = fabriquer();
+  s.creer({ nom: 'Col', forme: 'cercle', centre: CENTRE, rayon: 1000, noeuds: [1, 2, 3, 4, 5], silenceMin: 10 }, 'essai');
+  for (const n of [1, 2, 3, 4, 5]) s.position('mt:' + n, { ...CENTRE, id: n });
+  s.arreter();
+  // Redémarrage après 1 h d'arrêt : délai de grâce de silenceMin, aucune alerte en masse
+  horloge.t += 3600000; reception = horloge.t;
+  s = fabriquer();
+  s.verifierSilences();
+  assert.equal(evenements.filter((e) => e.type === 'silence').length, 0, 'délai de grâce après le démarrage');
+  horloge.t += 11 * 60000; reception = horloge.t;
+  s.verifierSilences();
+  assert.equal(evenements.filter((e) => e.type === 'silence').length, 5, 'après la grâce, les silences réels sont signalés');
+  // Flux coupé (plus rien reçu d'aucune source depuis 10 min) : une seule alerte, surveillance suspendue
+  for (const n of [1, 2, 3, 4, 5]) s.position('mt:' + n, { ...CENTRE, id: 100 + n });
+  assert.equal(evenements.filter((e) => e.type === 'contact').length, 5);
+  horloge.t += 12 * 60000; // reception n'avance pas
+  s.verifierSilences(); s.verifierSilences();
+  const flux = evenements.filter((e) => e.type === 'flux');
+  assert.equal(flux.length, 1, 'une seule alerte « flux interrompu »'); assert.equal(flux[0].niveau, 'attention'); assert.ok(flux[0].notifier);
+  assert.match(flux[0].message, /flux interrompu, surveillance des secteurs suspendue/);
+  assert.equal(evenements.filter((e) => e.type === 'silence').length, 5, 'aucune nouvelle perte de contact pendant la coupure');
+  assert.ok(s.alertes().some((a) => a.cle.startsWith('secteur:flux:') && a.niveau === 'attention'));
+  assert.ok(s.fluxCoupe());
+  // Retour du flux : alerte levée, puis les silences reprennent
+  horloge.t += 60000; reception = horloge.t;
+  s.verifierSilences();
+  assert.equal(evenements.filter((e) => e.type === 'flux-retour').length, 1);
+  assert.ok(!s.alertes().some((a) => a.cle.startsWith('secteur:flux:')));
+  assert.equal(evenements.filter((e) => e.type === 'silence').length, 10, 'les silences réels sont signalés au retour du flux');
+  s.arreter();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Secteurs : envoi LoRa en file (I6) — alertes simultanées regroupées, 30 s, plafond horaire, 200 octets, échec', () => {
+  const lora = [];
+  let panne = false;
+  const { s, horloge, evenements, dossier } = secteursEssai({ envoyerLora: (t, c) => { if (panne) throw new Error('module coupé'); lora.push([horloge.t, t, c]); }, nomDe: (k) => (k === 'mt:' + 0x5a1e0001 ? 'Ω'.repeat(150) : null) });
+  const sec = s.creer({ nom: 'Mont Bar', forme: 'cercle', centre: CENTRE, rayon: 1000, noeuds: [1, 2, 3], canalLora: 2, confirmations: 1, delaiMin: 1 }, 'essai');
+  s.position('mt:1', { ...auNord(CENTRE, 5000), id: 1 });
+  horloge.t += 1000; s.position('mt:2', { ...auNord(CENTRE, 5000), id: 2 });
+  horloge.t += 1000; s.position('mt:3', { ...auNord(CENTRE, 5000), id: 3 });
+  assert.equal(lora.length, 1, 'le premier part tout de suite');
+  assert.match(lora[0][1], /^⛔ !00000001 hors secteur Mont Bar$/);
+  // L'état d'envoi est mis à jour sur l'entrée du journal (les copies diffusées gardent l'état du moment)
+  const sorties = () => s.journal({ limite: 3000 }).filter((e) => e.type === 'sortie').reverse();
+  assert.deepEqual(sorties().map((e) => e.lora), ['envoyé', 'différé', 'différé']);
+  horloge.t += 31000; s.viderLora();
+  assert.equal(lora.length, 2, 'les deux suivants partent ensemble 30 s plus tard');
+  assert.match(lora[1][1], /^⛔ !00000002, !00000003 hors secteur Mont Bar$/);
+  assert.deepEqual(sorties().map((e) => e.lora), ['envoyé', 'envoyé (groupé)', 'envoyé (groupé)']);
+  // Échec d'envoi : noté, le compteur n'est pas consommé, le message suivant part dès que le module revient
+  panne = true;
+  horloge.t += 120000; s.position('mt:1', { ...CENTRE, id: 4 }); s.position('mt:1', { ...auNord(CENTRE, 5000), id: 5 });
+  horloge.t += 31000; s.viderLora();
+  assert.match(sorties().pop().lora, /^échec : module coupé/);
+  panne = false;
+  s.position('mt:2', { ...CENTRE, id: 6 }); s.position('mt:2', { ...auNord(CENTRE, 5000), id: 7 });
+  assert.equal(lora.length, 3, 'après un échec, l’envoi suivant n’attend pas 30 s');
+  // Plafond : 20 messages par heure, puis « différé »
+  for (let i = 0; i < 25; i++) { horloge.t += 61000; s.position('mt:3', { ...CENTRE, id: 100 + i }); s.position('mt:3', { ...auNord(CENTRE, 5000), id: 200 + i }); s.viderLora(); }
+  assert.equal(lora.length, 20, '20 par heure au plus');
+  assert.ok(sorties().some((e) => /20 messages par heure/.test(e.lora)));
+  // File bornée à 10
+  for (let i = 0; i < 15; i++) { horloge.t += 61000; s.position('mt:1', { ...CENTRE, id: 300 + i }); s.position('mt:1', { ...auNord(CENTRE, 5000), id: 400 + i }); }
+  assert.ok(sorties().some((e) => /file d’envoi pleine/.test(e.lora)));
+  // File vidée (un envoi toutes les 30 s), puis : 200 octets, coupés sans casser un caractère (nom de nœud de 300 octets)
+  horloge.t += 3600000 * 2;
+  for (let i = 0; i < 12; i++) { horloge.t += 31000; s.viderLora(); }
+  const long = s.creer({ nom: 'Éééééééééééééééééééééééééééééééééééééééé', forme: 'cercle', centre: CENTRE, rayon: 1000, noeuds: [0x5a1e0001], canalLora: 1, confirmations: 1 }, 'essai');
+  horloge.t += 31000; lora.length = 0;
+  s.position('mt:' + 0x5a1e0001, { ...auNord(CENTRE, 5000), id: 'long' });
+  assert.equal(lora.length, 1); assert.ok(Buffer.byteLength(lora[0][1]) <= 200 && Buffer.byteLength(lora[0][1]) >= 199, 'coupé à 200 octets : ' + Buffer.byteLength(lora[0][1]));
+  assert.equal(Buffer.from(lora[0][1]).toString(), lora[0][1], 'aucun caractère cassé');
+  assert.ok(long.id); s.arreter();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Secteurs : injection CSV neutralisée (I5), mesure GPS périmée (I9), doublon MeshCore sans horodatage (M6)', () => {
+  const { s, horloge, evenements, dossier } = secteursEssai({ nomDe: (k) => ({ 'mt:1': '=HYPERLINK("http://x","clic")', 'mt:2': '-Alpha' })[k] || null });
+  const sec = s.creer({ nom: '=1+1', forme: 'cercle', centre: CENTRE, rayon: 1000, noeuds: [1, 2], confirmations: 1 }, 'essai');
+  s.position('mt:1', { ...auNord(CENTRE, 5000), id: 1 });
+  const csv = s.csv();
+  assert.ok(!/;=HYPERLINK/.test(csv) && !/^=1\+1/m.test(csv), 'aucune cellule ne commence par =');
+  assert.match(csv, /;"'=HYPERLINK\(""http:\/\/x"",""clic""\)";/);
+  assert.match(csv, /;'=1\+1;/);
+  assert.match(csv, /;4000;/, 'la distance reste un nombre');
+  // GPS périmé : le nœud répète un fix d'il y a 40 min → non compté, signalé
+  horloge.t += 60000;
+  const fix = horloge.t - 40 * 60000;
+  s.position('mt:2', { ...CENTRE, id: 2 }); // dedans, précis
+  assert.equal(s.secteur(sec.id).membres[1].etat, 'dedans');
+  s.position('mt:2', { ...auNord(CENTRE, 5000), id: 3, heureFix: fix });
+  assert.equal(s.secteur(sec.id).membres[1].etat, 'dedans', 'position périmée non comptée');
+  const p = evenements.find((e) => e.type === 'perimee');
+  assert.ok(p && p.niveau === 'attention' && /périmée \(mesure GPS d’il y a 40 min\)/.test(p.message));
+  assert.ok(s.alertes().some((a) => a.cle.endsWith(':perimee')));
+  s.position('mt:2', { ...auNord(CENTRE, 5000), id: 4, heureFix: fix });
+  assert.equal(evenements.filter((e) => e.type === 'perimee').length, 1, 'signalé une fois par épisode');
+  // Un fix vieux mais qui avance (horloge du nœud fausse, GPS vivant) : compté
+  s.position('mt:2', { ...auNord(CENTRE, 5000), id: 5, heureFix: fix + 60000 });
+  assert.equal(s.secteur(sec.id).membres[1].etat, 'dehors', 'fix qui avance : position comptée');
+  assert.ok(!s.alertes().some((a) => a.cle.endsWith(':perimee')));
+  // Un fix récent : compté normalement
+  s.position('mt:2', { ...CENTRE, id: 6, heureFix: horloge.t - 30000 });
+  assert.equal(s.secteur(sec.id).membres[1].etat, 'dedans');
+  // MeshCore : annonce sans horodatage (id null) répétée par plusieurs observateurs = une seule position
+  const CLE = 'CD'.repeat(32);
+  const z = s.creer({ nom: 'MC', forme: 'cercle', centre: CENTRE, rayon: 1000, noeudsMc: [CLE], confirmations: 2 }, 'essai');
+  s.position('mc:' + CLE, { ...auNord(CENTRE, 5000), id: null }); s.position('mc:' + CLE, { ...auNord(CENTRE, 5000), id: null });
+  assert.equal(s.secteur(z.id).membres[0].etat, 'inconnu', 'même annonce vue deux fois : une seule position');
+  s.position('mc:' + CLE, { ...auNord(CENTRE, 5001), id: null });
+  assert.equal(s.secteur(z.id).membres[0].etat, 'dehors');
+  // Horodatage plus vieux que la dernière position (annonce en retard) : ignoré
+  horloge.t += 60000;
+  s.position('mc:' + CLE, { ...CENTRE, id: 'vieux', heure: horloge.t - 120000 }); s.position('mc:' + CLE, { ...CENTRE, id: 'vieux2', heure: horloge.t - 120000 });
+  assert.equal(s.secteur(z.id).membres[0].etat, 'dehors', 'positions en retard ignorées');
+  s.arreter();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Secteurs : forme modifiée → états remis à inconnu (M13), équipe supprimée → secteur désactivé (M8), renumérotation (M7)', () => {
+  const { s, horloge, evenements, dossier } = secteursEssai();
+  const sec = s.creer({ nom: 'Plateau', forme: 'cercle', centre: CENTRE, rayon: 1000, equipe: 'eq1', noeuds: [7], confirmations: 1 }, 'essai');
+  s.position('mt:7', { ...CENTRE, id: 1 });
+  assert.equal(s.secteur(sec.id).membres.find((m) => m.cle === 'mt:7').etat, 'dedans');
+  s.modifier(sec.id, { forme: 'cercle', centre: auNord(CENTRE, 10000), rayon: 1000 }, 'essai');
+  assert.equal(s.secteur(sec.id).membres.find((m) => m.cle === 'mt:7').etat, 'inconnu', 'nouvelle forme : l’ancien état ne vaut plus');
+  s.modifier(sec.id, { marge: 60 }, 'essai');
+  // Renumérotation : l'état du nouveau numéro, plus récent, n'est pas écrasé
+  s.position('mt:7', { ...auNord(CENTRE, 10000), id: 2 });
+  horloge.t += 60000;
+  s.position('mt:8', { ...CENTRE, id: 3 });
+  const avant = s.secteur(sec.id).membres.length;
+  s.renumeroter(7, 8);
+  assert.deepEqual(s.secteur(sec.id).noeuds, [8]);
+  assert.equal(s.secteur(sec.id).membres.length, avant, '7 devient 8');
+  assert.equal(s.renumeroter(7, 7), 0);
+  // Équipe supprimée : le secteur garde ses nœuds explicites → reste actif ; un secteur lié seulement à l'équipe est désactivé
+  const seul = s.creer({ nom: 'Équipe seule', forme: 'cercle', centre: CENTRE, rayon: 1000, equipe: 'eq1' }, 'essai');
+  assert.equal(s.equipeSupprimee('eq1'), 1);
+  assert.equal(s.secteur(seul.id).actif, false); assert.equal(s.secteur(sec.id).actif, true); assert.equal(s.secteur(sec.id).equipe, null);
+  assert.ok(evenements.some((e) => e.type === 'desactivation' && e.secteur === seul.id && e.notifier));
+  s.arreter();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Mode urgence : message de détresse — motif élargi, mots entiers, pas d’explosion (I8), export CSV sans formule (I5)', () => {
+  const { RE_SOS } = require('../src/equipes');
+  for (const t of ['SOS', 'S.O.S', 's.o.s au col', 'Mayday mayday', 'au secours', 'help', 'aidez moi', 'aidez-moi', 'A L\'AIDE', 'à l’aide !', 'besoin d’aide', 'test \u0007']) assert.ok(RE_SOS.test(t), 'détresse : ' + t);
+  for (const t of ['sosie', 'isostatique', 'helpdesk', 'URGENT blessé', 'mayday2', 'xhelp']) assert.ok(!RE_SOS.test(t), 'pas une détresse : ' + t);
+  const t0 = Date.now(); RE_SOS.test('besoin d'.repeat(130000)); assert.ok(Date.now() - t0 < 500, '1 Mo de texte analysé sans explosion');
+  const { creerUrgence } = require('../src/urgence');
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'urgence-'));
+  const u = creerUrgence({ config: { fichierBase: path.join(dossier, 'base.db') } });
+  u.activer({ motif: 'essai' }, 'admin');
+  u.note('=HYPERLINK("http://x")', 'gest'); u.note('+33 6 12', 'gest'); u.note('@SUM(1)\tfoo\r\nbar', 'gest');
+  u.noter({ type: 'alerte', niveau: 'critique', texte: '=cmd|x muet', noeud: 0x5a1e0001 });
+  const csv = u.csv().texte;
+  assert.ok(!/;[=+@]/.test(csv.replace(/;"'/g, ';x')), 'aucune cellule ne commence par = + @ : ' + csv);
+  assert.match(csv, /"'=HYPERLINK\(""http:\/\/x""\)"/); assert.match(csv, /;'\+33 6 12$/m); assert.match(csv, /"'@SUM\(1\)\tfoo \nbar"/, 'le retour chariot est remplacé par une espace à la saisie'); assert.match(csv, /;'=cmd\|x muet$/m);
+  u.arreter();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Mur des donateurs : anonymisation du nom (jamais le nom complet, au plus la moitié)', () => {
+  assert.equal(anonymiser(''), 'Un donateur');
+  assert.notEqual(anonymiser('Jean Dupont'), 'Jean Dupont');
+  assert.ok(anonymiser('Jean Dupont').endsWith('***'));
+  assert.ok(anonymiser('Jean Dupont').length < 'Jean Dupont'.length);
+  assert.equal(anonymiser('42BARBE'), '42B***', 'au plus la moitié des caractères');
+  assert.equal(anonymiser('Jo'), 'J***', 'nom court : un seul caractère visible');
+  assert.equal(anonymiser('Bob'), 'B***');
+  assert.equal(anonymiser('F4GLD'), 'F4***');
+  assert.equal(anonymiser('Un nom vraiment très long'), 'Un nom***', 'six caractères au plus');
+  assert.equal(anonymiser('😀😀'), '😀***', 'émoji jamais coupé en deux');
+  assert.equal(anonymiser('🇫🇷🇫🇷🇫🇷🇫🇷🇫🇷🇫🇷'), '🇫🇷🇫🇷🇫🇷***', 'drapeaux (2 points de code chacun) jamais coupés');
+});
+
+test('Mur des donateurs : fichier en 600, seul ce qui est saisi dans la page est enregistré, effacement, plafond, pays, liens', async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'don-'));
+  const fichier = path.join(dossier, 'donateurs.json');
+  fs.writeFileSync(fichier, JSON.stringify({ reglages: {}, manuel: [] }), { mode: 0o644 });
+  const cfg = configDonateurs(dossier, { helloasso: { actif: true, clientId: 'id-env', clientSecret: 'secret-env', organisation: 'radioclub-du-velay', formulaire: '2', type: 'Donation' }, githubSponsors: { actif: false, jeton: 'jeton-env', compte: 'sauveteur71' } });
+  const urls = [];
+  const fauxFetch = async (url, opt = {}) => {
+    urls.push(String(url));
+    if (/oauth2\/token/.test(url)) return { ok: true, status: 200, json: async () => ({ access_token: 'jeton-oauth', expires_in: 1800 }) };
+    if (/\/v5\/organizations\/radioclub-du-velay\/forms\?formTypes=Donation/.test(url)) return { ok: true, status: 200, json: async () => ({ data: [{ formSlug: '2', formType: 'Donation' }] }) };
+    throw new Error('URL inattendue : ' + url);
+  };
+  const don = creerDonateurs({ config: cfg, journal: () => {}, fetch: fauxFetch });
+  if (process.platform !== 'win32') assert.equal(fs.statSync(fichier).mode & 0o777, 0o600, 'fichier existant resserré en 600 au démarrage');
+  // Vérification HelloAsso : jeton puis liste des formulaires, jamais la page des paiements
+  await don.rafraichir();
+  assert.equal(don.etat().erreurs.helloasso, null);
+  assert.ok(urls.some((u) => /\/forms\?formTypes=Donation/.test(u)) && !urls.some((u) => /payments/.test(u)), 'vérification sans lire de paiement');
+  assert.match(don.urlPaiementsHelloAsso(), /\/forms\/Donation\/2\/payments$/, 'adresse des paiements : type de formulaire réglable');
+  // Réglage depuis la page : seul ce qui est saisi va sur disque, jamais les secrets du .env
+  don.regler({ montantVisible: true, helloasso: { formulaire: '3', clientId: 'id-page' } });
+  const disque = JSON.parse(fs.readFileSync(fichier, 'utf8'));
+  assert.deepEqual(disque.reglages.helloasso, { formulaire: '3', clientId: 'id-page' });
+  assert.ok(!JSON.stringify(disque).includes('secret-env') && !JSON.stringify(disque).includes('jeton-env'), 'secrets du .env jamais recopiés');
+  if (process.platform !== 'win32') assert.equal(fs.statSync(fichier).mode & 0o777, 0o600, 'écrit en 600');
+  let e = don.etat().reglages.helloasso;
+  assert.equal(e.clientIdSaisi, true); assert.equal(e.clientSecretSaisi, false); assert.equal(e.clientSecretDefini, true);
+  // Effacer un secret saisi : le .env reprend la main
+  don.regler({ helloasso: { clientIdEffacer: true } });
+  e = don.etat().reglages.helloasso;
+  assert.equal(e.clientIdSaisi, false); assert.equal(e.clientIdDefini, true, 'le .env reprend la main');
+  assert.throws(() => don.regler({ helloasso: { type: 'Pirate' } }), /type de formulaire/);
+  assert.throws(() => don.regler({ helloasso: { organisation: '../x' } }), /slug/);
+  // Liens « Faire un don » : tirés des réglages, absents quand la source est désactivée
+  assert.deepEqual(don.liens(), { helloasso: 'https://www.helloasso.com/associations/radioclub-du-velay/formulaires/3', github: null });
+  don.regler({ helloasso: { actif: false }, githubSponsors: { actif: true, compte: 'f4xyz' } });
+  assert.deepEqual(don.liens(), { helloasso: null, github: 'https://github.com/sponsors/f4xyz' });
+  // Pays : code à 2 lettres ou rien ; pas de date dans la liste publique
+  assert.throws(() => don.manuelAjouter({ nom: 'X', pays: 'France', accord: true }), /Pays/);
+  assert.throws(() => don.manuelAjouter({ nom: 'X', pays: 'f1', accord: true }), /Pays/);
+  don.manuelAjouter({ nom: 'Jo', pays: 'fr', montant: '12.5', accord: true });
+  assert.deepEqual(Object.keys(don.liste()[0]).sort(), ['devise', 'montant', 'nom', 'pays', 'source']);
+  assert.equal(don.liste()[0].montant, 12.5);
+  // Plafond : refus explicite au-delà, jamais de suppression silencieuse
+  for (let k = don.etat().manuel.length; k < 200; k++) don.manuelAjouter({ nom: 'D' + k, accord: true });
+  assert.throws(() => don.manuelAjouter({ nom: 'Trop', accord: true }), /Liste pleine/);
+  assert.equal(don.etat().manuel.length, 200);
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Mur des donateurs : GitHub paginé, parrainages publics seulement, données extérieures vérifiées', async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'don-'));
+  const corps = [];
+  const fauxFetch = async (url, opt = {}) => {
+    const b = JSON.parse(opt.body); corps.push(b);
+    assert.match(b.query, /includePrivate:false/);
+    const page2 = b.variables.apres === 'curseur-1';
+    return { ok: true, json: async () => ({ data: { user: { sponsorshipsAsMaintainer: {
+      pageInfo: { hasNextPage: !page2, endCursor: page2 ? null : 'curseur-1' },
+      nodes: page2 ? [
+        { privacyLevel: 'PUBLIC', createdAt: 'pas une date', sponsorEntity: { login: 'sansdate', name: 42 }, tier: { monthlyPriceInDollars: 'abc', isOneTime: false } },
+        { privacyLevel: 'PUBLIC', createdAt: '2026-01-02T00:00:00Z', sponsorEntity: null },
+        'n’importe quoi', null,
+      ] : [
+        { privacyLevel: 'PUBLIC', createdAt: '2026-01-03T00:00:00Z', sponsorEntity: { login: 'public1', name: 'Public Un' }, tier: { monthlyPriceInDollars: 3, isOneTime: false } },
+        { privacyLevel: 'PRIVATE', createdAt: '2026-01-04T00:00:00Z', sponsorEntity: { login: 'prive1', name: 'Jamais Montré' }, tier: { monthlyPriceInDollars: 100, isOneTime: false } },
+      ],
+    } } } }) };
+  };
+  const don = creerDonateurs({ config: configDonateurs(dossier, { githubSponsors: { actif: true, jeton: 'jeton-test', compte: 'sauveteur71' } }), journal: () => {}, fetch: fauxFetch });
+  don.regler({ montantVisible: true });
+  await don.rafraichir();
+  assert.ok(corps.length >= 2 && corps[1].variables.apres === 'curseur-1', 'deux pages lues');
+  const l = don.liste();
+  assert.deepEqual(l.map((x) => [x.nom, x.montant]), [['Publ***', 3], ['sans***', null]], 'nom de repli (login), montant non numérique → null, entrée sans sponsor ignorée');
+  assert.ok(!JSON.stringify(l).includes('Jamais'), 'sponsor privé jamais affiché');
+  // Réglage pendant une actualisation : une autre est relancée juste après (pas de réglage ignoré)
+  let bloque; const attente = new Promise((r) => { bloque = r; });
+  const donLent = creerDonateurs({ config: configDonateurs(dossier, { githubSponsors: { actif: true, jeton: 'jeton-test', compte: 'sauveteur71' } }), journal: () => {}, fetch: async (url, opt) => { await attente; return fauxFetch(url, opt); } });
+  const p = donLent.rafraichir();
+  donLent.regler({ githubSponsors: { actif: false } });
+  bloque(); await p;
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(donLent.liste(), [], 'la source désactivée pendant l’actualisation ne laisse rien sur le mur');
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+function configDonateurs(dossier, extra = {}) {
+  return {
+    fichierBase: path.join(dossier, 'base.db'),
+    donateurs: {
+      helloasso: { actif: false, clientId: '', clientSecret: '', organisation: 'radioclub-du-velay', formulaire: '2' },
+      githubSponsors: { actif: false, jeton: '', compte: 'sauveteur71' },
+      intervalleHeures: 1,
+      ...extra,
+    },
+  };
+}
+
+test('Mur des donateurs : fusion HelloAsso (manuel, consenti) + GitHub Sponsors (publics), triés par date', async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'don-'));
+  const appels = [];
+  const fauxFetch = async (url) => {
+    appels.push(String(url));
+    if (/graphql/.test(url)) {
+      return { ok: true, json: async () => ({ data: { user: { sponsorshipsAsMaintainer: { nodes: [
+        { privacyLevel: 'PUBLIC', createdAt: '2026-01-01T00:00:00Z', sponsorEntity: { login: 'f4abc', name: 'F4ABC' }, tier: { monthlyPriceInDollars: 5, isOneTime: false } },
+      ] } } } }) };
+    }
+    throw new Error('URL inattendue : ' + url);
+  };
+  const don = creerDonateurs({ config: configDonateurs(dossier, { githubSponsors: { actif: true, jeton: 'jeton-test', compte: 'sauveteur71' } }), journal: () => {}, fetch: fauxFetch });
+  don.manuelAjouter({ nom: '42BARBE', pays: 'fr', montant: 20, accord: true });
+  await don.rafraichir();
+  const l = don.liste();
+  assert.equal(l.length, 2);
+  // HelloAsso (saisi à la main) : nom affiché tel que saisi ; GitHub Sponsors (lu automatiquement) : toujours abrégé
+  assert.equal(l.find((x) => x.source === 'helloasso').nom, '42BARBE');
+  assert.equal(l.find((x) => x.source === 'github').nom, 'F4***');
+  assert.ok(l.some((x) => x.source === 'helloasso' && x.pays === 'FR'));
+  assert.ok(l.some((x) => x.source === 'github'));
+  // Montant masqué par défaut (seul l'administrateur l'active)
+  assert.ok(l.every((x) => x.montant == null));
+  assert.ok(appels.some((u) => /graphql/.test(u)));
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Mur des donateurs : filtrage des non-consentants (accord manquant, sponsor GitHub privé)', async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'don-'));
+  // Donnée existante (restauration après redémarrage) comportant une entrée jamais consentie : ne doit jamais apparaître
+  fs.writeFileSync(path.join(dossier, 'donateurs.json'), JSON.stringify({
+    reglages: {},
+    manuel: [
+      { id: 'a1', nom: 'Accord donné', pays: 'FR', montant: 10, date: '2026-01-01T00:00:00Z', accord: true },
+      { id: 'a2', nom: 'Jamais consenti', pays: 'FR', montant: 50, date: '2026-01-02T00:00:00Z', accord: false },
+    ],
+  }));
+  const fauxFetch = async (url) => {
+    if (/graphql/.test(url)) {
+      return { ok: true, json: async () => ({ data: { user: { sponsorshipsAsMaintainer: { nodes: [
+        { privacyLevel: 'PUBLIC', createdAt: '2026-01-03T00:00:00Z', sponsorEntity: { login: 'public1', name: 'Public Un' }, tier: { monthlyPriceInDollars: 3, isOneTime: false } },
+        { privacyLevel: 'PRIVATE', createdAt: '2026-01-04T00:00:00Z', sponsorEntity: { login: 'prive1', name: 'Jamais Montré' }, tier: { monthlyPriceInDollars: 100, isOneTime: false } },
+      ] } } } }) };
+    }
+    throw new Error('URL inattendue : ' + url);
+  };
+  const don = creerDonateurs({ config: configDonateurs(dossier, { githubSponsors: { actif: true, jeton: 'jeton-test', compte: 'sauveteur71' } }), journal: () => {}, fetch: fauxFetch });
+  await don.rafraichir();
+  const l = don.liste();
+  assert.equal(l.length, 2, 'seuls les deux consentants (1 manuel + 1 sponsor public) apparaissent');
+  assert.ok(!l.some((x) => x.source === 'helloasso' && x.montant === 50), 'entrée sans accord jamais affichée');
+  // Sans accord, l'ajout manuel est carrément refusé (jamais enregistré silencieusement)
+  assert.throws(() => don.manuelAjouter({ nom: 'Sans case cochée' }), /accord du donateur/);
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Mur des donateurs : repli si une source devient indisponible (le cache précédent est gardé)', async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'don-'));
+  let enPanne = false;
+  const fauxFetch = async (url) => {
+    if (/graphql/.test(url)) {
+      if (enPanne) throw new Error('GitHub injoignable (essai)');
+      return { ok: true, json: async () => ({ data: { user: { sponsorshipsAsMaintainer: { nodes: [
+        { privacyLevel: 'PUBLIC', createdAt: '2026-01-01T00:00:00Z', sponsorEntity: { login: 'stable', name: 'Sponsor Stable' }, tier: { monthlyPriceInDollars: 5, isOneTime: false } },
+      ] } } } }) };
+    }
+    throw new Error('URL inattendue : ' + url);
+  };
+  const don = creerDonateurs({ config: configDonateurs(dossier, { githubSponsors: { actif: true, jeton: 'jeton-test', compte: 'sauveteur71' } }), journal: () => {}, fetch: fauxFetch });
+  await don.rafraichir();
+  assert.equal(don.liste().length, 1);
+  assert.equal(don.etat().erreurs.githubSponsors, null);
+  enPanne = true;
+  await don.rafraichir();
+  assert.ok(don.etat().erreurs.githubSponsors, 'la panne est signalée');
+  assert.equal(don.liste().length, 1, 'le mur garde la dernière liste connue plutôt que de se vider');
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Mur des donateurs : source désactivée = liste vide pour cette source, réglages jamais renvoyés en clair', async () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'don-'));
+  const don = creerDonateurs({ config: configDonateurs(dossier), journal: () => {}, fetch: async () => { throw new Error('ne doit pas être appelé'); } });
+  await don.rafraichir();
+  assert.deepEqual(don.liste(), []);
+  const e = don.etat();
+  assert.equal(e.reglages.githubSponsors.jetonDefini, false);
+  assert.ok(!('jeton' in e.reglages.githubSponsors));
+  assert.ok(!('clientSecret' in e.reglages.helloasso));
+  don.regler({ githubSponsors: { jeton: 'secret-abc' } });
+  assert.equal(don.etat().reglages.githubSponsors.jetonDefini, true);
+  assert.ok(!JSON.stringify(don.etat()).includes('secret-abc'), 'le jeton n’est jamais renvoyé en clair');
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+// ---------- Calculs de couverture partagés : 5 demandes simultanées = 1 calcul ----------
+test('Calcul partagé par clé : demandes simultanées servies par une seule exécution, promesse retirée ensuite', async () => {
+  const { creerCalculPartage } = require('../src/calcul-partage');
+  const c = creerCalculPartage();
+  let lances = 0;
+  const calcul = () => new Promise((ok) => { lances++; setTimeout(() => ok({ valeur: lances }), 30); });
+  const r = await Promise.all([1, 2, 3, 4, 5].map(() => c.partager('a', calcul)));
+  assert.equal(lances, 1, 'un seul calcul pour cinq demandes identiques');
+  assert.ok(r.every((x) => x === r[0]), 'tous reçoivent le même résultat');
+  assert.equal(c.nombre(), 0, 'promesse retirée une fois réglée');
+  await c.partager('a', calcul);
+  assert.equal(lances, 2, 'après règlement, une nouvelle demande relance le calcul');
+  // Une autre clé est un autre calcul ; un échec est propagé puis oublié
+  await Promise.all([c.partager('b', calcul), c.partager('a', calcul)]);
+  assert.equal(lances, 4);
+  await assert.rejects(c.partager('c', () => Promise.reject(new Error('relief absent'))), /relief absent/);
+  assert.equal(c.nombre(), 0);
+});
+
+// ---------- Relief Copernicus : délai de téléchargement séparé du délai de décodage ----------
+test('Relief Copernicus : téléchargement trop lent signalé comme tel (délai propre), sans abandonner le fil de décodage', async () => {
+  const { grilleCopernicus } = require('../src/monde');
+  // Faux AWS : HEAD immédiat (tuile présente), GET qui ne répond jamais
+  const srv = http.createServer((req, res) => { if (req.method === 'HEAD') return res.end(); /* GET : silence */ });
+  await new Promise((ok) => srv.listen(0, '127.0.0.1', ok));
+  const fetchAvant = global.fetch;
+  // Délai de téléchargement raccourci pour l'essai : la constante est lue au chargement du module, on passe par fetch
+  global.fetch = (url, o = {}) => fetchAvant(String(url).replace(/^https:\/\/copernicus-dem-30m\.s3\.amazonaws\.com/, `http://127.0.0.1:${srv.address().port}`), { ...o, signal: o.method === 'HEAD' ? o.signal : AbortSignal.any([o.signal, AbortSignal.timeout(300)].filter(Boolean)) });
+  const lignes = [];
+  try {
+    const t = Date.now();
+    await assert.rejects(grilleCopernicus({ sud: 45.2, ouest: 3.2, pasLat: 0.1, pasLon: 0.1, nLat: 2, nLon: 2 }, () => {}, () => false, (...l) => lignes.push(l.join(' '))), /relief Copernicus indisponible/);
+    assert.ok(Date.now() - t < 30000, 'trois essais bornés par le délai de téléchargement, pas par les 180 s du décodage');
+    assert.ok(!lignes.some((l) => /abandonné/.test(l)), 'un réseau lent n’abandonne pas le fil de décodage');
+  } finally { global.fetch = fetchAvant; srv.close(); }
+});
+
+// ---------- Résumé des opérations de programmation (Gérer › Programmer › Opérations récentes) ----------
+// Ce résumé est la seule trace de ce qui a été envoyé à un relais : il doit dire les valeurs, en français,
+// avec les unités, sans jamais laisser sortir une clé.
+const resumeOps = require('../src/resume-operations');
+const resumeDe = (t) => resumeOps.resumeOperation(t, { canaux: 'Canaux (noms, clés, ordre)', frequence: 'Région, slot et fréquence' });
+
+test('Résumé d’une modification : les valeurs envoyées, en français et avec les unités', () => {
+  // Le cas d'Olivier : avant, l'historique n'affichait que « télémétrie · device (nodeInfoBroadcastSecs) »
+  const t = { type: 'modifier', params: { device: { nodeInfoBroadcastSecs: 10800 }, telemetrie: { deviceUpdateInterval: 1800 } } };
+  const d = resumeOps.detailsOperation(t);
+  assert.deepEqual(d.map((x) => `${x.lib} : ${x.valeur}`), ['Fiche du nœud : toutes les 3 h', 'Télémétrie : toutes les 30 min']);
+  assert.ok(!resumeDe(t).includes('nodeInfoBroadcastSecs'), 'aucun nom de champ du firmware dans le résumé');
+  // Unités : secondes, minutes, heures, dBm, sauts, mètres
+  const t2 = { type: 'modifier', params: { device: { nodeInfoBroadcastSecs: 86400 }, lora: { hopLimit: 4, txPower: 20, txEnabled: true, channelNum: 0, overrideFrequency: 869.618 }, position: { positionBroadcastSecs: 43200, positionBroadcastSmartEnabled: false }, voisinage: { updateInterval: 604800 } } };
+  const r2 = resumeDe(t2);
+  assert.match(r2, /Sauts : 4(?! sauts)/);
+  assert.match(r2, /Puissance d’émission : 20 dBm/);
+  assert.match(r2, /Slot : auto/);
+  assert.match(r2, /Fréquence forcée : 869\.6180 MHz/);
+  assert.match(r2, /Position : toutes les 12 h/);
+  assert.match(r2, /Position intelligente : non/);
+  // Durées : jours seulement au-delà de 24 h, pour lire comme les menus déroulants du formulaire
+  assert.match(r2, /Voisinage : toutes les 7 j/);
+  assert.match(r2, /Fiche du nœud : toutes les 24 h/);
+  assert.deepEqual([0, 45, 900, 3600, 43200, 86400, 129600, 172800, 604800].map(resumeOps.toutesLes),
+    ['défaut', 'toutes les 45 s', 'toutes les 15 min', 'toutes les 1 h', 'toutes les 12 h', 'toutes les 24 h', 'toutes les 36 h', 'toutes les 2 j', 'toutes les 7 j']);
+  // Rôle et politique de signature : noms lisibles, pas les constantes du protobuf
+  const t3 = { type: 'modifier', params: { device: { role: 'ROUTER_LATE' }, securite: { packetSignaturePolicy: 'PACKET_SIGNATURE_POLICY_STRICT' } } };
+  assert.match(resumeDe(t3), /Rôle : Routeur tardif/);
+  assert.match(resumeDe(t3), /Signature des paquets : Stricte \(signés seulement\)/);
+  assert.ok(!resumeDe(t3).includes('PACKET_SIGNATURE_POLICY'));
+});
+
+test('Résumé : aucun secret ne sort (clé de canal, clé d’administration, mot de passe, jeton)', () => {
+  const pskCanal = 'c2VjcmV0ZGVjYW5hbDEyMzQ1Njc4OTBhYmNk';
+  const t = {
+    type: 'modifier',
+    params: {
+      canaux: [{ index: 0, nom: 'LongFast', psk: 'AQ==', precision: 16, montant: true, descendant: true }, { index: 2, nom: 'Secours', psk: pskCanal, precision: 32 }],
+      securite: { adminKey: 'Q0xFREFETUlOMTIzNDU2Nzg5MA==', privateKey: 'cHJpdmVlMTIzNDU2Nzg5MGFiY2RlZg==' },
+      lora: { wifiPsk: 'motDePasseWifi123', hopLimit: 3 },
+      device: { motDePasse: 'secret-du-relais', jetonMqtt: 'jeton-abcdef' },
+      // Champ inconnu dont la valeur ressemble à une clé en base64 : masqué par précaution
+      inventeDemain: { quelqueChose: 'QUJDREVGR0hJSktMTU5PUFFSUw==' },
+    },
+  };
+  const r = resumeDe(t);
+  for (const secret of [pskCanal, 'Q0xFREFETUlOMTIzNDU2Nzg5MA==', 'cHJpdmVlMTIzNDU2Nzg5MGFiY2RlZg==', 'motDePasseWifi123', 'secret-du-relais', 'jeton-abcdef', 'QUJDREVGR0hJSktMTU5PUFFSUw==', 'AQ=='].sort()) {
+    assert.ok(!r.includes(secret), `« ${secret} » ne doit pas apparaître dans le résumé`);
+  }
+  assert.match(r, /canal 0 : LongFast/);
+  assert.match(r, /clé envoyée \(non affichée\)/);
+  assert.match(r, /Sauts : 3/, 'les réglages non sensibles de la même section restent lisibles');
+  assert.match(r, /\(masqué\)/, 'un champ sensible est signalé comme masqué, pas oublié en silence');
+  // Le détail renvoyé au navigateur ne contient aucun secret non plus
+  assert.ok(!JSON.stringify(resumeOps.detailsOperation(t)).includes(pskCanal));
+  // La fonction de détection reconnaît les noms de champs sensibles usuels
+  for (const nom of ['psk', 'adminKey', 'wifiPsk', 'motDePasse', 'jeton', 'mqttPassword', 'privateKey', 'cleCanal', 'authToken']) {
+    assert.ok(resumeOps.sensible(nom, 'x'), `${nom} doit être traité comme sensible`);
+  }
+  // …et ne masque aucun réglage normal (sinon le résumé perdrait de l'information)
+  for (const cle of resumeOps.CHAMPS_CONNUS) assert.ok(!resumeOps.masquer(cle, cle, 1), `${cle} ne doit pas être pris pour un secret`);
+  // Un nom de nœud long, fait de lettres et de chiffres, n'est pas pris pour une clé
+  assert.equal(resumeDe({ type: 'nom', params: { nomLong: '43BouchetRelais01' } }), 'Nom long : 43BouchetRelais01');
+});
+
+test('Résumé : valeur mesurée avant correction (Contrôle du trafic) affichée comme une mesure, pas comme un réglage', () => {
+  const t = {
+    type: 'modifier',
+    params: { device: { nodeInfoBroadcastSecs: 10800 }, telemetrie: { deviceUpdateInterval: 1800 } },
+    mesures: { heures: 24, valeurs: { 'device.nodeInfoBroadcastSecs': 360, 'telemetrie.deviceUpdateInterval': 240 } },
+  };
+  const d = resumeOps.detailsOperation(t);
+  assert.deepEqual(d[0].notes, ['mesuré sur 24 h : toutes les 6 min']);
+  assert.deepEqual(d[1].notes, ['mesuré sur 24 h : toutes les 4 min']);
+  assert.match(resumeDe(t), /Fiche du nœud : toutes les 3 h · mesuré sur 24 h : toutes les 6 min/);
+  // Le mot « mesuré » est obligatoire : ce n'est pas le réglage précédent du nœud
+  assert.ok(!resumeDe(t).includes('avant :'));
+});
+
+test('Résumé : valeur précédente réellement lue sur le nœud, avec l’âge de la lecture', () => {
+  const t = {
+    type: 'modifier',
+    params: { lora: { hopLimit: 4 }, position: { positionBroadcastSecs: 43200 }, nom: { nomLong: 'Bouchet' } },
+    avant: { heure: Date.now() - 20 * 60000, valeurs: { 'lora.hopLimit': 3, 'position.positionBroadcastSecs': 900, 'nom.nomLong': '43Bouchet' } },
+  };
+  const r = resumeDe(t);
+  assert.match(r, /Sauts : 4 · avant : 3 \(lu il y a 20 min\)/);
+  assert.match(r, /Position : toutes les 12 h · avant : toutes les 15 min \(lu il y a 20 min\)/);
+  assert.match(r, /Nom long : Bouchet · avant : 43Bouchet \(lu il y a 20 min\)/);
+  // Valeur identique : pas de « avant → après » inutile
+  const t2 = { type: 'modifier', params: { lora: { hopLimit: 3 } }, avant: { heure: Date.now(), valeurs: { 'lora.hopLimit': 3 } } };
+  assert.equal(resumeDe(t2), 'Sauts : 3');
+  // Sans lecture précédente ni mesure : seule la valeur envoyée, rien d'inventé
+  const t3 = { type: 'modifier', params: { lora: { hopLimit: 4 } } };
+  assert.equal(resumeDe(t3), 'Sauts : 4');
+});
+
+test('Résumé : canaux, nom, position fixe, équipe, firmware, favoris et vérification', () => {
+  const canal = { type: 'canal', params: { index: 0, nom: 'LongFast', psk: 'AQ==', precision: 16, montant: true, descendant: false, role: 'PRIMARY' } };
+  assert.equal(resumeDe(canal), 'canal 0 : LongFast · principal · clé envoyée (non affichée) · ≈ 364 m · MQTT ↑');
+  assert.equal(resumeOps.toucheCanalPrincipal(canal), true);
+  const suppr = { type: 'canal', params: { index: 3, role: 'DISABLED' } };
+  assert.equal(resumeDe(suppr), 'canal 3 : supprimé');
+  assert.equal(resumeOps.toucheCanalPrincipal(suppr), false);
+  assert.equal(resumeDe({ type: 'nom', params: { nomLong: 'Le Bouchet', nomCourt: 'BCH' } }), 'Nom long : Le Bouchet · Nom court : BCH');
+  assert.equal(resumeDe({ type: 'position', params: { lat: 45.12345, lon: 3.98765, alt: 1120 } }), 'Position fixe : 45.12345, 3.98765 · 1120 m');
+  assert.equal(resumeDe({ type: 'position', params: { retirer: true } }), 'Position fixe : retirée (retour au GPS)');
+  assert.equal(resumeDe({ type: 'equipe', params: { action: 'cle', nom: 'SDIS43' } }), 'Canal d’équipe : SDIS43 · nouvelle clé du canal');
+  assert.equal(resumeDe({ type: 'firmware', params: { version: '2.8.1' } }), 'Firmware : 2.8.1');
+  assert.equal(resumeDe({ type: 'favoris', params: { plan: { 1: { ajouter: [2, 3] }, 4: { ajouter: [5] } } } }), '3 favori(s) à poser sur 2 relais');
+  assert.equal(resumeDe({ type: 'verifier', params: { reference: 0x43abcdef, elements: ['canaux', 'frequence'] } }), 'Référence : !43abcdef · Canaux (noms, clés, ordre) · Région, slot et fréquence');
+  // Réglage rapide (Autres actions) : mêmes libellés que l'éditeur complet
+  assert.equal(resumeDe({ type: 'config', params: { section: 'voisinage', valeurs: { enabled: true, updateInterval: 21600 } } }), 'Voisinage : activé · Voisinage : toutes les 6 h');
+  // Opération sans réglage : résumé vide (la carte d'opération n'affiche alors rien)
+  assert.equal(resumeDe({ type: 'redemarrer', params: {} }), '');
+});
+
+test('Résumé : tous les réglages modifiables à distance ont un libellé lisible', () => {
+  // Liste à tenir à jour avec CHAMPS / CHAMPS_TRAFIC / valeursVoisinage / valeursTelemetrie de src/administration.js
+  const attendus = [
+    'device.role', 'device.nodeInfoBroadcastSecs', 'device.rebroadcastMode',
+    'lora.hopLimit', 'lora.modemPreset', 'lora.txPower', 'lora.txEnabled', 'lora.region', 'lora.channelNum', 'lora.usePreset',
+    'lora.sx126xRxBoostedGain', 'lora.configOkToMqtt', 'lora.ignoreMqtt', 'lora.overrideFrequency',
+    'position.positionBroadcastSecs', 'position.positionBroadcastSmartEnabled', 'position.fixedPosition',
+    'voisinage.enabled', 'voisinage.transmitOverLora', 'voisinage.updateInterval',
+    'telemetrie.deviceUpdateInterval', 'telemetrie.deviceTelemetryEnabled',
+    'trafic.positionMinIntervalSecs', 'trafic.nodeinfoDirectResponseMaxHops', 'trafic.rateLimitWindowSecs', 'trafic.rateLimitMaxPackets', 'trafic.unknownPacketThreshold',
+    'securite.packetSignaturePolicy', 'nom.nomLong', 'nom.nomCourt',
+  ];
+  for (const cle of attendus) {
+    assert.ok(resumeOps.CHAMPS[cle], `pas de libellé lisible pour ${cle}`);
+    const lib = resumeOps.CHAMPS[cle].lib;
+    assert.ok(/^[A-ZÀ-Ý]/.test(lib) && lib !== cle.slice(cle.indexOf('.') + 1), `le libellé de ${cle} doit être du français, pas un nom de champ`);
+  }
+  // Un champ inconnu garde son nom technique plutôt qu'une traduction inventée
+  const d = resumeOps.detailsOperation({ type: 'modifier', params: { device: { champPasEncoreConnu: 7 } } });
+  assert.deepEqual(d, [{ lib: 'champPasEncoreConnu', valeur: '7', brut: true }]);
+});
+
+test('Contrôle du trafic : la correction et la mesure d’avant portent sur les mêmes réglages', () => {
+  const fausseDb = { prepare: () => ({ all: () => [], get: () => ({ n: 0 }), iterate: () => [] }) };
+  const ct = require('../src/trafic').creerControleTrafic({ stockage: { db: fausseDb }, config: { zone: [44, 3, 46, 5] }, administration: null });
+  const e = { num: 1, fixe: true, problemes: [{ port: 'nodeinfo', medianS: 360 }, { port: 'telemetrie', medianS: 240 }, { port: 'position', medianS: 120 }] };
+  const params = ct.correctifs(e);
+  const mesures = ct.mesures(e, 24);
+  assert.deepEqual(mesures, { heures: 24, valeurs: { 'device.nodeInfoBroadcastSecs': 360, 'telemetrie.deviceUpdateInterval': 240, 'position.positionBroadcastSecs': 120 } });
+  // Chaque réglage corrigé a bien sa mesure d'avant
+  for (const cle of Object.keys(mesures.valeurs)) {
+    const [sec, champ] = [cle.slice(0, cle.indexOf('.')), cle.slice(cle.indexOf('.') + 1)];
+    assert.ok(params[sec] && params[sec][champ] != null, `${cle} corrigé`);
+  }
+  const r = resumeDe({ type: 'modifier', params, mesures });
+  assert.match(r, /Fiche du nœud : toutes les 3 h · mesuré sur 24 h : toutes les 6 min/);
+  assert.match(r, /Télémétrie : toutes les 30 min · mesuré sur 24 h : toutes les 4 min/);
+  assert.match(r, /Position : toutes les 12 h · mesuré sur 24 h : toutes les 2 min/);
+  // Une mesure n'est jamais envoyée au module : elle ne doit pas se retrouver dans les paramètres
+  assert.ok(!JSON.stringify(params).includes('360'));
+  assert.equal(ct.mesures({ problemes: [] }, 24), null);
+});
+
+// ---------- Relevé automatique des capteurs MeshCore : il doit repartir tout seul et se signaler ----------
+// Banc : vrai module de relevé + vraie file de tâches d'administration, avec un faux companion et une horloge
+// simulée (on avance de plusieurs heures en quelques millisecondes).
+function bancCapteursMc(t, { intervalleMin = 180, nb = 3, reglagesMc = null } = {}) {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'setImmediate', 'Date'], now: Date.parse('2026-11-21T20:00:00Z') });
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-capteurs-'));
+  const { creerStockage } = require('../src/base');
+  const { creerAdministrationMc } = require('../src/meshcore/administration');
+  const { creerCapteursMc } = require('../src/meshcore/capteurs');
+  const st = creerStockage(path.join(dossier, 'x.db'));
+  const config = { fichierBase: path.join(dossier, 'x.db'), meshcore: { supervisionHeures: 0, supervisionMax: 8, ...(reglagesMc || {}) } };
+  const CLES = ['A', 'B', 'C', 'D'].slice(0, nb).map((c) => c.repeat(64));
+  const noeuds = new Map(CLES.map((c, i) => [c, { cle: c, nom: 'Capteur ' + i, role: 'capteur', lat: 45, lon: 4, horodatage_annonce: 0 }]));
+  const reseauMc = { q: { noeud: { get: (c) => noeuds.get(String(c).toUpperCase()) } }, noterEtat: () => {}, resoudreChemin: () => [], surveilles: () => [] };
+  const cas = { muets: new Set(), echecs: new Map(), pret: true }; // muets : ne répondent jamais ; echecs : n échecs puis ça marche
+  const lectures = [];
+  const companion = {
+    etat: () => ({ pret: cas.pret, cle: 'FF'.repeat(32), nom: 'companion', connecte: cas.pret }),
+    contacts: () => [],
+    async telemetrie(n) {
+      if (cas.muets.has(n.cle)) return new Promise(() => {}); // aucune réponse, jamais
+      const reste = cas.echecs.get(n.cle) || 0;
+      if (reste > 0) { cas.echecs.set(n.cle, reste - 1); throw new Error('pas de réponse dans le délai (40 s)'); }
+      lectures.push({ cle: n.cle, heure: Date.now() });
+      return [{ type: 'tension', canal: 1, valeur: 4.09, unite: 'V' }];
+    },
+    async connexion() { return { admin: true }; },
+    async cli() { return 'ok'; },
+  };
+  const journal = [];
+  const adminMc = creerAdministrationMc(config, companion, reseauMc, (...a) => journal.push(a.join(' ')));
+  const capteurs = creerCapteursMc({ db: st.db, config, adminMc, companion, journal: (...a) => journal.push(a.join(' ')) });
+  adminMc.ecouterTelemetrie((cle, m) => capteurs.noter(cle, m));
+  for (const c of CLES) capteurs.regler(c, { intervalleMin, nom: noeuds.get(c).nom });
+  const avancer = async (ms) => { for (let k = 0; k < ms; k += 60000) { t.mock.timers.tick(60000); for (let j = 0; j < 40; j++) await Promise.resolve(); } };
+  const releves = (cle) => lectures.filter((l) => l.cle === cle).length;
+  t.after(() => { capteurs.arreter(); fs.rmSync(dossier, { recursive: true, force: true }); });
+  return { capteurs, adminMc, CLES, cas, journal, avancer, releves, lectures };
+}
+
+test('MeshCore capteurs : un nœud qui ne répond jamais ne prive plus les autres de relevé, et son retard est signalé', async (t) => {
+  const b = bancCapteursMc(t);
+  b.cas.muets.add(b.CLES[0]); // sa télémétrie ne rend jamais la main : avant, la tâche ne finissait pas
+  await b.avancer(14 * 3600000);
+  assert.ok(b.releves(b.CLES[1]) >= 4, `nœud sain relevé toutes les 3 h : ${b.releves(b.CLES[1])} relevé(s) en 14 h`);
+  assert.ok(b.releves(b.CLES[2]) >= 4, `nœud sain relevé toutes les 3 h : ${b.releves(b.CLES[2])} relevé(s) en 14 h`);
+  assert.equal(b.releves(b.CLES[0]), 0, 'le nœud muet ne donne rien, c’est normal');
+  // Aucune tâche ne reste « en cours » pour toujours : sinon les relevés s’arrêtent en silence
+  assert.ok(b.adminMc.taches().every((x) => x.fin), 'toutes les tâches sont terminées (heure de fin posée)');
+  const retard = b.capteurs.alertes().filter((a) => a.type === 'releve');
+  assert.equal(retard.length, 1, 'une alerte « relevés en retard », pour le nœud muet seulement');
+  assert.match(retard[0].message, /aucun relevé automatique reçu/);
+  // Un relevé lancé à la main passe toujours (la file n’est pas bloquée)
+  b.adminMc.lancer('telemetrie', [b.CLES[1]], {}, 'olivier');
+  const avant = b.releves(b.CLES[1]);
+  await b.avancer(5 * 60000);
+  assert.equal(b.releves(b.CLES[1]), avant + 1, 'relevé manuel exécuté');
+});
+
+test('MeshCore capteurs : une demande sans réponse est relancée dans le quart d’heure, pas à l’intervalle suivant', async (t) => {
+  const b = bancCapteursMc(t, { intervalleMin: 180, nb: 1 });
+  b.cas.echecs.set(b.CLES[0], 1); // le premier essai échoue, le suivant passe
+  await b.avancer(40 * 60000);
+  assert.equal(b.releves(b.CLES[0]), 1, 'relevé obtenu dans les 40 min, sans attendre les 3 h');
+});
+
+test('MeshCore capteurs : une tâche arrêtée pendant qu’elle attend est marquée terminée (sinon ses nœuds ne sont plus relevés)', async (t) => {
+  const b = bancCapteursMc(t, { nb: 2 });
+  b.cas.muets.add(b.CLES[0]);
+  await b.avancer(60000);
+  const enAttente = b.adminMc.lancer('telemetrie', [b.CLES[1]], {}, 'olivier');
+  assert.equal(enAttente.statut, 'en_attente');
+  b.adminMc.arreter(enAttente.id);
+  assert.ok(b.adminMc.tache(enAttente.id).fin, 'heure de fin posée dès l’arrêt');
+  b.cas.muets.clear();
+  await b.avancer(8 * 3600000);
+  assert.ok(b.releves(b.CLES[1]) >= 2, `le nœud de la tâche arrêtée est relevé de nouveau : ${b.releves(b.CLES[1])}`);
+});
+
+// Le délai maximal par nœud se règle dans Module MeshCore : un plafond court lâche vite un nœud muet,
+// un plafond long le garde. (Une horloge simulée par test : un banc par test.)
+test('MeshCore capteurs : délai maximal réglé à 1 min, le nœud muet est lâché tout de suite', async (t) => {
+  const b = bancCapteursMc(t, { nb: 2, reglagesMc: { plafondReleveMin: 1 } });
+  b.cas.muets.add(b.CLES[0]);
+  await b.avancer(4 * 60000);
+  assert.equal(b.releves(b.CLES[1]), 1, 'le nœud sain est relevé dans les 4 min');
+});
+
+test('MeshCore capteurs : délai maximal réglé à 30 min, la carte laisse sa chance à un répéteur lent', async (t) => {
+  const b = bancCapteursMc(t, { nb: 2, reglagesMc: { plafondReleveMin: 30 } });
+  b.cas.muets.add(b.CLES[0]);
+  await b.avancer(4 * 60000);
+  assert.equal(b.releves(b.CLES[1]), 0, 'au bout de 4 min, le nœud sain attend encore son tour');
+});
+
+test('MeshCore capteurs : un délai maximal absurde dans le fichier de réglages est borné, jamais nul', async (t) => {
+  const b = bancCapteursMc(t, { nb: 2, reglagesMc: { plafondReleveMin: 0 } });
+  b.cas.muets.add(b.CLES[0]);
+  await b.avancer(4 * 60000);
+  assert.equal(b.releves(b.CLES[1]), 1, 'réglage à 0 : ramené à 1 min');
+});
+
+// ---------- Sauvegardes des réglages : rien d'important ne doit manquer à la liste ----------
+
+test('Sauvegardes : les secrets saisis dans la console ne partent jamais dans une sauvegarde', () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'sauve-secrets-'));
+  const { creerStockage } = require('../src/base');
+  const { creerSauvegardes, FICHIERS } = require('../src/sauvegardes');
+  const st = creerStockage(path.join(dossier, 'carte-live.db'));
+  // Une sauvegarde est faite pour être copiée ailleurs (clé USB, pièce jointe) : elle ne doit emporter
+  // ni le mot de passe PostgreSQL ni les identifiants HelloAsso / GitHub saisis dans la console.
+  const SECRETS = {
+    'postgres.json': 'MotDePassePostgres-NePasSauvegarder',
+    'donateurs.json': 'SecretHelloAsso-NePasSauvegarder',
+  };
+  for (const [f, secret] of Object.entries(SECRETS)) fs.writeFileSync(path.join(dossier, f), JSON.stringify({ motDePasse: secret, clientSecret: secret }));
+  for (const f of FICHIERS) { const c = path.join(dossier, f); fs.mkdirSync(path.dirname(c), { recursive: true }); if (!fs.existsSync(c)) fs.writeFileSync(c, `contenu de ${f}`); }
+  const s = creerSauvegardes(dossier, st.db, () => {});
+  const brut = s.lire(s.sauvegarder().nom).toString('utf8');
+  for (const [f, secret] of Object.entries(SECRETS)) {
+    assert.ok(!FICHIERS.includes(f), `${f} ne doit pas figurer dans la liste des fichiers sauvegardés`);
+    assert.ok(!brut.includes(secret), `le secret de ${f} ne doit apparaître nulle part dans la sauvegarde`);
+  }
+  // Le fichier reste bien sur le disque : on ne sauvegarde pas, on ne supprime pas
+  for (const f of Object.keys(SECRETS)) assert.ok(fs.existsSync(path.join(dossier, f)), `${f} doit rester sur le serveur`);
+  st.db.close();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Sauvegardes : chaque fichier de réglages listé est bien repris, puis remis à l’identique', () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'sauve-liste-'));
+  const { creerStockage } = require('../src/base');
+  const { creerSauvegardes, FICHIERS } = require('../src/sauvegardes');
+  const st = creerStockage(path.join(dossier, 'carte-live.db'));
+  // Un contenu reconnaissable par fichier
+  const attendu = {};
+  for (const f of FICHIERS) {
+    attendu[f] = `contenu de ${f}`;
+    const cible = path.join(dossier, f);
+    fs.mkdirSync(path.dirname(cible), { recursive: true });
+    fs.writeFileSync(cible, attendu[f]);
+  }
+  const s = creerSauvegardes(dossier, st.db, () => {});
+  const copie = JSON.parse(s.lire(s.sauvegarder().nom).toString('utf8'));
+  assert.deepEqual(Object.keys(copie.fichiers).sort(), [...FICHIERS].sort(), 'tous les fichiers listés doivent être dans la sauvegarde');
+  for (const f of FICHIERS) fs.writeFileSync(path.join(dossier, f), 'écrasé');
+  s.restaurer(copie);
+  for (const f of FICHIERS) assert.equal(fs.readFileSync(path.join(dossier, f), 'utf8'), attendu[f], `${f} doit revenir à l’identique`);
+  // Aucun fichier binaire dans la liste : la sauvegarde les lit en UTF-8 et les abîmerait
+  assert.ok(!FICHIERS.some((f) => /\.(bin|db|jpg|png|tar\.gz)$/.test(f)), 'la liste ne doit contenir que du texte');
+  st.db.close();
+  fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('Sauvegardes : un fichier dans un sous-dossier absent n’interrompt pas la restauration', () => {
+  const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'sauve-sous-'));
+  const { creerStockage } = require('../src/base');
+  const { creerSauvegardes } = require('../src/sauvegardes');
+  const st = creerStockage(path.join(dossier, 'carte-live.db'));
+  const s = creerSauvegardes(dossier, st.db, () => {});
+  // Sauvegarde venue d'une autre carte : le sous-dossier « releves » n'existe pas encore ici
+  const copie = { format: 'carte-live-sauvegarde', version: 1, date: new Date().toISOString(),
+    fichiers: { 'releves/releves.json': '[]', 'secteurs.json': '{"secteurs":[]}' }, comptes: [] };
+  const r = s.restaurer(copie);
+  assert.equal(r.fichiers, 2, 'les deux fichiers doivent être écrits');
+  assert.ok(fs.existsSync(path.join(dossier, 'releves', 'releves.json')), 'le sous-dossier doit être créé');
+  assert.ok(fs.existsSync(path.join(dossier, 'secteurs.json')), 'les fichiers suivants ne doivent pas être perdus');
+  st.db.close();
+  fs.rmSync(dossier, { recursive: true, force: true });
 });

@@ -2,6 +2,164 @@
 
 The section of each version is copied as is into the GitHub release notes.
 
+## 1.7.1
+
+### 🖥️ 64-bit system checked at install
+- The install script now refuses a **32-bit** system (e.g. Raspberry Pi OS 32-bit, `armhf`) with a clear message, instead of letting Docker fail with `no matching manifest`. The map needs 64-bit Linux (x86-64 or ARM64). The README, Installation and Troubleshooting pages say so plainly, with the right check (`dpkg --print-architecture`).
+
+### 💜 Donor wall: HelloAsso names shown as typed
+- HelloAsso donations, added by hand by the administrator, now show **the name exactly as typed**: no more automatic shortening (“42BARBE” no longer becomes “42B***”). Shorten it yourself if you wish. GitHub Sponsors, read automatically, stay shortened.
+
+### 🧰 Top menus always reachable to the last entry
+- On a computer, the **Tools** menu (especially with “Both” networks shown) could be taller than the window: the last entries (Public map and exports, Emergency mode, Weekly report…) went off screen with no way to reach them. The Tools, Layers and Radio coverage menus now stop at the bottom of the window and **scroll**.
+
+### 🌍 Area selector on a map outside France
+- On a map set to a **world square** (e.g. “40°N–41°N · 75°W–74°W”), the area menu at the top no longer offers **France** and the **13 French regions**. It now offers the map area and **Whole map**.
+- **Whole map** frames **every node the map knows** (Meshtastic and MeshCore, nodes announcing 0, 0 ignored), or a world view when there is none yet, instead of jumping to France.
+- A French region remembered by the browser or given in a link (`?zone=r84`) falls back to the map area. The public map follows the same rule: no regions or French departments, **Whole map** instead of “Whole of France”.
+- A World edition map set to a **French department** is unchanged: regions, neighbours and France are still there.
+
+## 1.7.0
+
+### 🖱️ The Tools menu buttons work again
+- **12 buttons did nothing when clicked** (🔌 This PC's USB node, 📶 Bluetooth node, 📟 Meshtastic client, ⚡ Flash a Meshtastic node, ⚡ Flash a MeshCore node, 🛠️ Configure a MeshCore repeater, 📟 MeshCore app, 🕸️ Topology and simulation (Meshtastic and MeshCore), ⇄ Cross-network bridge, ☀️ Light theme, 📲 Install the app). The map **layer** toggle handler was attached to every button sharing the same look, including those in the Tools menu, and overwrote their real action. It now only applies to real layer toggles.
+- Along the way, a **stray key** could have been stored in the layers kept by the browser: it is removed automatically, legitimate choices are kept. The **APRS stations**, **Rivers** and **LoRaWAN sensors** layers are finally remembered from one visit to the next.
+
+### 🔌 A click on USB or Bluetooth always answers something
+- Chrome only opens USB (Web Serial) and Bluetooth (Web Bluetooth) on a **secure** page: map over HTTPS, or opened from the machine running it. Map opened over `http://` from another PC (a Tailscale address, for instance), or in Firefox or Safari: the **🔌 This PC's USB node** and **📶 Bluetooth node** buttons are marked **⚠**, and a click explains in plain words what is missing instead of doing nothing.
+- Every node connection path (Meshtastic and MeshCore, USB and Bluetooth, Tools menu and the “Connect a node” panel) **no longer fails silently**: chooser closed, empty list, port already in use, Bluetooth refused… each case gives a message that says what to do.
+
+### 🪟 Wider windows, and click next to one to close it
+- On a wide screen, settings windows open **wider** (1040 px instead of 760 px): everything is visible without scrolling, instead of a narrow column in the middle of the screen.
+- **⤢** button next to the close cross: widens further (up to 1480 px, or 1800 px for very large windows), **once for every window**, and the choice is kept for the next visit. Hidden below 1000 px wide: phones and tablets are unchanged.
+- **Clicking next to a window closes it**, just like the ✕ or the Esc key (no more scrolling back to the top of a long window to find the cross). A click inside the window, even on an edge or an empty area, never closes it, and neither does a text selection released outside. If **something has been typed**, the window stays open and says so: nothing is lost. The setup window is not closed this way.
+
+### 🧾 Recent operations: what was really sent
+- *Manage › Program › Recent operations* used to show **firmware field names** (“telemetry · device (nodeInfoBroadcastSecs)”) and never the values. Each operation now shows, **setting by setting**, what was sent to the node, with units: “Node sheet: every 3 h”, “Transmit power: 20 dBm”, “Role: Router late”.
+- **Previous value** when it is really known: “before: every 15 min (read 20 min ago)”, from the last configuration read from the node before the send. A fix started from *🚦 Traffic control* shows the **measured** interval: “measured over 24 h: every 4 min” — a traffic measurement, not the setting stored in the node. With neither a reading nor a measurement, only the sent value is shown.
+- **No key is ever shown**: a changed channel shows “key sent (not shown)”. Admin keys, passwords and tokens are hidden, including for a setting the map does not know yet. Operation parameters no longer leave the server, not even for the follow-up of a change.
+- A long summary folds under “and N other settings” (nothing is removed), reads well on a phone, values in high-contrast text.
+### 🌡️ MeshCore sensor readings: they start again on their own
+- **A node that does not answer no longer blocks the others**: each node of a MeshCore task now has a maximum duration, **set in MeshCore › Companion › MeshCore module** — *Maximum time for a reading, per node* (1 to 30 min, 4 by default: telemetry, status, path, trace) and *Maximum time for a full read, per node* (5 to 240 min, 60 by default: read of settings, programming, commissioning) — and so does each task. An operation that never handed back control used to stop **all** the following automatic readings, without reporting anything, until the map was restarted.
+- **Quick retry**: a reading request left unanswered is tried again twice, a quarter of an hour apart, instead of waiting for the whole interval (one lost attempt used to cost a 3 h gap for a reading every 3 h).
+- **No more permanent blocking**: a task stopped from the interface while it was waiting its turn was never marked as finished; its nodes were then never read automatically again, even after a restart (the task file is repaired at startup). Sensor readings now start again by themselves if a task drags on for more than an hour.
+- **“Late readings” alert**: it now also works for a node set up before this tracking existed and never read since.
+- **Sensor alerts visible outside the area**: the “late readings” alert and the one for a measurement outside its threshold are now shown even if the sensor is outside the map's area. A sensor whose reading you set up yourself is a node you follow, wherever it is. The other MeshCore alerts (silent, battery, channel) stay filtered on the area.
+- Reminder shown in the *Sensors* tab: the number of readings under a measurement is the one of the **displayed period** (1, 7, 30 or 90 days), not a total.
+
+### 🧭 Nodes of a department: Meshtastic, MeshCore or both
+- The *Nodes of a department* screen (search “43”, “Haute-Loire”…) now also lists **MeshCore nodes**, filed by the position of their latest advert. It starts from the network shown on the map (Meshtastic, MeshCore or both) and a **Meshtastic / MeshCore / Both** selector changes it on the spot; **MT** / **MC** tag on each row, *Network* column in the CSV export. Clicking a MeshCore node opens its MeshCore page, and closing it brings you back to the list.
+
+## 1.6.0
+
+### 🗺️ Alert sectors (geofencing)
+- *Tools › 🗺️ Alert sectors* (managers read, administrators edit): draw a **polygon** or a **circle** on the map, attach it to a **team** (its current members) and/or to chosen nodes (Meshtastic, or MeshCore by public key), and get an alert when someone **leaves** the sector, **enters** it (area to avoid) or both.
+- **No false alerts**: margin around the boundary, 2 positions in a row needed to change state (adjustable), minimum delay between two alerts for the same node, a packet heard by several gateways counts once. **Blurred positions** (firmware 2.7/2.8) widen the margin; a position blurrier than the sector is ignored and logged once.
+- Optional **loss of contact** alert (no position for 10 min to 2 h) and optional short **LoRa message** on a channel (at most one every 30 s).
+- Alerts go where the others go: *Network › Alerts*, sound and notification for connected managers, Android app, MQTT home automation. **Log** of entries, exits and losses of contact, filter by sector, **CSV export**.
+- The former team “safety zone” (circle) becomes a sector automatically. Sectors, their alerts and team help requests are no longer sent to the public view.
+
+### 🚨 Emergency mode
+- *Tools › 🚨 Emergency mode* (turned on and off by an administrator; managers read the crisis board and add notes), inspired by MeshWave's emergency mode: **red banner** and red frame for every connected account, **simplified high-contrast map** (ordinary network in the background, responders, help requests and sectors in front), **crisis board** (help requests, sector alerts, responders, critical alerts), network status every 10 s, reports and incident log brought back if they were hidden.
+- **Time-stamped crisis log**: start, help requests, distress messages heard on the channels (SOS, MAYDAY, 🔔…), sector events, new critical alerts, hand-written notes, end; **CSV export**, the 10 previous crises are kept. Survives a restart.
+- No radio setting is changed and no LoRa message is sent by emergency mode.
+
+### ⚡ The map no longer freezes
+- The **relay** of each packet is found in an index (before, the whole node table was re-read for every packet); the **node list** is prepared at most every 10 s and shared between all visitors, who now only receive the nodes that changed; Meshtastic statistics and alerts computed by the database; **hourly purge in small batches** of 250 rows; new nodes filtered by area; MeshCore packets outside the perimeter dropped from the MQTT topic.
+- **Map health › Responsiveness** (*Network*): **freezes** measured every minute (“warning” alert beyond 1.5 s repeated, “critical” beyond 5 s), freeze curve, **slowest tasks of the last hour** (longest run, average, number of runs) and, for each recent freeze, the suspect task. `outils/banc-reactivite.js` tool to measure an installation.
+- Copernicus terrain decoded in a separate thread and tiles read one by one; yield points in coverage computations: the map stays responsive while a terrain loads.
+
+### 🏔️ Approximate terrain and terrain disk space
+- **Coarse terrain of the whole world** (NOAA ETOPO1, ≈ 9 km, 19 MB downloaded once in the background): while the detailed terrain of an area downloads, the coverage of a point, a site, several sites or the network, the “what if” simulation and “link two places” already show up, marked **“⏳ Approximate terrain”**, then are recomputed by themselves on the detailed terrain. Never cached as if it were detailed. **On by default** in the world edition (`RELIEF_MONDE=non` to turn it off, or *Tools › 🗺️ Area terrain › 💾 Terrain downloaded on this server*).
+- **Terrain cache purge** (administrator, same block): space used, each area with its size and last use, deletion **per area**, of areas **unused for N days** or of **everything** (with confirmation), **limit in GB** beyond which the least recently used areas are deleted by themselves. The map's own area, an area being loaded or used less than 10 min ago are never deleted; every purge is written to the log.
+
+### 🔎 Search in messages
+- **“Search a word, a name or a callsign…”** field at the top of the *Messages* tab: text of Meshtastic and MeshCore messages (SQLite full-text index, **case and accents ignored**, start of word: “chap” finds “chapeau”), **long name, short name, id** (`!xxxxxxxx`, number, start of a MeshCore key) of the sender and of the recipient of a direct message, under their **current name** even if the node was renamed.
+- Results from newest to oldest, highlighted terms, why it matched (text, sender, recipient), “Older…”; a click opens the message in its place in its channel.
+- **Same permissions** as reading messages: logged-in members; in the demo, public channels only, never direct messages. The index is built at the first start and follows the retention purge.
+
+### 💜 Donor wall
+- *Tools › 📤 Public map and exports › Donor wall* (administrator): a **discreet banner** at the top of the map and of the public page thanks those who support the project (shortened name “42BAR***”, country, amount only if you want it). Every visitor can close it for good. Everything is **off by default**.
+- **HelloAsso** (donations to Radio-club du Velay): HelloAsso does not say whether a donor agrees to be shown, so **no donation appears automatically**: the administrator adds each entry by hand, with a mandatory “donor's consent” box. The API credentials only serve to check the access.
+- **GitHub Sponsors**: only the sponsors that GitHub marks **public** are read (token kept on the server, never sent to the browser). Settings also in the `.env` (`HELLOASSO_*`, `GITHUB_SPONSORS_*`, `DONATEURS_INTERVALLE_HEURES`); keys and tokens are never shown again nor written to the log.
+
+### 🌐 7 more interface languages
+- The interface now exists in **16 languages**: Traditional Chinese, Swedish, Greek, Turkish, Korean, Japanese and Ukrainian join French, English, Spanish, German, Italian, Portuguese, Dutch, Polish and Czech (*Settings › Display › 🌐 Language*; follows the browser by default).
+
+### 📡 Meshtastic firmware 2.8
+- **Packet signatures** checked by the map with the sender's public key (✍ signed, ✍ ? unknown key, ⚠ invalid signature), “signs its packets” badge in the node sheet.
+- **Renumbered nodes** (number derived from the key in 2.8): safe merge when the number follows from the key, reset nodes offered for merging (same name and hardware), merge extended to teams, favorites and persons in charge, **undo of the last 20 merges**.
+- Node sheet: “no position received” explained (position off by default in 2.8), blurred position shown as a circle. TinyFast/TinySlow, LiteFast/LiteSlow, NarrowFast/NarrowSlow presets recognised everywhere.
+
+### 🔭 MeshCore: public observatories (CoreScope)
+- The community [CoreScope](https://github.com/Kpa-clawbot/corescope) observatories (France, Texas, Belgium/Netherlands) become a **MeshCore source** without account or key: *MeshCore › Companion › Public observatories*, or one click in the “No MeshCore source” message. The address is tested before being added.
+- API polled at our own pace (every 20 s), **cap per minute**, filter by area codes (`address=LYS,CFE`), known nodes imported at once, observatory credited at the foot of the map. Variables `MESHCORE_CORESCOPE`, `MESHCORE_CORESCOPE_INTERVALLE`, `MESHCORE_CORESCOPE_MAX_MINUTE`.
+- Without a MeshCore source: clear message and help in three choices, broker address accepted without `mqtts://`, MeshCore counters hidden on the public page until a node is received. Wiki: **minimum hardware** (Pi 4/5 in 64-bit, NAS).
+
+### 🔧 Fixes
+- Missing English translations of server messages (CoreScope observatories, merge and undo of 2.8 nodes); English log: “emergency mode ended by …” and “sector … created / deleted by …” were half translated.
+- *Connect a node over Wi-Fi*: the “Connect” button was white on white.
+
+## 1.5.14
+
+### 🔧 Fixes
+- **One-click update**: if the Docker engine is slow to answer when the old version is stopped, the update now follows the container's real state instead of giving up, and **puts the old version back** if any step fails (the map is no longer left stopped). If the update service itself is interrupted halfway, it restarts the map when it comes back.
+- **MQTT root topic**: a root typed with a trailing `/#` is corrected (the map adds `/#` itself; `…/#/#` was refused by the broker and no packet arrived).
+- *Manage › Backups*: each backup now shows its **full date and time** (the name was cut off as “2..”).
+
+## 1.5.13
+
+### 🔧 Fixes
+- **Terrain profile and link budget outside France**: when the French IGN service has no elevation (anywhere outside France), the map now falls back to the world service instead of failing with “Cannot read properties of null”; the link-budget frequency follows `RADIO_FREQ_MHZ` (906.875 MHz for the US) instead of being fixed at the European 869.525 MHz.
+- **Link between two points**: the start and end cards showed “antenna undefined m”; they now show the antenna height you entered.
+
+## 1.5.12
+
+### 🗺️ Terrain of the area (world map)
+- On a map outside France, the “whole of France” block (96 departments, IGN terrain) is replaced by **Tools › 🗺️ Area terrain**: one button, **⬇ Download the area and neighbouring squares**, prepares the Copernicus terrain (30 m), high points and access roads of the map's 1° square and its 8 neighbours (3 × 3 squares), with a “x / 9 squares” counter. It goes on if you close the page; the public map then switches by itself to **anywhere in the world** (each square is otherwise loaded on demand). Choice “Map area only” / “Anywhere in the world” in the same block.
+- Buttons, search and menus say “Area terrain” instead of “Whole of France”; translations in 8 languages; wiki updated. The French edition is unchanged.
+
+## 1.5.11
+
+### 🌍 Feeding a world map
+- Documentation: how to listen to the official public Meshtastic broker **by region** (`msh/US`, `msh/EU_868`…; the “all topics” subscription is refused by that broker), several regions on the same broker with `MQTT_SUJETS_SUPPLEMENTAIRES`, volume and key advice, and the MeshCore community brokers (no single world broker). `.env.example` updated.
+
+## 1.5.10
+
+### 📡 Member gateways
+- **Tools › 📡 Become a gateway**: a logged-in member (not only the administrator) connects **their own** Meshtastic or MeshCore radio from the browser, over USB or Bluetooth, with nothing to install. It adds what it hears to the map, **listening only**: it never transmits and never replaces the main node.
+- Named after the member's account, **two radios per account**, rate-limited; the administrator sees each gateway in *Radio nodes* and can **cut it off** (then refused for 12 h). Setting *Radio node › Member gateways*.
+- USB and Bluetooth require the map over **HTTPS**.
+
+### 🎚️ Channel set
+- The administrator defines the map's channels; a member who connected their radio sees its 8 slots, ticks channels and clicks **Write to the radio**: written, then read back to check. Not enough room: they choose which channels to free; channel 0 is never touched; warning for unencrypted channels.
+- **Keys never leave the server** (encrypted, short fingerprint for whoever edits the set).
+
+### 📊 Traffic (Manage › Traffic)
+- Visitors online, visitors and pages per day, **countries** (free DB-IP database looked up on the server), pages, **sources** (Facebook, rtl-sdr.com…).
+- **No IP address kept, no cookie**, robots ignored; settings `STATS_FREQUENTATION` and `STATS_PAYS`.
+
+### 🛠️ Fixes
+- *Manage › Accounts*: clearly visible **✔ Save** button, Enter saves, all open rows saved at once.
+
+## 1.5.9
+
+### 🔑 Accounts
+- **Forgotten password**: “Forgot your password?” link below sign-in. With an outgoing mail server set (*Settings › Advanced settings › E-mail*), a link valid for 1 hour is e-mailed; otherwise the request shows in *Manage › Accounts*, where the **🔑 Link** button creates a single-use link (24 h) to pass on.
+- **E-mail** editable in *My account*.
+- **Usernames with spaces and accents** (e.g. “SMITH John”).
+- **Account details editable by the administrator** (✏️): username, callsign, e-mail.
+
+## 1.5.8
+
+### 📱 Phone and Android app
+- **Bottom drawer**: when fully open, it stops below the title and the place search (even with enlarged text); a **▾** button collapses it, and the handle is bigger.
+- **App version** shown next to the map version (compare phone and tablet), and in the back-button menu title.
+
+### 🛠️ Fixes
+- **Alerts sent over MeshCore**: their echo relayed by repeaters no longer counts as an unread message.
+- **Official alerts**: when the 📡 Send button is missing, the reason is shown (module not linked, no named channel).
+
 ## 1.5.7
 
 ### 🛠️ Fixes

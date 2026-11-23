@@ -8,6 +8,7 @@
 
 const { decoderPaquet, resumer, ROLES_FR } = require('./paquet');
 const { distanceKm } = require('../reseau');
+const { lectureRapide } = require('../base');
 
 const ROLES_RELAIS = new Set(['repeteur', 'salon']);
 
@@ -59,7 +60,7 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
   if (!db.prepare('PRAGMA table_info(mc_messages)').all().some((c) => c.name === 'taille_hachage')) db.exec('ALTER TABLE mc_messages ADD COLUMN taille_hachage INTEGER');
   const q = {
     noeud: db.prepare('SELECT * FROM mc_noeuds WHERE cle = ?'),
-    noeuds: db.prepare('SELECT * FROM mc_noeuds ORDER BY dernier_vu DESC'),
+    noeuds: lectureRapide(db.prepare('SELECT * FROM mc_noeuds ORDER BY dernier_vu DESC')),
     noeudsDepuis: db.prepare('SELECT * FROM mc_noeuds WHERE MAX(COALESCE(dernier_vu, 0), COALESCE(derniere_annonce, 0), COALESCE(observateur_vu, 0), COALESCE(heure_position, 0)) >= ?'),
     creer: db.prepare('INSERT OR IGNORE INTO mc_noeuds (cle, premier_vu, dernier_vu, source) VALUES (?, ?, ?, ?)'),
     vu: db.prepare(`UPDATE mc_noeuds SET dernier_vu = MAX(COALESCE(dernier_vu, 0), @heure),
@@ -193,7 +194,21 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
    * Intègre une observation { brut, snr, rssi, observateur (clé), heure, via ('companion' | 'mqtt'), sujet }.
    * Renvoie l'événement à diffuser aux pages, ou null.
    */
+  // Positions des annonces, remises après l'intégration aux écouteurs (secteurs d'alerte) hors de la transaction
+  const ecouteursPosition = [];
+  let positionsRecues = [];
+  function ecouterPositions(f) { ecouteursPosition.push(f); }
+  function remettrePositions() {
+    const l = positionsRecues; positionsRecues = [];
+    for (const x of l) for (const f of ecouteursPosition) { try { f(x); } catch { /* un écouteur en panne ne bloque pas le reste */ } }
+  }
   function integrer(obs) {
+    let r;
+    try { r = integrerPaquet(obs); } catch (e) { positionsRecues = []; throw e; } // transaction annulée : rien à remettre
+    remettrePositions();
+    return r;
+  }
+  function integrerPaquet(obs) {
     const p = decoderPaquet(obs.brut, canaux);
     if (!p.valide) return null;
     const heure = obs.heure || Date.now();
@@ -210,7 +225,7 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
       if (p.type === 'ADVERT' && c.cle) {
         assurer(c.cle, heure, 'annonce');
         q.annonce.run({ cle: c.cle, nom: c.nom || null, role: c.role || null, heure, horodatage: c.horodatage ?? null });
-        if (c.lat != null) q.position.run({ cle: c.cle, lat: c.lat, lon: c.lon, heure });
+        if (c.lat != null) { q.position.run({ cle: c.cle, lat: c.lat, lon: c.lon, heure }); positionsRecues.push({ cle: c.cle, lat: c.lat, lon: c.lon, heure, id: c.horodatage ?? null }); }
         invalider();
         origine = c.cle;
       } else if (p.type === 'ANON_REQ' && c.cleExpediteur) {
@@ -280,6 +295,11 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
       q.position.run({ cle: ct.cle, lat: ct.lat, lon: ct.lon, heure: ct.vu || heure });
     }
     invalider();
+  }
+
+  // Lot de contacts (observatoire public : des milliers de nœuds) en une seule transaction
+  function importerContacts(liste, heure = Date.now()) {
+    db.transaction(() => { for (const ct of liste) importerContact(ct, heure); })();
   }
 
   // État d'un observateur (companion relié ou observateur MQTT)
@@ -554,8 +574,8 @@ function creerReseauMc(db, config, canauxInitiaux, journal = () => {}) {
   }
 
   return {
-    supprimerNoeud, annoncesDe,
-    positionDe, noterEtat, telemetrie, calculerAlertes, analyse, surveilles, integrer, importerContact, noterObservateur, vueNoeud, liens, statistiques, detailNoeud, paquets, detailPaquet, messages, noterMessage, confirmerAck, statutMessage, lierVoisins, lierMesure, definirCanaux, definirMoi, canaux: () => canaux, purger, q, resoudreChemin };
+    supprimerNoeud, annoncesDe, ecouterPositions,
+    positionDe, noterEtat, telemetrie, calculerAlertes, analyse, surveilles, integrer, importerContact, importerContacts, noterObservateur, vueNoeud, liens, statistiques, detailNoeud, paquets, detailPaquet, messages, noterMessage, confirmerAck, statutMessage, lierVoisins, lierMesure, definirCanaux, definirMoi, canaux: () => canaux, purger, q, resoudreChemin };
 }
 
 module.exports = { creerReseauMc };

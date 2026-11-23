@@ -1,5 +1,8 @@
 # Troubleshooting
 
+### `no matching manifest for linux/arm/v7`, `exec format error` or “Unsupported system armhf”
+The machine runs a **32-bit** system. The map only exists in **64-bit** (x86-64 or ARM64). On a Raspberry Pi, `uname -m` can answer `aarch64` while the system is 32-bit: check `dpkg --print-architecture` instead, it must answer `arm64` (or `amd64` on a PC). If it says `armhf`, reinstall **Raspberry Pi OS 64-bit** with Raspberry Pi Imager (Pi 4 or 5; a Pi 3 or Zero 2 does not have enough memory). The install script checks this before starting. The Gaulix agent has a 32-bit build (`agent-gaulix-raspberrypi-armv7`): an old Pi can link a radio module to the map, but not run the map.
+
 ### `getaddrinfo ENOTFOUND` in the log
 The broker address is misspelled (for example `mqttexample.org` instead of `mqtt.example.org`). Fix `MQTT_URL` (or *Manage › Settings*), then `docker compose up -d`.
 
@@ -19,6 +22,9 @@ The broker address is misspelled (for example `mqttexample.org` instead of `mqtt
 
 ### “host unreachable” (EHOSTUNREACH) for a Wi-Fi node
 The server is not on the same network as the node. Use *Connect a node* with **agent 1.6** running on a PC on that network, or Bluetooth or USB from the browser.
+
+### “This PC's USB node” or “Bluetooth node”: the button explains why it is not possible
+Chrome only opens USB and Bluetooth on a **secure** page. If the map is opened over `http://` from another PC (a Tailscale `100.x.x.x` address, for instance), the click shows *“USB is not possible here: open the map over HTTPS (…ts.net address) or from the PC running the map (localhost)”*, and both buttons are marked **⚠**. This is normal: open the map over HTTPS (a `…ts.net` address), or from the machine running it (`http://localhost:…`, which counts as secure). Same message outside Chrome or Edge (Firefox and Safari support neither browser USB nor browser Bluetooth).
 
 ### Bluetooth doesn't find the node
 Map over **HTTPS**, **Chrome or Edge**, phone app disconnected. On a Meshtastic ESP32, Bluetooth is off when Wi-Fi is on. Pair the node in Windows if needed (code shown or `123456`).

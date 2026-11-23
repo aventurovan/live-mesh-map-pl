@@ -213,8 +213,9 @@ function creerStatystyki({ db, config, liczPokrycie, journal = () => {} }) {
 
   // ---- Pokrycie strefy: ciężkie obliczenie, co 6 h ----
   let pokrycie = null;
-  function odswiezPokrycie() {
-    try { const r = liczPokrycie(); if (r) { pokrycie = { pct: r.pctZone, km2: Math.round(r.surfaceZoneKm2 || r.surfaceKm2 || 0), rpt: (r.noeuds || r.sites || []).length, czas: Date.now() }; uzupelnij(); } } catch (e) { journal('[Statystyki] pokrycie:', e.message); }
+  // liczPokrycie jest asynchroniczne (od 1.6 liczenie zasięgu nie blokuje serwera)
+  async function odswiezPokrycie() {
+    try { const r = await liczPokrycie(); if (r) { pokrycie = { pct: r.pctZone, km2: Math.round(r.surfaceZoneKm2 || r.surfaceKm2 || 0), rpt: (r.noeuds || r.sites || []).length, czas: Date.now() }; uzupelnij(); } } catch (e) { journal('[Statystyki] pokrycie:', e.message); }
   }
 
   // ---- Bieżące dodatki do statystyki.json ----

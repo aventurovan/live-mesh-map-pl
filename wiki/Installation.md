@@ -2,6 +2,21 @@
 
 Il faut une machine allumée en permanence avec **Docker** : NAS Synology (Container Manager), Unraid, Raspberry Pi 4/5, serveur Linux, machine virtuelle Proxmox…
 
+### Matériel minimum
+
+| | Minimum | Conseillé |
+|---|---|---|
+| Processeur | 64 bits (x86-64 ou ARM64), 2 cœurs | 4 cœurs |
+| Mémoire | 2 Go | 4 Go et plus (archive PostgreSQL, gros réseau) |
+| Disque | 8 Go libres | SSD, 20 Go (relief et couverture en cache, historique) |
+| Système | Linux 64 bits avec Docker (Raspberry Pi OS **64 bits**, Debian, Ubuntu, DSM 7…) | |
+
+- **Raspberry Pi** : **Pi 4 ou Pi 5 avec 2 Go ou plus**, sous Raspberry Pi OS **64 bits** (`dpkg --print-architecture` doit répondre `arm64` ; `uname -m` ne suffit pas : il répond `aarch64` même avec un système 32 bits). Le script d'installation refuse un système 32 bits. Préférez un SSD en USB 3 à la carte SD, qui s'use vite avec la base de données. Une alimentation officielle évite les coupures quand un module LoRa est branché en USB. Pi 3, Pi Zero 2 ou Pi en 32 bits : **non pris en charge** (1 Go de mémoire, pas d'image 32 bits).
+- **NAS Synology** : modèle à processeur Intel/AMD ou ARM64 (série « + » conseillée), DSM 7.2 avec Container Manager, 2 Go de mémoire.
+- La carte se limite à 512 Mo de mémoire ; le service de mise à jour, le client et le flasheur Meshtastic prennent 64 Mo chacun ; l'archive PostgreSQL (facultative) 256 Mo.
+- Les calculs de relief et de couverture sont les plus gourmands : ils tournent quand même sur un Pi 4, juste plus lentement.
+- **Module LoRa en USB sur le serveur** : voir [[Connecter un module]]. Le Bluetooth passe par le navigateur (Chrome ou Edge, carte en HTTPS), pas par le Bluetooth du serveur.
+
 ## 1. Récupérer et lancer
 
 ### En une commande (Linux : Debian, Ubuntu, Raspberry Pi OS, VM Proxmox…)
@@ -112,7 +127,7 @@ docker compose pull && docker compose up -d
 
 Les données (base, comptes, réglages, cache du relief) sont dans le volume `donnees` : sauvegardez-le.
 
-**Sauvegarde complète** (*Réglages › 📦 Sauvegarde complète*, administrateur) : un seul fichier `carte-live-complete-DATE.tar.gz` avec la base, les réglages, les comptes, les équipes et les signalements (le relief n'y est pas : il se retélécharge). Pour changer de serveur : installez la carte sur le nouveau, puis, dès l'assistant d'installation, cliquez **♻️ Restaurer une sauvegarde complète…** et choisissez le fichier (sur une carte déjà installée : *Réglages › ♻️ Restaurer une sauvegarde complète*, administrateur). L'archive est vérifiée, la carte redémarre et reprend tout : base, réglages, comptes. L'état remplacé est gardé dans le dossier des données, sous `avant-restauration-DATE` (à supprimer à la main quand tout va bien). En ligne de commande, cela reste possible : arrêtez la carte (`docker compose stop carte-live`), décompressez le fichier dans son dossier de données (`tar -xzf carte-live-complete-DATE.tar.gz -C /chemin/du/volume`), puis relancez (`docker compose up -d`). Le fichier contient les comptes et les clés des canaux : gardez-le en lieu sûr. La carte sauvegarde aussi ses réglages chaque nuit (*Gestion › Sauvegardes*).
+**Sauvegarde complète** (*Réglages › 📦 Sauvegarde complète*, administrateur) : un seul fichier `carte-live-complete-DATE.tar.gz` avec la base, les réglages, les comptes, les équipes et les signalements (le relief n'y est pas : il se retélécharge). Pour changer de serveur : installez la carte sur le nouveau, puis, dès l'assistant d'installation, cliquez **♻️ Restaurer une sauvegarde complète…** et choisissez le fichier (sur une carte déjà installée : *Réglages › ♻️ Restaurer une sauvegarde complète*, administrateur). L'archive est vérifiée, la carte redémarre et reprend tout : base, réglages, comptes. L'état remplacé est gardé dans le dossier des données, sous `avant-restauration-DATE` (à supprimer à la main quand tout va bien). En ligne de commande, cela reste possible : arrêtez la carte (`docker compose stop carte-live`), décompressez le fichier dans son dossier de données (`tar -xzf carte-live-complete-DATE.tar.gz -C /chemin/du/volume`), puis relancez (`docker compose up -d`). Le fichier contient les comptes et les clés des canaux : gardez-le en lieu sûr. La carte sauvegarde aussi ses réglages chaque nuit (*Gestion › Sauvegardes*). La **sauvegarde de nuit** (*Gestion › Sauvegardes*, 14 gardées) reprend tous les fichiers de réglages et de saisie du dossier de données : réglages, comptes, équipes, signalements, donateurs, secteurs d'alerte, journal des crises, jeux de canaux, page « Rejoindre », responsables de nœuds, modèles de programmation, modules en écoute, alertes Bipper et réglages PostgreSQL. N'y sont **pas** : la clé maîtresse `cle-equipes.bin` (la mettre à côté des clés chiffrées reviendrait à sauvegarder les clés de canal en clair), le secret de session, les jetons à usage unique, les blocages anti-essais, les programmations MeshCore en cours, les caches (relief, communes, feux) et les photos des relevés.
 
 Évitez de mettre à jour pendant une programmation à distance en cours : elle reprend après le redémarrage, mais la demande en cours repart de zéro.
 
@@ -132,6 +147,9 @@ Puis *Outils › Connecter un module › USB du serveur*. Voir [[Connecter un mo
 ## Relief de toute la France (facultatif)
 
 Le relief du département de la carte se télécharge tout seul. Pour les calculs de couverture dans tous les départements : *Outils › 🗺️ Toute la France › ⬇ Télécharger et installer toute la France* (aussi dans *Gestion › Réglages › Carte publique et relief*) (paquet de ≈ 110 Mo récupéré automatiquement sur GitHub). Voir [[Couverture et sites]].
+
+## Relief de la zone, hors de France (carte monde)
+Avec une zone du monde (un carré de 1° comme `MN40W075`), le relief (Copernicus, 30 m) du carré de la carte se télécharge tout seul. Pour préparer aussi les 8 carrés voisins et laisser les visiteurs calculer la couverture n'importe où dans le monde : *Outils › 🗺️ Relief de la zone › ⬇ Télécharger la zone et les carrés voisins* (aussi dans *Gérer › Réglages*). Comptez quelques minutes par carré ; la préparation continue si vous fermez la page, puis la carte publique passe en « n'importe où dans le monde ». Sans cela, le premier calcul sur un carré télécharge son relief à la demande.
 
 ## 5. Accès depuis l'extérieur et HTTPS
 

@@ -67,6 +67,7 @@ const CATALOGUE = [
   { nom: 'RADIO_PAUSE_MINUTES', groupe: 'Module radio', libelle: 'Pause de la carte quand une appli utilise le module (min)', type: 'nombre', min: 1, max: 240, defaut: 10, aide: 'Quand l’appli Meshtastic d’un téléphone se connecte au même module, la carte se retire pendant ce temps pour ne pas la gêner. Par défaut 10 min.' },
   { nom: 'TRACEROUTE_ESPACEMENT_SECONDES', groupe: 'Module radio', libelle: 'Écart entre deux traceroutes automatiques (s)', type: 'nombre', min: 30, max: 3600, defaut: 90, aide: 'Délai entre deux traceroutes d’un même cycle, pour ne pas charger le canal. 30 s au minimum. Par défaut 90 s.' },
   { nom: 'TRACEROUTE_EMISSION_MAX_POURCENT', groupe: 'Module radio', libelle: 'Pas de traceroute si le module émet plus de (%)', type: 'nombre', min: 1, max: 100, defaut: 6, aide: 'Si le module de la carte émet déjà plus que ce pourcentage du temps, le cycle de traceroutes est reporté. Par défaut 6 %.' },
+  { nom: 'PASSERELLE_MEMBRES', groupe: 'Module radio', libelle: 'Passerelles des membres', type: 'choix', choix: OUI_NON, aide: 'Oui : un membre connecté peut relier sa radio depuis son navigateur (USB ou Bluetooth) ; elle ajoute ce qu’elle entend à la carte, sans jamais devenir le module principal, et il peut y écrire les canaux de la carte. Deux radios par compte, débit limité ; un administrateur peut couper une passerelle (refusée ensuite 12 h). Par défaut : oui.' },
   // MeshCore
   { nom: 'MESHCORE_RADIO_ATTENDUE', groupe: 'MeshCore', libelle: 'Réglage radio attendu du companion', type: 'texte', aide: 'fréquence,bande,SF,CR (ex. 869.618,62.5,8,8) ; « non » : aucun avertissement.' },
   { nom: 'MESHCORE_MUET_HEURES', groupe: 'MeshCore', libelle: 'Répéteur « muet » au-delà de (h)', type: 'nombre', min: 1, max: 720, defaut: 26, aide: 'Un répéteur MeshCore annonce sa présence (advert) environ toutes les 12 à 24 h : non entendu au-delà, il est signalé muet. Par défaut 26 h.' },
@@ -86,7 +87,17 @@ const CATALOGUE = [
   { nom: 'LSASAF_MOT_DE_PASSE', groupe: 'Services', libelle: 'Mot de passe LSA SAF', type: 'secret', aide: 'Mot de passe de ce compte. Enregistré comme secret.' },
   { nom: 'POSTGRES_URL', groupe: 'Services', libelle: 'Archive PostgreSQL', type: 'secret', aide: 'postgres://utilisateur:motdepasse@serveur:5432/base' },
   { nom: 'METEOALARM_URL', groupe: 'Services', libelle: 'Flux de vigilance MeteoAlarm', type: 'texte', aide: 'Flux des vigilances météo affichées dans les alertes. Vide = flux MeteoAlarm de la France.' },
+  { nom: 'STATS_FREQUENTATION', groupe: 'Services', libelle: 'Statistiques de fréquentation', type: 'choix', choix: OUI_NON, aide: 'Compte les pages ouvertes et les visiteurs par jour (Gérer › Fréquentation). Aucune adresse IP n’est gardée, pas de cookie. Par défaut : oui.' },
+  { nom: 'STATS_PAYS', groupe: 'Services', libelle: 'Pays des visiteurs', type: 'choix', choix: OUI_NON, aide: 'Retrouve le pays de chaque visiteur avec la base libre DB-IP, téléchargée une fois par mois sur le serveur (8 Mo) et consultée sur place. Par défaut : oui.' },
   { nom: 'RELIEF_FRANCE_URL', groupe: 'Services', libelle: 'Adresse du paquet « relief France »', type: 'texte', aide: 'Adresse de téléchargement du relief de toute la France (calcul de couverture hors ligne). Vide = adresse fournie par le projet.' },
+  // E-mail : récupération du mot de passe oublié
+  { nom: 'CARTE_ADRESSE', groupe: 'E-mail', libelle: 'Adresse publique de la carte', type: 'texte', aide: 'Ex. https://carte.mon-club.fr — sert à construire le lien envoyé par e-mail pour un mot de passe oublié. Vide = pas d’e-mail : les demandes vont aux administrateurs.' },
+  { nom: 'SMTP_HOTE', groupe: 'E-mail', libelle: 'Serveur d’envoi (SMTP)', type: 'texte', aide: 'Ex. smtp.gmail.com, smtp.orange.fr, ssl0.ovh.net. Vide = pas d’e-mail : les demandes de mot de passe oublié vont aux administrateurs.' },
+  { nom: 'SMTP_PORT', groupe: 'E-mail', libelle: 'Port SMTP', type: 'nombre', min: 1, max: 65535, defaut: 587, aide: '587 (STARTTLS) le plus souvent, ou 465 (SSL). Par défaut 587.' },
+  { nom: 'SMTP_SECURISE', groupe: 'E-mail', libelle: 'Connexion SSL directe', type: 'choix', choix: OUI_NON, aide: 'Oui pour le port 465. Par défaut : oui sur 465, STARTTLS sinon.' },
+  { nom: 'SMTP_UTILISATEUR', groupe: 'E-mail', libelle: 'Compte SMTP', type: 'texte', aide: 'Souvent l’adresse e-mail d’envoi.' },
+  { nom: 'SMTP_MOT_DE_PASSE', groupe: 'E-mail', libelle: 'Mot de passe SMTP', type: 'secret', aide: 'Enregistré comme secret, jamais réaffiché. Gmail : créez un « mot de passe d’application ».' },
+  { nom: 'SMTP_EXPEDITEUR', groupe: 'E-mail', libelle: 'Expéditeur', type: 'texte', aide: 'Ex. « Carte live <carte@mon-club.fr> ». Vide = le compte SMTP.' },
   { nom: 'LANGUE', groupe: 'Services', libelle: 'Langue du journal du serveur', type: 'choix', choix: [['', '(par défaut)'], ['fr', 'français'], ['en', 'anglais']], aide: 'Langue des messages du journal du serveur et des alertes envoyées (domotique, radio). L’interface suit la langue de chaque visiteur.' },
 ];
 const PAR_NOM = new Map(CATALOGUE.map((v) => [v.nom, v]));

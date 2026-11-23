@@ -19,7 +19,7 @@ const NOM_VALIDE = /^[A-Za-z0-9_+\-.]{1,11}$/;
 const distance = (a, b) => { const R = 6371000, r = Math.PI / 180; const dl = (b.lat - a.lat) * r, dg = (b.lon - a.lon) * r; const h = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dg / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
 const dansZone = (z, p) => distance(z, p) <= z.rayon;
 
-function creerEquipes({ config, administration, journal, positionDe = () => null, diffuser = () => {}, nomDe = () => null }) {
+function creerEquipes({ config, administration, journal, positionDe = () => null, diffuser = () => {}, nomDe = () => null, surZone = null, secteursDe = () => [], surSuppression = null }) {
   const { racine } = require('./decodeur');
   try { racine.lookupType('meshtastic.ChannelSet'); } catch { racine.loadSync(['meshtastic/apponly.proto']); }
   const dossier = path.dirname(config.fichierBase);
@@ -98,12 +98,14 @@ function creerEquipes({ config, administration, journal, positionDe = () => null
     // Sans nouvelle : position plus vieille que 3 fois l'intervalle de suivi (30 min au moins)
     const limite = e.suiviMin ? Math.max(30, 3 * e.suiviMin) * 60000 : 0;
     for (const m of membres) m.sansNouvelle = !!(limite && m.etat === 'membre' && (!m.position || Date.now() - m.position.heure > limite));
-    // Zone de sécurité : un membre dont la dernière position est hors de la zone
+    // Zone de sécurité (ancienne version, sans secteurs branchés) : un membre dont la dernière position est hors du cercle
     for (const m of membres) m.horsZone = !!(e.zone && m.etat === 'membre' && m.position && !dansZone(e.zone, m.position));
+    let secteurs = [];
+    try { secteurs = secteursDe(e.id) || []; } catch { /* secteurs pas encore prêts */ }
     const rech = e.recherche && e.recherche.jusqua > Date.now() ? e.recherche : null;
     return {
       id: e.id, nom: e.nom, description: e.description || '', positions: !!e.positions, version: e.version, suiviMin: e.suiviMin || 0, dernierSuivi: e.dernierSuivi || null,
-      zone: e.zone || null, recherche: rech, sos: (e.sos || []).filter((x) => !x.pris || Date.now() - x.pris < 3600000),
+      zone: e.zone || null, secteurs, recherche: rech, sos: (e.sos || []).filter((x) => !x.pris || Date.now() - x.pris < 3600000),
       empreinte: psk ? empreinte(psk) : null, cleLisible: !!psk, creee: e.creee, auteur: e.auteur, cleChangee: e.cleChangee || null,
       membres, nbMembres: membres.filter((m) => m.etat === 'membre').length,
       aJour: membres.filter((m) => m.aJour).length,
@@ -140,12 +142,21 @@ function creerEquipes({ config, administration, journal, positionDe = () => null
     return vue(e);
   }
 
-  function modifier(id, { description, positions, suiviMin, zone }) {
+  function modifier(id, { description, positions, suiviMin, zone }, auteur) {
     const e = exiger(id);
     if (suiviMin !== undefined) { const v = Number(suiviMin); if (![0, 5, 10, 15, 30, 60].includes(v)) throw new Error('Intervalle de suivi invalide'); e.suiviMin = v; }
     if (description != null) e.description = String(description).slice(0, 120);
     if (positions != null) e.positions = !!positions;
-    if (zone !== undefined) {
+    if (zone !== undefined && surZone) {
+      // Zone de sécurité : devenue un secteur d'alerte (cercle rattaché à l'équipe), voir secteurs.js
+      if (zone !== null) {
+        const lat = Number(zone.lat), lon = Number(zone.lon), rayon = Number(zone.rayon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) throw new Error('Centre de zone invalide');
+        if (!(rayon >= 100 && rayon <= 100000)) throw new Error('Rayon de zone invalide (100 m à 100 km)');
+      }
+      delete e.zone;
+      surZone(e.id, zone === null ? null : { lat: Number(zone.lat), lon: Number(zone.lon), rayon: Math.round(Number(zone.rayon)) }, auteur || 'carte');
+    } else if (zone !== undefined) {
       if (zone === null) delete e.zone;
       else {
         const lat = Number(zone.lat), lon = Number(zone.lon), rayon = Number(zone.rayon);
@@ -173,7 +184,6 @@ function creerEquipes({ config, administration, journal, positionDe = () => null
     return vue(e);
   }
   // Demande d'aide d'un membre : message contenant la cloche Meshtastic (🔔 « alerte »), SOS, MAYDAY, « au secours » ou « besoin d'aide »
-  const RE_SOS = /\u0007|\b(SOS|MAYDAY)\b|au secours|besoin d['’]aide/i;
   const vusSos = new Map();
   function texteRecu(evt) {
     if (!evt || !evt.texte || !RE_SOS.test(evt.texte)) return;
@@ -244,6 +254,7 @@ function creerEquipes({ config, administration, journal, positionDe = () => null
     if (retirerDesNoeuds && nums.length) exigerModule();
     liste = liste.filter((x) => x !== e);
     sauver(true);
+    try { if (surSuppression) surSuppression(e.id); } catch (x) { journal('[Équipes] secteurs de l’équipe supprimée :', x.message); }
     journal(`[Équipes] équipe « ${e.nom} » supprimée par ${auteur}${retirerDesNoeuds && nums.length ? `, canal retiré de ${nums.length} nœud(s)` : ''}`);
     return { taches: retirerDesNoeuds && nums.length ? lancer(e, 'retirer', nums, auteur, true) : [] };
   }
@@ -285,7 +296,29 @@ function creerEquipes({ config, administration, journal, positionDe = () => null
     for (const e of liste.map(vue)) for (const m of e.membres) if (m.sansNouvelle) l.push({ cle: `equipe:${e.id}:${m.num}`, type: 'equipe', niveau: 'attention', noeud: m.num, depuis: m.position ? m.position.heure : Date.now(), message: `Équipe ${e.nom} : ${nomDe(m.num) || '!' + m.num.toString(16)} sans position depuis ${m.position ? Math.round((Date.now() - m.position.heure) / 60000) + ' min' : 'le début du suivi'}` });
     return l;
   }
+  // Nœud renuméroté (firmware 2.8) : il reste membre de ses équipes sous son nouveau numéro
+  function renumeroter(ancien, nouveau) {
+    const a = ancien >>> 0, n = nouveau >>> 0;
+    let nb = 0;
+    for (const e of liste) if (e.membres && e.membres[a] && !e.membres[n]) { e.membres[n] = e.membres[a]; delete e.membres[a]; nb++; }
+    if (nb) sauver(true);
+    return nb;
+  }
+  // Membres d'une équipe (numéros), pour les secteurs d'alerte
+  const membresDe = (id) => { const e = trouver(id); return e ? Object.entries(e.membres).filter(([, m]) => m.etat === 'membre').map(([n]) => Number(n) >>> 0) : []; };
+  // Anciennes zones de sécurité (cercles) à reprendre en secteurs : rendues une fois, puis retirées des équipes
+  function zonesAMigrer() {
+    const l = liste.filter((e) => e.zone).map((e) => ({ id: e.id, nom: e.nom, zone: e.zone }));
+    // valider() : retire les zones des équipes seulement si le fichier s'écrit (sinon elles seront reprises au prochain démarrage)
+    return { liste: l, valider: () => { if (!l.length) return true; const copie = liste.map((e) => e.zone); for (const e of liste) delete e.zone; try { ecrireSur(fichier, JSON.stringify({ equipes: liste }), { mode: 0o600 }); return true; } catch (x) { liste.forEach((e, i) => { if (copie[i]) e.zone = copie[i]; }); journal('[Équipes] zones de sécurité gardées (écriture impossible) :', x.message); return false; } } };
+  }
   return {
+    renumeroter, membresDe, zonesAMigrer, nomDe: (id) => { const e = trouver(id); return e ? e.nom : null; },
+    // Intervalle de suivi (minutes, 0 si aucun) et appartenance d'un nœud à une équipe, pour les secteurs et le mode urgence
+    suiviDe: (id) => { const e = trouver(id); return e ? e.suiviMin || 0 : 0; },
+    estMembre: (num) => liste.some((e) => e.membres[num >>> 0] && e.membres[num >>> 0].etat === 'membre'),
+    // Même clé maîtresse pour les jeux de canaux des groupes (jeux-canaux.js)
+    chiffreur: { chiffrer, dechiffrer, empreinte },
     alertes,
     liste: () => liste.map(vue),
     equipe: (id) => vue(exiger(id)),
@@ -294,4 +327,9 @@ function creerEquipes({ config, administration, journal, positionDe = () => null
   };
 }
 
-module.exports = { creerEquipes };
+// Message de demande d'aide : cloche Meshtastic (🔔), SOS (ou S.O.S), MAYDAY, « à l'aide », « aidez-moi », « au secours »,
+// « help », « besoin d'aide » — mots entiers seulement (« sosie », « isostatique » ne comptent pas), sans quantificateur
+// imbriqué (pas de risque d'explosion sur un long texte).
+const RE_SOS = /\u0007|(?<![\p{L}\p{N}])(?:S\.?O\.?S|mayday|[àa] l['’]aide|aidez[- ]moi|au secours|help|besoin d['’]aide)(?![\p{L}\p{N}])/iu;
+
+module.exports = { creerEquipes, RE_SOS };

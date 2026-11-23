@@ -4,18 +4,20 @@
 - **5 rubriques** en haut du panneau : **Réseau** (vue d'ensemble, nœuds, trafic, statistiques, MeshCore), **Messages** (Meshtastic et MeshCore), **Couverture**, **Gérer** (programmation Meshtastic et MeshCore, équipes, clés, firmware) et **Réglages**. Les sous-rubriques s'affichent juste dessous.
 - **Accueil « Que voulez-vous faire ? »** : de grandes tuiles (voir le réseau, lire et écrire, signaler, étudier la couverture, gérer mes nœuds, régler la carte). Le tableau de bord complet est replié dessous.
 - **Niveau d'affichage** (accueil, ou Réglages) : **Simple** montre l'essentiel, **Opérateur** ajoute la couverture avancée, le trafic et les outils de terrain, **Expert** montre tout. Par défaut : simple pour un visiteur ou un membre, opérateur pour un gestionnaire, expert pour un administrateur. Les droits ne changent pas : seul l'affichage est allégé.
+- **Langue** : *Réglages › Affichage › 🌐 Langue* (ou en bas de l'accueil) : 16 langues (anglais, français, espagnol, allemand, italien, portugais, néerlandais, polonais, tchèque, suédois, chinois traditionnel, grec, turc, coréen, japonais, ukrainien). Par défaut, celle du navigateur.
 - **Réglages** : tout est rangé au même endroit (affichage, compte, modules et réseaux, carte, MQTT, comptes, sauvegardes, mise à jour, toute la France, passerelle, équipes).
 - **Une seule recherche** : le champ au-dessus de la carte trouve un lieu, un nœud, des coordonnées… et aussi une **fonction** ou un réglage (« mqtt », « équipes », « mise à jour »). ⚙️🔎 ou Ctrl+K ouvre la recherche des fonctions ; l'étoile ☆ d'un résultat l'ajoute à **⭐ Mes raccourcis** sur l'accueil, et les fonctions récentes sont proposées en premier.
 - **Bouton ＋** sur la carte : touchez ＋ puis un point de la carte pour signaler un événement, voir la couverture depuis ce point, le partager ou tracer un profil (sans clic droit, pratique sur téléphone).
 - **« ? »** à droite des rubriques : l'aide de l'écran affiché s'ouvre dans la carte (pages de ce wiki). **Visite guidée** à la première visite, à revoir dans Réglages.
 - **Confort et accessibilité** : confirmations et messages dans l'interface (plus de fenêtres du navigateur), option **Grand texte**, thème clair, navigation au clavier (Tab, Entrée, Échap), étiquettes pour lecteurs d'écran, boutons plus grands sur écran tactile.
+- **Fenêtres plus confortables** : sur un écran large, les fenêtres de réglages s'ouvrent plus larges et les listes passent sur **deux colonnes** (tout se voit sans faire défiler). Le bouton **⤢**, à côté de la croix, les élargit encore ; le choix est gardé pour la prochaine visite et vaut pour toutes les fenêtres. Un **clic à côté de la fenêtre la ferme**, comme la croix ✕ ou la touche Échap — sauf si une saisie est commencée : la fenêtre reste alors ouverte et le dit, rien n'est perdu.
 
 ![Vue d’ensemble](https://raw.githubusercontent.com/sauveteur71/carte-live-meshtastic/main/docs/captures/fr-carte.jpg)
 
 ## Nœuds et réseaux
 - Sélecteur **Meshtastic / MeshCore / Les deux** en haut du panneau. En changeant de réseau, les traces de l'autre réseau sont effacées.
 - **Légende et filtres** : relais, clients, clients muets, traceurs, inconnus, inactifs, passerelles MQTT en ligne, nœuds en alerte.
-- Secteur affiché (menu en haut) : le département, le département et ses voisins, une **région de France** ou toute la France. Le choix est gardé d’une visite à l’autre. On ne voit que ce que la carte reçoit : la portée de votre broker MQTT et, pour MeshCore, le réglage « Paquets conservés » (département, voisins ou national).
+- Secteur affiché (menu en haut) : le département, le département et ses voisins, une **région de France** ou toute la France. Carte réglée hors de France (un carré du monde, par exemple « 40°N–41°N · 75°W–74°W ») : la zone de la carte ou **Toute la carte**, qui cadre sur tous les nœuds connus (vue du monde s’il n’y en a aucun) ; ni régions ni départements français. Le choix est gardé d’une visite à l’autre. On ne voit que ce que la carte reçoit : la portée de votre broker MQTT et, pour MeshCore, le réglage « Paquets conservés » (département, voisins ou national).
 - Clic sur un nœud : **fiche détaillée** (informations, télémétrie, voisins, « entendu par », trames, configuration déduite, test de portée) et onglet **Statistiques** : activité heure par heure sur 1 à 30 jours, types de paquets, SNR reçu en direct, nombre de sauts pour arriver, récepteurs qui l’entendent le plus.
 
 ## Liaisons
@@ -37,7 +39,14 @@ Dans *Messages*, un clic sur l'origine d'un message (📡 / 🌐) affiche son **
 - **Alertes** : nœud muet, batterie faible, canal saturé, passerelle hors ligne.
 - **Statistiques › Maintenance** : charge radio des relais, autonomie, firmwares, conseils de rôles.
 - **Historique** sur plus d'un an, **rejeu** des 24 dernières heures, **rapport hebdomadaire** (*Outils*).
-- **Santé de la carte** (*Réseau*) : processeur, mémoire, disque, base, MQTT.
+- **Santé de la carte** (*Réseau*) : processeur, mémoire, disque, base, MQTT, réactivité.
+  - **Gels** : la carte mesure chaque minute son plus long moment sans répondre. Alerte « attention » si elle se
+    fige plus de 1,5 s au moins 2 fois en 10 minutes, « critique » au-delà de 5 s d'un coup.
+  - **Tâches les plus lentes (dernière heure)** : chaque traitement est chronométré (message MQTT, état diffusé
+    toutes les 30 s, purge horaire, pages de l'API, minuteries). Le tableau donne la durée la plus longue, la
+    moyenne et le nombre d'exécutions. Une tâche qui dépasse souvent 500 ms fige la carte pour tous les visiteurs.
+  - **Gels récents** : heure, durée et tâche la plus longue de la minute (la suspecte). Une tâche « minuterie … »
+    est nommée d'après le fichier du programme qui l'a créée : indiquez ce nom en signalant un problème.
 
 ## Pour le joindre et responsable d'un nœud
 Fiche d'un nœud, onglet **Voisins**, rubrique **Pour le joindre** : par quelle station de la carte l'atteindre (module relié, modules en écoute, puis passerelles MQTT qui l'ont entendu) et dans quel état est la liaison : *direct, aller-retour prouvé*, *direct, sens retour non prouvé*, *N sauts* ou *hors de portée*. Entendre un nœud ne prouve pas qu'il nous entend : le retour est prouvé quand il nous liste dans son voisinage, qu'une traceroute revient ou qu'une liaison est mesurée dans l'autre sens. Une passerelle MQTT ne fait qu'écouter.
@@ -56,6 +65,15 @@ Une page publique (sans messages ni position exacte des particuliers) peut être
 - Le titre suit le réseau et le secteur choisis.
 - **🧭 Essayer la carte complète (démo)** ouvre, pour tout le monde et sans compte, la carte complète en **démonstration**, sur la même vue : tous les onglets et écrans (Messages, Gérer, MeshCore, Réglages…), avec les vrais messages des **canaux publics** seulement (clé par défaut, canal Public et canaux « # » de MeshCore ; jamais les canaux privés ni les messages directs). Les mots de passe, clés de canaux, adresses, contacts et comptes ne sont jamais envoyés ; les comptes, le journal, les sauvegardes et la mise à jour restent privés. Rien ne s'enregistre ni ne s'envoie par radio : chaque tentative affiche « Démonstration : rien n'est enregistré ni envoyé ». Pas de connexion ni d'inscription depuis la démo. Lien direct : `/?consultation`.
 - Le lien vers la carte complète (administration) n'apparaît qu'aux administrateurs connectés.
+
+## Mur des donateurs
+Un **bandeau discret** en haut de la carte et de la page publique (💜) remercie ceux qui soutiennent le projet : nom (tel que saisi par l'administrateur pour HelloAsso, abrégé pour GitHub Sponsors), pays et, seulement si l'administrateur le choisit, le montant. Chaque visiteur peut le fermer d'un clic sur ✕ (il ne revient plus dans ce navigateur). Tout est **désactivé par défaut** : rien ne s'affiche tant qu'aucune source n'est activée.
+
+Réglages : *Outils › 📤 Carte publique et exports › Mur des donateurs* (administrateur). Deux sources indépendantes :
+- **HelloAsso** (dons à l'association Radio-club du Velay) : HelloAsso ne dit pas si un donateur accepte d'être montré publiquement, donc **aucun don n'apparaît automatiquement**. L'administrateur ajoute chaque don à la main (nom ou pseudonyme, pays, montant), avec la case **« Le donateur a accepté d'être affiché sur la carte »** obligatoire ; une entrée se retire d'un clic. Les identifiants d'API (créés sur admin.helloasso.com, rubrique API) servent seulement à vérifier que l'accès au formulaire fonctionne.
+- **GitHub Sponsors** : la carte lit les parrainages du compte GitHub indiqué avec un jeton à lecture seule (`read:user`) et n'affiche que les sponsors que GitHub marque **publics** ; les sponsors privés ne sont jamais montrés. Les sources sont relues toutes les heures (`DONATEURS_INTERVALLE_HEURES`, 1 à 24).
+
+Clé HelloAsso et jeton GitHub ne sont jamais renvoyés au navigateur ni écrits dans le journal : un secret déjà saisi apparaît comme « •••••• (inchangé) », et un champ laissé vide garde la valeur précédente. Les mêmes réglages existent dans le `.env` (`HELLOASSO_*`, `GITHUB_SPONSORS_*`) ; ceux faits depuis la carte sont enregistrés dans `/data/donateurs.json` et priment. Aucune adresse e-mail ni adresse postale n'est jamais lue.
 
 ## Favoris et « Mes nœuds »
 Dans la fiche d'un nœud, Meshtastic ou MeshCore (compte connecté) :

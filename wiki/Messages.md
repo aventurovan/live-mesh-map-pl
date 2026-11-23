@@ -53,9 +53,26 @@ Pour en envoyer une :
 - **📍 Joindre le centre de la carte**, sous la zone de saisie (Meshtastic et MeshCore) ;
 - ou **clic droit sur la carte › 📍 Partager ce point dans un message**.
 
+## Chercher dans les messages
+Le champ **« Chercher un mot, un nom ou un indicatif… »** en haut de l'onglet *Messages* cherche dans les messages Meshtastic et MeshCore gardés par la carte :
+- **dans le texte** : majuscules et accents ignorés (« reseau » trouve « Réseau »), début de mot suffisant (« chap » trouve « chapeau ») ; plusieurs mots = tous présents ;
+- **par expéditeur ou destinataire** (messages directs) : nom long, nom court, identifiant `!xxxxxxxx` ou numéro ; MeshCore : nom porté par le message et début de clé publique. Un nœud renommé est retrouvé sous son **nom actuel**.
+
+Les résultats vont du plus récent au plus ancien, avec le terme surligné et la raison de la correspondance (texte, expéditeur, destinataire) ; **Plus anciens…** charge la suite. Un clic ouvre le message à sa place dans son canal (ou son parcours s'il est plus ancien que l'historique affiché). Entrée lance la recherche tout de suite, Échap l'efface.
+
+Mêmes droits que la lecture des messages : membres connectés ; en démonstration, canaux publics seulement, jamais les messages directs. L'index se construit au premier démarrage après la mise à jour (quelques secondes sur une grosse base) et suit la purge de rétention : un message supprimé disparaît aussi de la recherche.
+
 ## Choisir ce qu'on affiche
 Un **seul menu *Canal*** en haut de l'onglet sert à lire et à écrire : le canal choisi est celui dont on voit les messages et celui où part le message tapé. **✉️ Mes messages directs** affiche le choix du destinataire. **Tous les canaux** et **Relayés par la passerelle** sont en lecture seule, comme un canal que le module de la carte n'a pas. Répondre à un message choisit son canal. Même fonctionnement dans MeshCore › Messages, avec les canaux du companion.
 
 Le menu *Canal* liste aussi les canaux de l'autre réseau (groupe **MeshCore** dans les messages Meshtastic, groupe **Meshtastic** dans les messages MeshCore) : en choisir un y mène directement.
 
 Le menu *Canal* ne montre que le nombre de **nouveaux** messages de chaque canal (« · 3 nouveaux »). **✉️ Mes messages directs** ne garde que les messages directs envoyés ou reçus par vos modules (module principal et modules en écoute reliés à la carte), pas ceux échangés entre d'autres nœuds.
+
+## Retrouver un message
+Le champ **Rechercher dans les messages** (onglet Messages) cherche dans le texte, le nom (long ou court), l'identifiant (`!xxxxxxxx`, numéro, début de clé MeshCore) de l'expéditeur — et du destinataire d'un message direct —, sur Meshtastic et MeshCore à la fois, accents et majuscules ignorés. Un clic sur un résultat ouvre le message dans son canal.
+
+- Deux caractères au moins ; une **partie de nom** demande trois caractères (« gal » trouve « Mégal » ; avec deux lettres, seul le nom court exact est cherché). Le début d'un mot du texte se cherche aussi à partir de trois caractères (« chap » trouve « chapeau »).
+- Japonais, chinois, coréen, thaï : trouvés au milieu d'une phrase, sans espace entre les mots.
+- En démonstration, seuls les canaux publics sont cherchés, jamais les messages directs.
+- Limite : 30 recherches par minute et par adresse (10 en démonstration). Si l'index ne peut pas être créé (disque plein, base en lecture seule), la carte démarre quand même : la recherche seule répond « indisponible », le journal dit pourquoi.
