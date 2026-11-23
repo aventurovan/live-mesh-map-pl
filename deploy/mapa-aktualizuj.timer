@@ -1,0 +1,10 @@
+[Unit]
+Description=Co 3 minuty sprawdzaj, czy jest nowa wersja mapy
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

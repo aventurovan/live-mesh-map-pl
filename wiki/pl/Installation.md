@@ -6,7 +6,7 @@
 - Dostęp z internetu: tunel Cloudflare **live.meshcoresouth.pl → 192.168.1.21:8080**.
 
 ## Aktualizacja
-**Automatyczna**: timer `mapa-aktualizuj.timer` co 3 minuty sprawdza GitHub; gdy jest nowy commit, robi `git pull` i przebudowuje kontener. Historia:
+**Automatyczna**: timer `mapa-aktualizuj.timer` co 3 minuty sprawdza GitHub; gdy jest nowy commit, robi `git pull` i przebudowuje kontener. Opis i pliki do odtworzenia: `docs/auto-aktualizacja.md` oraz katalog `deploy/`. Historia:
 ```
 journalctl -u mapa-aktualizuj -n 20 --no-pager
 ```

@@ -2,6 +2,7 @@
 # 1. cp .env.exemple .env  i dostosuj.   2. docker compose up -d --build
 # 3. Otwórz http://IP_SERWERA:8095 — kreator utworzy konto administratora.
 # Aktualizacja: git pull && docker compose up -d --build
+# Na live.meshcoresouth.pl robi to automatycznie timer systemd co 3 min – patrz docs/auto-aktualizacja.md
 #
 # Polska wersja live-mesh-map-world (F4GLD, GPL-3.0). Tylko MeshCore: usługi Meshtastic usunięte.
 

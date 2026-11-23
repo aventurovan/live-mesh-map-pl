@@ -9,6 +9,7 @@ Polska wersja programu [live-mesh-map-world](https://github.com/sauveteur71/live
 - domyślny szablon repeatera „Repeater podstawowy (Południe SF6)”: radio, moc 22 dBm, prefiks 2 bajty, adverty 60 min / 12 h, flood.max 32,
 - przykładowa konfiguracja `.env.exemple` dla Południa Polski (obszar, kod KTW),
 - obraz Dockera budowany lokalnie (`docker compose up -d --build`).
+- automatyczna aktualizacja serwera: timer systemd co 3 min robi `git pull` i przebudowuje kontener po każdym commicie w `main` (opis: [`docs/auto-aktualizacja.md`](docs/auto-aktualizacja.md), pliki: [`deploy/`](deploy)).
 
 **Instalacja (Ubuntu / Proxmox):**
 ```
